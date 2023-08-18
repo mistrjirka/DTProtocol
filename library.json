@@ -1,0 +1,36 @@
+{
+    "name": "DTProtocol",
+    "version": "1.0.0",
+    "description": "A library for communication protocols",
+    "keywords": [
+        "communication",
+        "protocols",
+        "DTProtocol"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/mistrjirka/DTProtocol.git"
+    },
+    "authors": [
+        {
+            "name": "Jiří Svítil",
+            "email": "jirka.svitil@gmail.com",
+            "url": ""
+        }
+    ],
+    "dependencies": [
+        {
+            "name": "RadioLib",
+            "version": "^6.0.0"
+        }
+    ],
+    "frameworks": [],
+    "platforms": [],
+    "build": {
+        "flags": [],
+        "srcFilter": [
+            "+<src/>",
+            "+<lib/>"
+        ]
+    }
+}
