@@ -67,7 +67,7 @@ public:
 
   // Function to initialize the MAC layer
   static void
-  initialize(SX126x loramodule, int id,
+  initialize(Module *loramodule, int id,
     int default_channel = DEFAULT_CHANNEL,
     int default_spreading_factor  = DEFAULT_SPREADING_FACTOR,
     float default_bandwidth = DEFAULT_SPREADING_FACTOR,
@@ -107,7 +107,7 @@ private:
   bool readyToReceive;
   SX126x module;
   // Private constructor
-  MAC(SX126x loramodule, int id,
+  MAC(Module *loramodule, int id,
       int default_channel = DEFAULT_CHANNEL,
       int default_spreading_factor = DEFAULT_SPREADING_FACTOR,
       float default_bandwidth = DEFAULT_BANDWIDTH, int squelch = DEFAULT_SQUELCH,

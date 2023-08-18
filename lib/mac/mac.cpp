@@ -2,7 +2,6 @@
 
 State MAC::state = RECEIVING;
 MAC *MAC::mac = nullptr;
-
 bool MAC::transmission_detected = false;
 /*
  * LORANoiseFloorCalibrate function calibrates noise floor of the LoRa channel
@@ -125,16 +124,16 @@ void MAC::loop()
 }
 
 MAC::MAC(
-    SX126x loramodule,
+    Module *loramodule,
     int id,
     int default_channel /* = DEFAULT_CHANNEL*/,
     int default_spreading_factor /* = DEFAULT_SPREADING_FACTOR*/,
     float default_bandwidth /* = DEFAULT_SPREADING_FACTOR*/,
     int squelch /*= DEFAULT_SQUELCH*/,
     int default_power /* = DEFAULT_POWER*/,
-    int default_coding_rate /*DEFAULT_CODING_RATE*/)
+    int default_coding_rate /*DEFAULT_CODING_RATE*/
+   ) :module(loramodule)
 {
-  this->module = loramodule;
   this->id = id;
   this->channel = default_channel;
   this->spreading_factor = default_spreading_factor;
@@ -168,7 +167,7 @@ MAC *MAC::getInstance()
 }
 
 void MAC::initialize(
-    SX126x loramodule,
+    Module *loramodule,
     int id, int default_channel /* = DEFAULT_CHANNEL*/,
     int default_spreading_factor /* = DEFAULT_SPREADING_FACTOR*/,
     float default_bandwidth /* = DEFAULT_SPREADING_FACTOR*/,
