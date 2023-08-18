@@ -105,7 +105,7 @@ void LCMM::initialize(DataReceivedCallback dataRecieved,
   if (lcmm == nullptr) {
     lcmm = new LCMM(dataRecieved, transmissionComplete);
   }
-  MAC::getInstance()->setRXCallback(LCMM::ReceivePacket);
+//MAC::getInstance()->setRXCallback(LCMM::ReceivePacket);
 }
 LCMM::LCMM(DataReceivedCallback dataRecieved,
            AcknowledgmentCallback transmissionComplete) {

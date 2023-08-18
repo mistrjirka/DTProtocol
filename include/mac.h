@@ -34,22 +34,31 @@
 #define TIME_BETWEENMEASUREMENTS 10
 #define DISCRIMINATE_MEASURMENTS 2
 
-typedef struct {
+enum State
+{
+  IDLE,
+  SENDING,
+  RECEIVING,
+  SLEEPING
+};
+
+typedef struct
+{
   uint32_t crc32;
   uint16_t sender;
   uint16_t target;
   unsigned char data[];
 } MACPacket;
 
-typedef struct {
+typedef struct
+{
   uint32_t crc32;
   uint16_t sender;
   uint16_t target;
 } MACHeader;
 
-enum State { IDLE, SENDING, RECEIVING, SLEEPING };
-
-class MAC {
+class MAC
+{
 public:
   // Callback function type definition
   using PacketReceivedCallback =
@@ -65,22 +74,22 @@ public:
   int getNoiseFloorOfChannel(uint8_t channel_num);
   uint8_t getNumberOfChannels();
 
-  // Function to initialize the MAC layer
-  static void
-  initialize(Module *loramodule, int id,
-    int default_channel = DEFAULT_CHANNEL,
-    int default_spreading_factor  = DEFAULT_SPREADING_FACTOR,
-    float default_bandwidth = DEFAULT_SPREADING_FACTOR,
-    int squelch = DEFAULT_SQUELCH, 
-    int default_power = DEFAULT_POWER,
-    int default_coding_rate = DEFAULT_CODING_RATE);
+
+
+  static void initialize(SX1262 loramodule, int id,
+             int default_channel = DEFAULT_CHANNEL,
+             int default_spreading_factor = DEFAULT_SPREADING_FACTOR,
+             float default_bandwidth = DEFAULT_SPREADING_FACTOR,
+             int squelch = DEFAULT_SQUELCH,
+             int default_power = DEFAULT_POWER,
+             int default_coding_rate = DEFAULT_CODING_RATE);
 
   // Function to handle incoming packets or events
   void handlePacket();
 
   // Function to send packets to the next layer (DTP)
   uint8_t sendData(uint16_t target, unsigned char *data,
-                uint8_t size,bool nonblocking, uint32_t timeout = 5000);
+                   uint8_t size, bool nonblocking, uint32_t timeout = 5000);
   void loop();
 
   void setMode(State state, bool force = true);
@@ -105,9 +114,10 @@ private:
   int power;
   int coding_rate;
   bool readyToReceive;
-  SX126x module;
+  SX1262 module;
   // Private constructor
-  MAC(Module *loramodule, int id,
+
+  MAC(SX1262 loramodule, int id,
       int default_channel = DEFAULT_CHANNEL,
       int default_spreading_factor = DEFAULT_SPREADING_FACTOR,
       float default_bandwidth = DEFAULT_BANDWIDTH, int squelch = DEFAULT_SQUELCH,
@@ -119,9 +129,11 @@ private:
 
   // Private copy constructor and assignment operator to prevent copying
   MAC(const MAC &) = delete;
+  
+
   MAC &operator=(const MAC &) = delete;
   MACPacket *createPacket(uint16_t sender, uint16_t target, unsigned char *data,
-                         uint8_t size);
+                          uint8_t size);
 
   static void RecievedPacket();
 

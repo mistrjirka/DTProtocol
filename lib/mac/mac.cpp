@@ -13,8 +13,7 @@ bool MAC::transmission_detected = false;
  * noise_floor_per_channel array. By default, save is true. The function returns
  * an integer value representing the average noise measurement.
  */
-int MAC::LORANoiseFloorCalibrate(int channel, bool save /* = true */
-)
+int MAC::LORANoiseFloorCalibrate(int channel, bool save /* = true */)
 {
   State prev_state = getMode();
   this->setFrequencyAndListen(channel);
@@ -30,7 +29,7 @@ int MAC::LORANoiseFloorCalibrate(int channel, bool save /* = true */
   {
     noise_measurements[i] = this->module.getRSSI(false);
     delay(TIME_BETWEENMEASUREMENTS);
-    //this->module.nonBlockingDelay(TIME_BETWEENMEASUREMENTS);
+    // this->module.nonBlockingDelay(TIME_BETWEENMEASUREMENTS);
   }
 
   // Sort the array in ascending order using quickSort algorithm
@@ -68,8 +67,7 @@ void MAC::setFrequencyAndListen(uint16_t channel)
   this->module.startReceive();
 }
 
-void MAC::LORANoiseCalibrateAllChannels(bool save /*= true*/
-)
+void MAC::LORANoiseCalibrateAllChannels(bool save /*= true*/)
 {
   State prev_state = getMode();
 
@@ -93,8 +91,6 @@ RAM_ATTR void MAC::RecievedPacket()
 
 void MAC::handlePacket()
 {
-  
-
   String packetString;
   int state = this->module.readData(packetString);
   if (state != RADIOLIB_ERR_NONE)
@@ -124,7 +120,7 @@ void MAC::loop()
 }
 
 MAC::MAC(
-    Module *loramodule,
+    SX1262 loramodule,
     int id,
     int default_channel /* = DEFAULT_CHANNEL*/,
     int default_spreading_factor /* = DEFAULT_SPREADING_FACTOR*/,
@@ -132,7 +128,7 @@ MAC::MAC(
     int squelch /*= DEFAULT_SQUELCH*/,
     int default_power /* = DEFAULT_POWER*/,
     int default_coding_rate /*DEFAULT_CODING_RATE*/
-   ) :module(loramodule)
+    ) : module(loramodule)
 {
   this->id = id;
   this->channel = default_channel;
@@ -143,31 +139,20 @@ MAC::MAC(
   this->coding_rate = default_coding_rate;
 
   // Initialize the LoRa module with the specified settings
-  // this->module.setOutputPower(default_power);
-  //this->module.setSpreadingFactor(default_spreading_factor);
-  //this->module.setBandwidth(default_bandwidth);
+  this->module.setOutputPower(default_power);
+  this->module.setSpreadingFactor(default_spreading_factor);
+  this->module.setBandwidth(default_bandwidth);
   this->module.setCodingRate(default_coding_rate);
-  //this->module.setSyncWord(DEFAULT_SYNC_WORD);
-  //this->module.setPreambleLength(DEFAULT_PREAMBLE_LENGTH);
-/*
+  this->module.setSyncWord(DEFAULT_SYNC_WORD);
+  this->module.setPreambleLength(DEFAULT_PREAMBLE_LENGTH);
+
   this->module.setPacketReceivedAction(MAC::RecievedPacket);
   setMode(RECEIVING, true);
-  LORANoiseCalibrateAllChannels(true);*/
-}
-
-MAC *MAC::getInstance()
-{
-  if (mac == nullptr)
-  {
-    // Throw an exception or handle the error case if initialize() has not been
-    // called before getInstance()
-    return nullptr;
-  }
-  return mac;
+  LORANoiseCalibrateAllChannels(true);
 }
 
 void MAC::initialize(
-    Module *loramodule,
+    SX1262 loramodule,
     int id, int default_channel /* = DEFAULT_CHANNEL*/,
     int default_spreading_factor /* = DEFAULT_SPREADING_FACTOR*/,
     float default_bandwidth /* = DEFAULT_SPREADING_FACTOR*/,
@@ -313,6 +298,16 @@ printf("rssi %d roof %d \n ", rssi, noiseFloor[channel] + squelch);
 setMode(previousMode);
 return rssi < noiseFloor[channel] + squelch;
 }  */
+
+MAC *MAC::getInstance() {
+  if (mac == nullptr) {
+    // Throw an exception or handle the error case if initialize() has not been
+    // called before getInstance()
+    return nullptr;
+  }
+  return mac;
+}
+
 State MAC::getMode() { return state; }
 
 void MAC::setMode(State state, boolean force)
@@ -336,7 +331,6 @@ void MAC::setMode(State state, boolean force)
     }
   }
 }
-
 
 /*
 void MAC::setRXCallback(PacketReceivedCallback callback)
