@@ -144,15 +144,15 @@ MAC::MAC(
 
   // Initialize the LoRa module with the specified settings
   // this->module.setOutputPower(default_power);
-  this->module.setSpreadingFactor(default_spreading_factor);
-  this->module.setBandwidth(default_bandwidth);
+  //this->module.setSpreadingFactor(default_spreading_factor);
+  //this->module.setBandwidth(default_bandwidth);
   this->module.setCodingRate(default_coding_rate);
-  this->module.setSyncWord(DEFAULT_SYNC_WORD);
-  this->module.setPreambleLength(DEFAULT_PREAMBLE_LENGTH);
-
+  //this->module.setSyncWord(DEFAULT_SYNC_WORD);
+  //this->module.setPreambleLength(DEFAULT_PREAMBLE_LENGTH);
+/*
   this->module.setPacketReceivedAction(MAC::RecievedPacket);
   setMode(RECEIVING, true);
-  LORANoiseCalibrateAllChannels(true);
+  LORANoiseCalibrateAllChannels(true);*/
 }
 
 MAC *MAC::getInstance()
