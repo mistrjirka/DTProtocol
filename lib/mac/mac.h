@@ -1,9 +1,8 @@
 #ifndef MAC_LAYER_H
-#include <LilyGoLib.h>
 #include "../DTP/generalsettings.h"
 #include <cstdint>
 #include <functional>
-#include "../RadioLib/src/RadioLib.h"
+#include <RadioLib.h>
 #include "../mathextension/mathextension.h"
 #include <stdexcept>
 #define MAC_LAYER_H
