@@ -6,12 +6,14 @@
 #include <RadioLib.h>
 #include "mathextension.h"
 #include <stdexcept>
-#ifdef ESP8266
+
+#if defined(ESP8266) && !defined(ESP_PLATFORM)
 #define ESP_PLATFORM
 #endif
-#ifdef ESP32
+#ifdef defined(ESP32) && !defined(ESP_PLATFORM)
 #define ESP_PLATFORM
 #endif
+
 #ifdef ESP_PLATFORM
 #define RAM_ATTR ICACHE_RAM_ATTR
 #else
