@@ -8,7 +8,7 @@ bool LCMM::sending = false;
 //struct repeating_timer LCMM::ackTimer;
 void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc) {
   if (/*crc != packet->crc32 ||*/ size <= 0) {
-    printf("crc error %d %d \n", crc, packet->crc32);
+    //printf("crc error %d %d \n", crc, packet->crc32);
     return;
   }
   uint8_t type = ((LCMMPacketUknownTypeRecieve *)packet)->type;

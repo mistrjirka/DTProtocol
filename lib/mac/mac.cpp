@@ -2,6 +2,7 @@
 
 State MAC::state = RECEIVING;
 MAC *MAC::mac = nullptr;
+
 bool MAC::transmission_detected = false;
 /*
  * LORANoiseFloorCalibrate function calibrates noise floor of the LoRa channel
@@ -28,8 +29,9 @@ int MAC::LORANoiseFloorCalibrate(int channel, bool save /* = true */
 
   for (int i = 0; i < NUMBER_OF_MEASUREMENTS; i++)
   {
-    noise_measurements[i] = watch.getRSSI(false);
-    watch.nonBlockingDelay(TIME_BETWEENMEASUREMENTS);
+    noise_measurements[i] = this->module.getRSSI(false);
+    delay(TIME_BETWEENMEASUREMENTS);
+    //this->module.nonBlockingDelay(TIME_BETWEENMEASUREMENTS);
   }
 
   // Sort the array in ascending order using quickSort algorithm
@@ -63,8 +65,8 @@ void MAC::setFrequencyAndListen(uint16_t channel)
   if (getMode() == SLEEPING)
     setMode(IDLE);
   setMode(RECEIVING);
-  watch.setFrequency(channels[channel]); // Set frequency to the given channel
-  watch.startReceive();
+  this->module.setFrequency(channels[channel]); // Set frequency to the given channel
+  this->module.startReceive();
 }
 
 void MAC::LORANoiseCalibrateAllChannels(bool save /*= true*/
@@ -80,11 +82,11 @@ void MAC::LORANoiseCalibrateAllChannels(bool save /*= true*/
   }
   MAC::channel = previusChannel;
   // Set LoRa to idle and set frequency to current channel
-  watch.setFrequency(channels[previusChannel]);
+  this->module.setFrequency(channels[previusChannel]);
   setMode(prev_state);
 }
 
-ICACHE_RAM_ATTR void MAC::RecievedPacket()
+RAM_ATTR void MAC::RecievedPacket()
 {
   Serial.println("packet received");
   MAC::getInstance()->readyToReceive = true;
@@ -92,13 +94,13 @@ ICACHE_RAM_ATTR void MAC::RecievedPacket()
 
 void MAC::handlePacket()
 {
-  printf("handling packet\n");
+  
 
   String packetString;
-  int state = watch.readData(packetString);
+  int state = this->module.readData(packetString);
   if (state != RADIOLIB_ERR_NONE)
   {
-    Serial.printf("Error during recieve %d \n", state);
+    Serial.print("Error during recieve \n");
     return;
   }
 
@@ -122,14 +124,17 @@ void MAC::loop()
     handlePacket();
 }
 
-MAC::MAC(int id,
-         int default_channel /* = DEFAULT_CHANNEL*/,
-         int default_spreading_factor /* = DEFAULT_SPREADING_FACTOR*/,
-         int default_bandwidth /* = DEFAULT_SPREADING_FACTOR*/,
-         int squelch /*= DEFAULT_SQUELCH*/,
-         int default_power /* = DEFAULT_POWER*/,
-         int default_coding_rate /*DEFAULT_CODING_RATE*/)
+MAC::MAC(
+    SX126x loramodule,
+    int id,
+    int default_channel /* = DEFAULT_CHANNEL*/,
+    int default_spreading_factor /* = DEFAULT_SPREADING_FACTOR*/,
+    float default_bandwidth /* = DEFAULT_SPREADING_FACTOR*/,
+    int squelch /*= DEFAULT_SQUELCH*/,
+    int default_power /* = DEFAULT_POWER*/,
+    int default_coding_rate /*DEFAULT_CODING_RATE*/)
 {
+  this->module = loramodule;
   this->id = id;
   this->channel = default_channel;
   this->spreading_factor = default_spreading_factor;
@@ -139,17 +144,16 @@ MAC::MAC(int id,
   this->coding_rate = default_coding_rate;
 
   // Initialize the LoRa module with the specified settings
-  watch.setOutputPower(default_power);
-  watch.setSpreadingFactor(default_spreading_factor);
-  watch.setBandwidth(default_bandwidth);
-  watch.setCodingRate(default_coding_rate);
-  watch.setSyncWord(DEFAULT_SYNC_WORD);
-  watch.setPreambleLength(DEFAULT_PREAMBLE_LENGTH);
+  // this->module.setOutputPower(default_power);
+  this->module.setSpreadingFactor(default_spreading_factor);
+  this->module.setBandwidth(default_bandwidth);
+  this->module.setCodingRate(default_coding_rate);
+  this->module.setSyncWord(DEFAULT_SYNC_WORD);
+  this->module.setPreambleLength(DEFAULT_PREAMBLE_LENGTH);
 
-  watch.setPacketReceivedAction(MAC::RecievedPacket);
+  this->module.setPacketReceivedAction(MAC::RecievedPacket);
   setMode(RECEIVING, true);
   LORANoiseCalibrateAllChannels(true);
-  printf("channels calibrated\n");
 }
 
 MAC *MAC::getInstance()
@@ -164,16 +168,17 @@ MAC *MAC::getInstance()
 }
 
 void MAC::initialize(
+    SX126x loramodule,
     int id, int default_channel /* = DEFAULT_CHANNEL*/,
     int default_spreading_factor /* = DEFAULT_SPREADING_FACTOR*/,
-    int default_bandwidth /* = DEFAULT_SPREADING_FACTOR*/,
+    float default_bandwidth /* = DEFAULT_SPREADING_FACTOR*/,
     int squelch /*= DEFAULT_SQUELCH*/, int default_power /* = DEFAULT_POWER*/,
     int default_coding_rate /*DEFAULT_CODING_RATE*/)
 {
   if (mac == nullptr)
   {
     mac =
-        new MAC(id, default_channel, default_spreading_factor,
+        new MAC(loramodule, id, default_channel, default_spreading_factor,
                 default_bandwidth, squelch, default_power, default_coding_rate);
   }
 }
@@ -196,34 +201,32 @@ uint8_t MAC::getNumberOfChannels()
   return NUM_OF_CHANNELS;
 }
 
-
 /**
-* Creates a MAC packet with the given data.
-* @param sender The sender node ID.
-* @param target The target node ID.
-* @param data The data to include in the packet.
-* @param size The size of the data in bytes.
-* @return The created MAC packet.
-*/
+ * Creates a MAC packet with the given data.
+ * @param sender The sender node ID.
+ * @param target The target node ID.
+ * @param data The data to include in the packet.
+ * @param size The size of the data in bytes.
+ * @return The created MAC packet.
+ */
 
 MACPacket *MAC::createPacket(uint16_t sender, uint16_t target,
-                          unsigned char *data, uint8_t size)
+                             unsigned char *data, uint8_t size)
 {
-MACPacket *packet = (MACPacket *)malloc(sizeof(MACPacket) + size);
-if (!packet)
-{
- return NULL;
+  MACPacket *packet = (MACPacket *)malloc(sizeof(MACPacket) + size);
+  if (!packet)
+  {
+    return NULL;
+  }
+  (*packet).sender = sender;
+  (*packet).target = target;
+  (*packet).crc32 = 0;
+  memcpy((*packet).data, data, size);
+
+  (*packet).crc32 = MathExtension.crc32c(0, data, size);
+
+  return packet;
 }
-(*packet).sender = sender;
-(*packet).target = target;
-(*packet).crc32 = 0;
-memcpy((*packet).data, data, size);
-
-(*packet).crc32 = MathExtension.crc32c(0, data, size);
-
-return packet;
-}
-
 
 /**
  * Sends data to a target node.
@@ -264,10 +267,9 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size,
   Serial.print("starting to send->");
 
   setMode(IDLE);
-  
-  
-  watch.transmit(packetBytes, finalPacketLength);
-  
+
+  this->module.transmit(packetBytes, finalPacketLength);
+
   Serial.println("finished");
 
   free(packetBytes);
@@ -316,26 +318,27 @@ State MAC::getMode() { return state; }
 
 void MAC::setMode(State state, boolean force)
 {
-  printf("setting the mode %d\n", state);
   if (force || MAC::getMode() != state)
   {
     MAC::state = state;
     switch (state)
     {
     case IDLE:
-      watch.standby();
+      this->module.standby();
       break;
     case RECEIVING:
-      watch.startReceive();
+      this->module.startReceive();
       break;
     case SLEEPING:
-      watch.sleepLora(true);
+      this->module.sleep(true);
       break;
     default:
       break;
     }
   }
 }
+
+
 /*
 void MAC::setRXCallback(PacketReceivedCallback callback)
 {

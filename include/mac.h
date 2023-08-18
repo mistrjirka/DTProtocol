@@ -1,10 +1,23 @@
 #ifndef MAC_LAYER_H
-#include "../DTP/generalsettings.h"
+#include <Arduino.h>
+#include "generalsettings.h"
 #include <cstdint>
 #include <functional>
 #include <RadioLib.h>
-#include "../mathextension/mathextension.h"
+#include "mathextension.h"
 #include <stdexcept>
+#ifdef ESP8266
+#define ESP_PLATFORM
+#endif
+#ifdef ESP32
+#define ESP_PLATFORM
+#endif
+#ifdef ESP_PLATFORM
+#define RAM_ATTR ICACHE_RAM_ATTR
+#else
+#define RAM_ATTR
+#endif
+
 #define MAC_LAYER_H
 #define NUM_OF_CHANNELS 15
 #define DEFAULT_CHANNEL 10
@@ -54,10 +67,10 @@ public:
 
   // Function to initialize the MAC layer
   static void
-  initialize(int id,
+  initialize(SX126x loramodule, int id,
     int default_channel = DEFAULT_CHANNEL,
     int default_spreading_factor  = DEFAULT_SPREADING_FACTOR,
-    int default_bandwidth = DEFAULT_SPREADING_FACTOR,
+    float default_bandwidth = DEFAULT_SPREADING_FACTOR,
     int squelch = DEFAULT_SQUELCH, 
     int default_power = DEFAULT_POWER,
     int default_coding_rate = DEFAULT_CODING_RATE);
@@ -70,8 +83,8 @@ public:
                 uint8_t size,bool nonblocking, uint32_t timeout = 5000);
   void loop();
 
-  static void setMode(State state, bool force = true);
-  static State getMode();
+  void setMode(State state, bool force = true);
+  State getMode();
 
   // Other member functions as needed
 private:
@@ -92,11 +105,12 @@ private:
   int power;
   int coding_rate;
   bool readyToReceive;
+  SX126x module;
   // Private constructor
-  MAC(int id,
+  MAC(SX126x loramodule, int id,
       int default_channel = DEFAULT_CHANNEL,
       int default_spreading_factor = DEFAULT_SPREADING_FACTOR,
-      int default_bandwidth = DEFAULT_BANDWIDTH, int squelch = DEFAULT_SQUELCH,
+      float default_bandwidth = DEFAULT_BANDWIDTH, int squelch = DEFAULT_SQUELCH,
       int default_power = DEFAULT_POWER,
       int default_coding_rate = DEFAULT_CODING_RATE);
 
@@ -110,6 +124,7 @@ private:
                          uint8_t size);
 
   static void RecievedPacket();
+
   void setFrequencyAndListen(uint16_t);
 
   bool transmissionAuthorized();

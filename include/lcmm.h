@@ -2,8 +2,8 @@
 #define LCMM_LAYER_H
 #include <cstdint>
 // Include necessary headers
-#include "../DTP/generalsettings.h"
-#include "../mac/mac.h"
+#include "generalsettings.h"
+#include "mac.h"
 #include <functional>
 #include <vector>
 #include <cstring>
