@@ -129,6 +129,14 @@ static void transmitInterrupt(){
   somethingFalse = true;
 }
 
+bool check(int statuscode){
+  if(statuscode != 0){
+    Serial.println("wrong settings error " + String(statuscode));
+    return false;
+  }
+  return true;
+}
+
 MAC::MAC(
     SX1262 loramodule,
     int id,
@@ -148,14 +156,14 @@ MAC::MAC(
   this->squelch = squelch;
   this->power = default_power;
   this->coding_rate = default_coding_rate;
-
+  Serial.println(String(default_power) + " " + String(default_spreading_factor) + " " + String(default_coding_rate)+ " "  + String(DEFAULT_SYNC_WORD) +" "+ String(DEFAULT_PREAMBLE_LENGTH));
   // Initialize the LoRa module with the specified settings
-  this->module.setOutputPower(default_power);
-  this->module.setSpreadingFactor(default_spreading_factor);
-  this->module.setBandwidth(default_bandwidth);
-  this->module.setCodingRate(default_coding_rate);
-  this->module.setSyncWord(DEFAULT_SYNC_WORD);
-  this->module.setPreambleLength(DEFAULT_PREAMBLE_LENGTH);
+  check(this->module.setOutputPower(default_power));
+  check(this->module.setSpreadingFactor(default_spreading_factor));
+  check(this->module.setBandwidth(default_bandwidth));
+  check(this->module.setCodingRate(default_coding_rate));
+  check(this->module.setSyncWord(DEFAULT_SYNC_WORD));
+  check(this->module.setPreambleLength(DEFAULT_PREAMBLE_LENGTH));
 
   this->module.setPacketReceivedAction(MAC::RecievedPacket);
   this->module.setPacketSentAction(transmitInterrupt);
@@ -263,11 +271,11 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size,
     free(packetBytes);
     return 1;
   }*/
-  Serial.print("starting to send->");
+  Serial.print("starting to send->" + String(finalPacketLength));
 
   setMode(IDLE);
-
-  this->module.transmit(packetBytes, finalPacketLength);
+  String wtf = "hello there general kenob dasasd ads asd s addasasd sdasd asasd asd";
+  this->module.transmit(wtf);
 
   Serial.println("finished");
 
