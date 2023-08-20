@@ -86,43 +86,71 @@ void MAC::LORANoiseCalibrateAllChannels(bool save /*= true*/)
 
 RAM_ATTR void MAC::RecievedPacket()
 {
+    Serial.println("data");
+  if (MAC::getInstance()->module.getIrqStatus() && IRQ_RX_DONE_MASK)
+  {
+    Serial.println("rx");
 
-  MAC::getInstance()->readyToReceive = true;
+    MAC::getInstance()->readyToReceive = true;
+  }
+  else if (MAC::getInstance()->module.getIrqStatus() && IRQ_TX_DONE_MASK)
+  {
+      Serial.println("tx");
+
+    MAC::getInstance()->packetTransmitting = false;
+  }
+  else
+  {
+    Serial.println("unidentifiable");
+  }
 }
 
 void MAC::handlePacket()
 {
   Serial.println("packet received");
-  /*String packetString;
-  int state = this->module.readData(packetString);
+  MAC::getInstance()->readyToReceive = false;
+  uint16_t length = this->module.getPacketLength(true);
+  Serial.println(length);
+  uint8_t *data = (uint8_t *)malloc(sizeof(uint8_t) * length);
+  if (data == NULL)
+  {
+    Serial.println("failed to allocate");
+    return;
+  }
+
+  int state = this->module.readData(data, length);
+
   if (state != RADIOLIB_ERR_NONE)
   {
     Serial.print("Error during recieve \n");
     return;
   }
 
-  uint16_t size = packetString.length();
-  const char *packetBytes = packetString.c_str();
-
-  MACPacket *packet = (MACPacket *)packetBytes;
+  MACPacket *packet = (MACPacket *)data;
+  Serial.print((char *)packet->data);
+  free(data);
 
   uint32_t crcRecieved = packet->crc32;
   packet->crc32 = 0;
-  uint32_t crcCalculated =
-      MathExtension.crc32c(0, packet->data, size - sizeof(MACPacket));
-  packet->crc32 = crcRecieved;
-
-  RXCallback(packet, size - sizeof(MACPacket), crcCalculated);*/
+  /*uint32_t crcCalculated =
+      MathExtension.crc32c(0, packet->data, length - sizeof(MACPacket));
+  packet->crc32 = crcRecieved;*/
+  /*if (RXCallback != nullptr)
+  {
+    RXCallback(packet, length - sizeof(MACPacket), 0);
+  }*/
 }
 
 void MAC::loop()
 {
-  if(somethingFalse){
-    somethingFalse = false;
-    Serial.println("fallllllse");
-  }
+  //setMode(RECEIVING, true);
+
   if (readyToReceive)
+  {
+
+    Serial.print(MAC::getInstance()->module.getIrqStatus(), BIN);
     handlePacket();
+  }
 }
 static void transmitInterrupt(){
   somethingFalse = true;
@@ -138,6 +166,8 @@ MAC::MAC(
     int default_coding_rate /*DEFAULT_CODING_RATE*/
     ) : module(loramodule)
 {
+  this->RXCallback = nullptr;
+  this->packetTransmitting = false;
   this->readyToReceive = false;
   this->id = id;
   this->channel = default_channel;
@@ -157,9 +187,11 @@ MAC::MAC(
 
   this->module.setPacketReceivedAction(MAC::RecievedPacket);
   this->module.setPacketSentAction(transmitInterrupt);
+  //this->module.setPacketReceivedAction(MAC::RecievedPacket);
+  Serial.print("Calibration->");
   LORANoiseCalibrateAllChannels(true);
+  Serial.println("Calibration done");
   setMode(RECEIVING, true);
-
 }
 
 void MAC::initialize(
@@ -195,8 +227,6 @@ uint8_t MAC::getNumberOfChannels()
 {
   return NUM_OF_CHANNELS;
 }
-
-
 
 /**
  * Creates a MAC packet with the given data.
@@ -264,6 +294,7 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size,
   Serial.print("starting to send->");
 
   setMode(IDLE);
+  this->packetTransmitting = true;
 
   this->module.transmit(packetBytes, finalPacketLength);
 
@@ -305,7 +336,7 @@ bool MAC::transmissionAuthorized()
   }
   rssi /= NUMBER_OF_MEASUREMENTS_LBT;
   Serial.println("RSSI: " + String(rssi) + "noise floor" + String(noiseFloor[channel] + squelch));
-  //Serial.printf("rssi %d roof %d \n ", rssi, noiseFloor[channel] + squelch);
+  // Serial.printf("rssi %d roof %d \n ", rssi, noiseFloor[channel] + squelch);
 
   setMode(previousMode);
   return rssi < noiseFloor[channel] + squelch;
@@ -345,7 +376,6 @@ void MAC::setMode(State state, boolean force)
     }
   }
 }
-
 
 void MAC::setRXCallback(PacketReceivedCallback callback)
 {

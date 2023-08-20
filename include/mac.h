@@ -6,6 +6,23 @@
 #include <RadioLib.h>
 #include "mathextension.h"
 #include <stdexcept>
+#define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
+#define BYTE_TO_BINARY(byte)  \
+  ((byte) & 0x80 ? '1' : '0'), \
+  ((byte) & 0x40 ? '1' : '0'), \
+  ((byte) & 0x20 ? '1' : '0'), \
+  ((byte) & 0x10 ? '1' : '0'), \
+  ((byte) & 0x08 ? '1' : '0'), \
+  ((byte) & 0x04 ? '1' : '0'), \
+  ((byte) & 0x02 ? '1' : '0'), \
+  ((byte) & 0x01 ? '1' : '0') 
+
+// IRQ masks
+#define IRQ_TX_DONE_MASK           0x08
+#define IRQ_PAYLOAD_CRC_ERROR_MASK 0x20
+#define IRQ_RX_DONE_MASK           0x40
+#define IRQ_CAD_DONE_MASK          0x04
+#define IRQ_CAD_DETECTED_MASK      0x01
 
 #if defined(ESP8266) && !defined(ESP_PLATFORM)
 #define ESP_PLATFORM
@@ -116,6 +133,7 @@ private:
   int power;
   int coding_rate;
   bool readyToReceive;
+  bool packetTransmitting;
   SX1262 module;
   // Private constructor
 
