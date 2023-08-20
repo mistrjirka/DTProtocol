@@ -10,7 +10,7 @@
 #if defined(ESP8266) && !defined(ESP_PLATFORM)
 #define ESP_PLATFORM
 #endif
-#ifdef defined(ESP32) && !defined(ESP_PLATFORM)
+#if defined(ESP32) && !defined(ESP_PLATFORM)
 #define ESP_PLATFORM
 #endif
 
