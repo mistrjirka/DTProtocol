@@ -283,12 +283,12 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size,
 
 bool MAC::waitForTransmissionAuthorization(uint32_t timeout)
 {
-  uint32_t start = time_us_32() / 1000;
-  while (time_us_32() / 1000 - start < timeout && !transmissionAuthorized())
+  uint32_t start = millis() / 1000;
+  while (millis() / 1000 - start < timeout && !transmissionAuthorized())
   {
     delay(TIME_BETWEENMEASUREMENTS);
   }
-  return time_us_32() / 1000 - start < timeout;
+  return millis() / 1000 - start < timeout;
 }
 
 bool MAC::transmissionAuthorized()
