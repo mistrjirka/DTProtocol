@@ -152,9 +152,11 @@ void MAC::loop()
     handlePacket();
   }
 }
+
 static void transmitInterrupt(){
   somethingFalse = true;
 }
+
 MAC::MAC(
     SX1262 loramodule,
     int id,
