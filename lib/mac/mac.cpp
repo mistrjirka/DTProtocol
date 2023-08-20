@@ -275,7 +275,7 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size,
 
   setMode(IDLE);
   String wtf = "hello there general kenob dasasd ads asd s addasasd sdasd asasd asd";
-  this->module.transmit(wtf);
+  check(this->module.transmit(wtf));
 
   Serial.println("finished");
 
