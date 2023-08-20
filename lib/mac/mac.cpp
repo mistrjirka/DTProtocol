@@ -134,6 +134,7 @@ bool check(int statuscode){
     Serial.println("wrong settings error " + String(statuscode));
     return false;
   }
+  Serial.println("goodf");
   return true;
 }
 
