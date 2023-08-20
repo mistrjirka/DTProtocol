@@ -3,6 +3,7 @@
 State MAC::state = RECEIVING;
 MAC *MAC::mac = nullptr;
 bool MAC::transmission_detected = false;
+bool somethingFalse = false;
 /*
  * LORANoiseFloorCalibrate function calibrates noise floor of the LoRa channel
  * and returns the average value of noise measurements. The noise floor is used
@@ -85,13 +86,14 @@ void MAC::LORANoiseCalibrateAllChannels(bool save /*= true*/)
 
 RAM_ATTR void MAC::RecievedPacket()
 {
-  Serial.println("packet received");
+
   MAC::getInstance()->readyToReceive = true;
 }
 
 void MAC::handlePacket()
 {
-  String packetString;
+  Serial.println("packet received");
+  /*String packetString;
   int state = this->module.readData(packetString);
   if (state != RADIOLIB_ERR_NONE)
   {
@@ -110,15 +112,21 @@ void MAC::handlePacket()
       MathExtension.crc32c(0, packet->data, size - sizeof(MACPacket));
   packet->crc32 = crcRecieved;
 
-  RXCallback(packet, size - sizeof(MACPacket), crcCalculated);
+  RXCallback(packet, size - sizeof(MACPacket), crcCalculated);*/
 }
 
 void MAC::loop()
 {
+  if(somethingFalse){
+    somethingFalse = false;
+    Serial.println("fallllllse");
+  }
   if (readyToReceive)
     handlePacket();
 }
-
+static void transmitInterrupt(){
+  somethingFalse = true;
+}
 MAC::MAC(
     SX1262 loramodule,
     int id,
@@ -130,6 +138,7 @@ MAC::MAC(
     int default_coding_rate /*DEFAULT_CODING_RATE*/
     ) : module(loramodule)
 {
+  this->readyToReceive = false;
   this->id = id;
   this->channel = default_channel;
   this->spreading_factor = default_spreading_factor;
@@ -147,8 +156,10 @@ MAC::MAC(
   this->module.setPreambleLength(DEFAULT_PREAMBLE_LENGTH);
 
   this->module.setPacketReceivedAction(MAC::RecievedPacket);
-  setMode(RECEIVING, true);
+  this->module.setPacketSentAction(transmitInterrupt);
   LORANoiseCalibrateAllChannels(true);
+  setMode(RECEIVING, true);
+
 }
 
 void MAC::initialize(
@@ -184,6 +195,8 @@ uint8_t MAC::getNumberOfChannels()
 {
   return NUM_OF_CHANNELS;
 }
+
+
 
 /**
  * Creates a MAC packet with the given data.
@@ -267,40 +280,41 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size,
  * @return true if transmission is authorized within the timeout period, false
  * otherwise.
  */
-/*
+
 bool MAC::waitForTransmissionAuthorization(uint32_t timeout)
 {
-uint32_t start = time_us_32() / 1000;
-while (time_us_32() / 1000 - start < timeout && !transmissionAuthorized())
-{
- busy_wait_ms(30);
- tight_loop_contents();
+  uint32_t start = time_us_32() / 1000;
+  while (time_us_32() / 1000 - start < timeout && !transmissionAuthorized())
+  {
+    delay(TIME_BETWEENMEASUREMENTS);
+  }
+  return time_us_32() / 1000 - start < timeout;
 }
-return time_us_32() / 1000 - start < timeout;
-}
-
 
 bool MAC::transmissionAuthorized()
 {
-State previousMode = getMode();
-setMode(RECEIVING);
-delay(TIME_BETWEENMEASUREMENTS / 3);
-int rssi = LoRa.rssi();
+  State previousMode = getMode();
+  setMode(RECEIVING);
+  delay(TIME_BETWEENMEASUREMENTS / 3);
+  int rssi = this->module.getRSSI(false);
 
-for (int i = 1; i < NUMBER_OF_MEASUREMENTS_LBT; i++)
-{
- delay(TIME_BETWEENMEASUREMENTS);
- rssi += LoRa.rssi();
+  for (int i = 1; i < NUMBER_OF_MEASUREMENTS_LBT; i++)
+  {
+    delay(TIME_BETWEENMEASUREMENTS);
+    rssi += this->module.getRSSI(false);
+  }
+  rssi /= NUMBER_OF_MEASUREMENTS_LBT;
+  Serial.println("RSSI: " + String(rssi) + "noise floor" + String(noiseFloor[channel] + squelch));
+  //Serial.printf("rssi %d roof %d \n ", rssi, noiseFloor[channel] + squelch);
+
+  setMode(previousMode);
+  return rssi < noiseFloor[channel] + squelch;
 }
-rssi /= NUMBER_OF_MEASUREMENTS_LBT;
-printf("rssi %d roof %d \n ", rssi, noiseFloor[channel] + squelch);
 
-setMode(previousMode);
-return rssi < noiseFloor[channel] + squelch;
-}  */
-
-MAC *MAC::getInstance() {
-  if (mac == nullptr) {
+MAC *MAC::getInstance()
+{
+  if (mac == nullptr)
+  {
     // Throw an exception or handle the error case if initialize() has not been
     // called before getInstance()
     return nullptr;
@@ -332,8 +346,8 @@ void MAC::setMode(State state, boolean force)
   }
 }
 
-/*
+
 void MAC::setRXCallback(PacketReceivedCallback callback)
 {
-RXCallback = callback;
-}*/
+  RXCallback = callback;
+}
