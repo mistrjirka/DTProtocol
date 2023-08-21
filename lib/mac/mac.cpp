@@ -107,8 +107,6 @@ void MAC::handlePacket()
     }
 
     MACPacket *packet = (MACPacket *)data;
-    Serial.print((char *)packet->data);
-    free(data);
 
     uint32_t crcRecieved = packet->crc32;
     packet->crc32 = 0;
