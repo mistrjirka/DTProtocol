@@ -122,8 +122,9 @@ void MAC::handlePacket()
 
 void MAC::loop()
 {
-
-  if(operationDone && getMode() == SENDING){
+  
+  if (operationDone && getMode() == SENDING)
+  {
     operationDone = false;
     Serial.println("transmit done");
     setMode(RECEIVING);
@@ -133,13 +134,16 @@ void MAC::loop()
 // is transmitted or received by the module
 // IMPORTANT: this function MUST be 'void' type
 //            and MUST NOT have any arguments!
-RAM_ATTR void MAC::setFlag(void) {
+RAM_ATTR void MAC::setFlag(void)
+{
   // we sent or received a packet, set the flag
   MAC::operationDone = true;
 }
 
-bool check(int statuscode){
-  if(statuscode != 0){
+bool check(int statuscode)
+{
+  if (statuscode != 0)
+  {
     Serial.println("wrong settings error " + String(statuscode));
     return false;
   }
@@ -168,7 +172,7 @@ MAC::MAC(
   this->squelch = squelch;
   this->power = default_power;
   this->coding_rate = default_coding_rate;
-  Serial.println(String(default_power) + " " + String(default_spreading_factor) + " " + String(default_coding_rate)+ " "  + String(DEFAULT_SYNC_WORD) +" "+ String(DEFAULT_PREAMBLE_LENGTH));
+  Serial.println(String(default_power) + " " + String(default_spreading_factor) + " " + String(default_coding_rate) + " " + String(DEFAULT_SYNC_WORD) + " " + String(DEFAULT_PREAMBLE_LENGTH));
   // Initialize the LoRa module with the specified settings
   check(this->module.setFrequency(channels[channel]));
   Serial.println("frequency" + String(channels[channel]));
@@ -179,7 +183,7 @@ MAC::MAC(
   check(this->module.setCodingRate(default_coding_rate));
   check(this->module.setSyncWord(DEFAULT_SYNC_WORD));
   check(this->module.setPreambleLength(DEFAULT_PREAMBLE_LENGTH));
-  
+
   this->module.setDio1Action(setFlag);
 
   Serial.print("Calibration->");
@@ -262,49 +266,50 @@ MACPacket *MAC::createPacket(uint16_t sender, uint16_t target,
 uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size,
                       bool nonblocking, uint32_t timeout /*= 5000*/)
 {
-  if(this->getMode() != SENDING){
-    static int number = 0;
+  if (this->getMode() != SENDING)
+  {
+    /*static int number = 0;
     Serial.println(String(target) + String((char*)data) + String(size)+ String(nonblocking) + String(timeout));
     String str = String((char *)data) + String(number++);
     operationDone = false;
     this->setMode(SENDING);
-    this->module.startTransmit(str);
-  }else{
+    this->module.startTransmit(str);*/
+
+    if (size > DATASIZE_MAC)
+    {
+      Serial.println("Data size cannot be greater than 247 bytes\n");
+      return 3;
+    }
+
+    MACPacket *packet = createPacket(this->id, target, data, size);
+    if (!packet)
+    {
+      return 2;
+    }
+
+    uint8_t finalPacketLength = MAC_OVERHEAD + size;
+    unsigned char *packetBytes = (unsigned char *)packet;
+
+    /*if (!waitForTransmissionAuthorization(timeout))
+    {
+      printf("timeout\n");
+      free(packetBytes);
+      return 1;
+    }*/
+    Serial.print("starting to send->" + String(finalPacketLength));
+    operationDone = false;
+
+    setMode(SENDING);
+    check(this->module.startTransmit(packetBytes, finalPacketLength));
+
+
+    free(packetBytes);
+  }
+  else
+  {
     Serial.println("busy");
   }
-  /*State previousMode = getMode();
 
-  if (size > DATASIZE_MAC)
-  {
-    Serial.println("Data size cannot be greater than 247 bytes\n");
-    return 3;
-  }
-
-  MACPacket *packet = createPacket(this->id, target, data, size);
-  if (!packet)
-  {
-    return 2;
-  }
-
-  uint8_t finalPacketLength = MAC_OVERHEAD + size;
-  unsigned char *packetBytes = (unsigned char *)packet;
-
-  /*if (!waitForTransmissionAuthorization(timeout))
-  {
-    printf("timeout\n");
-    free(packetBytes);
-    return 1;
-  }*/
-  //Serial.print("starting to send->" + String(finalPacketLength));
-/*
-  setMode(IDLE);
-  String wtf = "hello there general kenob dasasd ads asd s addasasd sdasd asasd asd";
-  check(this->module.transmit(wtf));
-
-  Serial.println("finished");
-*/
-  /*free(packetBytes);
-  setMode(previousMode, true);*/
   return 0;
 }
 
