@@ -87,42 +87,49 @@ void MAC::LORANoiseCalibrateAllChannels(bool save /*= true*/)
 void MAC::handlePacket()
 {
   Serial.println("packet received");
-  MAC::getInstance()->readyToReceive = false;
   uint16_t length = this->module.getPacketLength(true);
-  Serial.println(length);
-  uint8_t *data = (uint8_t *)malloc(sizeof(uint8_t) * length);
-  if (data == NULL)
+  if (length)
   {
-    Serial.println("failed to allocate");
-    return;
+    Serial.println(length);
+    uint8_t *data = (uint8_t *)malloc(sizeof(uint8_t) * length);
+    if (data == NULL)
+    {
+      Serial.println("failed to allocate");
+      return;
+    }
+
+    int state = this->module.readData(data, length);
+
+    if (state != RADIOLIB_ERR_NONE)
+    {
+      Serial.print("Error during recieve \n");
+      return;
+    }
+
+    MACPacket *packet = (MACPacket *)data;
+    Serial.print((char *)packet->data);
+    free(data);
+
+    uint32_t crcRecieved = packet->crc32;
+    packet->crc32 = 0;
+    /*uint32_t crcCalculated =
+        MathExtension.crc32c(0, packet->data, length - sizeof(MACPacket));
+    packet->crc32 = crcRecieved;*/
+    /*if (RXCallback != nullptr)
+    {
+      RXCallback(packet, length - sizeof(MACPacket), 0);
+    }*/
   }
-
-  int state = this->module.readData(data, length);
-
-  if (state != RADIOLIB_ERR_NONE)
-  {
-    Serial.print("Error during recieve \n");
-    return;
-  }
-
-  MACPacket *packet = (MACPacket *)data;
-  Serial.print((char *)packet->data);
-  free(data);
-
-  uint32_t crcRecieved = packet->crc32;
-  packet->crc32 = 0;
-  /*uint32_t crcCalculated =
-      MathExtension.crc32c(0, packet->data, length - sizeof(MACPacket));
-  packet->crc32 = crcRecieved;*/
-  /*if (RXCallback != nullptr)
-  {
-    RXCallback(packet, length - sizeof(MACPacket), 0);
-  }*/
 }
 
 void MAC::loop()
 {
-  
+  if(operationDone && getMode() == RECEIVING){
+    operationDone = false;
+    Serial.println("PacketReceived");
+    this->handlePacket();
+    setMode(RECEIVING, true);
+  }
   if (operationDone && getMode() == SENDING)
   {
     operationDone = false;
@@ -268,13 +275,6 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size,
 {
   if (this->getMode() != SENDING)
   {
-    /*static int number = 0;
-    Serial.println(String(target) + String((char*)data) + String(size)+ String(nonblocking) + String(timeout));
-    String str = String((char *)data) + String(number++);
-    operationDone = false;
-    this->setMode(SENDING);
-    this->module.startTransmit(str);*/
-
     if (size > DATASIZE_MAC)
     {
       Serial.println("Data size cannot be greater than 247 bytes\n");
@@ -301,7 +301,6 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size,
 
     setMode(SENDING);
     check(this->module.startTransmit(packetBytes, finalPacketLength));
-
 
     free(packetBytes);
   }
