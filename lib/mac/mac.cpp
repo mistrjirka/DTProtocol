@@ -115,10 +115,10 @@ void MAC::handlePacket()
     /*uint32_t crcCalculated =
         MathExtension.crc32c(0, packet->data, length - sizeof(MACPacket));
     packet->crc32 = crcRecieved;*/
-    /*if (RXCallback != nullptr)
+    if (RXCallback != nullptr)
     {
       RXCallback(packet, length - sizeof(MACPacket), 0);
-    }*/
+    }
   }
 }
 
