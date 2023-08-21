@@ -86,23 +86,15 @@ void MAC::LORANoiseCalibrateAllChannels(bool save /*= true*/)
 
 RAM_ATTR void MAC::RecievedPacket()
 {
-    Serial.println("data");
   if (MAC::getInstance()->module.getIrqStatus() && IRQ_RX_DONE_MASK)
   {
-    Serial.println("rx");
-
     MAC::getInstance()->readyToReceive = true;
   }
   else if (MAC::getInstance()->module.getIrqStatus() && IRQ_TX_DONE_MASK)
   {
-      Serial.println("tx");
+    MAC::getInstance()->packetTransmitting = true;
+  }
 
-    MAC::getInstance()->packetTransmitting = false;
-  }
-  else
-  {
-    Serial.println("unidentifiable");
-  }
 }
 
 void MAC::handlePacket()
@@ -145,9 +137,14 @@ void MAC::loop()
 {
   //setMode(RECEIVING, true);
 
+  if( MAC::getInstance()->packetTransmitting)
+  {
+     MAC::getInstance()->packetTransmitting = false;
+     Serial.println("sent packet");
+  }
+
   if (readyToReceive)
   {
-
     Serial.print(MAC::getInstance()->module.getIrqStatus(), BIN);
     handlePacket();
   }
@@ -189,18 +186,26 @@ MAC::MAC(
   this->coding_rate = default_coding_rate;
   Serial.println(String(default_power) + " " + String(default_spreading_factor) + " " + String(default_coding_rate)+ " "  + String(DEFAULT_SYNC_WORD) +" "+ String(DEFAULT_PREAMBLE_LENGTH));
   // Initialize the LoRa module with the specified settings
-  check(this->module.setOutputPower(default_power));
-  check(this->module.setSpreadingFactor(default_spreading_factor));
-  check(this->module.setBandwidth(default_bandwidth));
-  check(this->module.setCodingRate(default_coding_rate));
-  check(this->module.setSyncWord(DEFAULT_SYNC_WORD));
-  check(this->module.setPreambleLength(DEFAULT_PREAMBLE_LENGTH));
+  //check(this->module.setFrequency(channels[channel]));
+  check(this->module.setFrequency(433.30));
+  Serial.println("frequency" + String(channels[channel]));
+  //check(this->module.setOutputPower(default_power));
+  //check(this->module.setBandwidth(default_bandwidth));
 
-  this->module.setPacketReceivedAction(MAC::RecievedPacket);
-  this->module.setPacketSentAction(transmitInterrupt);
+  check(this->module.setBandwidth(125.0));
+  //check(this->module.setSpreadingFactor(default_spreading_factor));
+  check(this->module.setSpreadingFactor(9));
+  //check(this->module.setCodingRate(default_coding_rate));
+  check(this->module.setCodingRate(7));
+  //check(this->module.setSyncWord(DEFAULT_SYNC_WORD));
+  check(this->module.setSyncWord(RADIOLIB_SX126X_SYNC_WORD_PRIVATE));
+  check(this->module.setPreambleLength(8));
+
+  //this->module.setDio1Action(MAC::RecievedPacket);
+  //this->module.setPacketSentAction(transmitInterrupt);
   //this->module.setPacketReceivedAction(MAC::RecievedPacket);
   Serial.print("Calibration->");
-  LORANoiseCalibrateAllChannels(true);
+  //LORANoiseCalibrateAllChannels(true);
   Serial.println("Calibration done");
   setMode(RECEIVING, true);
 }
@@ -279,7 +284,11 @@ MACPacket *MAC::createPacket(uint16_t sender, uint16_t target,
 uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size,
                       bool nonblocking, uint32_t timeout /*= 5000*/)
 {
-  State previousMode = getMode();
+  static int number = 0;
+  Serial.println(String(target) + String((char*)data) + String(size)+ String(nonblocking) + String(timeout));
+   String str = String((char *)data) + String(number++);
+  this->module.transmit(str);
+  /*State previousMode = getMode();
 
   if (size > DATASIZE_MAC)
   {
@@ -302,16 +311,16 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size,
     free(packetBytes);
     return 1;
   }*/
-  Serial.print("starting to send->" + String(finalPacketLength));
-
+  //Serial.print("starting to send->" + String(finalPacketLength));
+/*
   setMode(IDLE);
   String wtf = "hello there general kenob dasasd ads asd s addasasd sdasd asasd asd";
   check(this->module.transmit(wtf));
 
   Serial.println("finished");
-
-  free(packetBytes);
-  setMode(previousMode, true);
+*/
+  /*free(packetBytes);
+  setMode(previousMode, true);*/
   return 0;
 }
 

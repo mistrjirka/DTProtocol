@@ -113,6 +113,7 @@ public:
 
   void setMode(State state, bool force = true);
   State getMode();
+  SX1262 module;
 
   // Other member functions as needed
 private:
@@ -134,7 +135,6 @@ private:
   int coding_rate;
   bool readyToReceive;
   bool packetTransmitting;
-  SX1262 module;
   // Private constructor
 
   MAC(SX1262 loramodule, int id,
