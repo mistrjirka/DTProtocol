@@ -2,8 +2,8 @@
 
 State MAC::state = RECEIVING;
 MAC *MAC::mac = nullptr;
-bool MAC::transmission_detected = false;
-bool somethingFalse = false;
+bool MAC::operationDone = false;
+
 /*
  * LORANoiseFloorCalibrate function calibrates noise floor of the LoRa channel
  * and returns the average value of noise measurements. The noise floor is used
@@ -84,19 +84,6 @@ void MAC::LORANoiseCalibrateAllChannels(bool save /*= true*/)
   setMode(prev_state);
 }
 
-RAM_ATTR void MAC::RecievedPacket()
-{
-  if (MAC::getInstance()->module.getIrqStatus() && IRQ_RX_DONE_MASK)
-  {
-    MAC::getInstance()->readyToReceive = true;
-  }
-  else if (MAC::getInstance()->module.getIrqStatus() && IRQ_TX_DONE_MASK)
-  {
-    MAC::getInstance()->packetTransmitting = true;
-  }
-
-}
-
 void MAC::handlePacket()
 {
   Serial.println("packet received");
@@ -135,23 +122,20 @@ void MAC::handlePacket()
 
 void MAC::loop()
 {
-  //setMode(RECEIVING, true);
 
-  if( MAC::getInstance()->packetTransmitting)
-  {
-     MAC::getInstance()->packetTransmitting = false;
-     Serial.println("sent packet");
-  }
-
-  if (readyToReceive)
-  {
-    Serial.print(MAC::getInstance()->module.getIrqStatus(), BIN);
-    handlePacket();
+  if(operationDone && getMode() == SENDING){
+    operationDone = false;
+    Serial.println("transmit done");
+    setMode(RECEIVING);
   }
 }
-
-static void transmitInterrupt(){
-  somethingFalse = true;
+// this function is called when a complete packet
+// is transmitted or received by the module
+// IMPORTANT: this function MUST be 'void' type
+//            and MUST NOT have any arguments!
+RAM_ATTR void MAC::setFlag(void) {
+  // we sent or received a packet, set the flag
+  MAC::operationDone = true;
 }
 
 bool check(int statuscode){
@@ -186,26 +170,20 @@ MAC::MAC(
   this->coding_rate = default_coding_rate;
   Serial.println(String(default_power) + " " + String(default_spreading_factor) + " " + String(default_coding_rate)+ " "  + String(DEFAULT_SYNC_WORD) +" "+ String(DEFAULT_PREAMBLE_LENGTH));
   // Initialize the LoRa module with the specified settings
-  //check(this->module.setFrequency(channels[channel]));
-  check(this->module.setFrequency(433.30));
+  check(this->module.setFrequency(channels[channel]));
   Serial.println("frequency" + String(channels[channel]));
-  //check(this->module.setOutputPower(default_power));
-  //check(this->module.setBandwidth(default_bandwidth));
+  check(this->module.setOutputPower(default_power));
+  check(this->module.setBandwidth(default_bandwidth));
 
-  check(this->module.setBandwidth(125.0));
-  //check(this->module.setSpreadingFactor(default_spreading_factor));
-  check(this->module.setSpreadingFactor(9));
-  //check(this->module.setCodingRate(default_coding_rate));
-  check(this->module.setCodingRate(7));
-  //check(this->module.setSyncWord(DEFAULT_SYNC_WORD));
-  check(this->module.setSyncWord(RADIOLIB_SX126X_SYNC_WORD_PRIVATE));
-  check(this->module.setPreambleLength(8));
+  check(this->module.setSpreadingFactor(default_spreading_factor));
+  check(this->module.setCodingRate(default_coding_rate));
+  check(this->module.setSyncWord(DEFAULT_SYNC_WORD));
+  check(this->module.setPreambleLength(DEFAULT_PREAMBLE_LENGTH));
+  
+  this->module.setDio1Action(setFlag);
 
-  //this->module.setDio1Action(MAC::RecievedPacket);
-  //this->module.setPacketSentAction(transmitInterrupt);
-  //this->module.setPacketReceivedAction(MAC::RecievedPacket);
   Serial.print("Calibration->");
-  //LORANoiseCalibrateAllChannels(true);
+  LORANoiseCalibrateAllChannels(true);
   Serial.println("Calibration done");
   setMode(RECEIVING, true);
 }
@@ -284,10 +262,16 @@ MACPacket *MAC::createPacket(uint16_t sender, uint16_t target,
 uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size,
                       bool nonblocking, uint32_t timeout /*= 5000*/)
 {
-  static int number = 0;
-  Serial.println(String(target) + String((char*)data) + String(size)+ String(nonblocking) + String(timeout));
-   String str = String((char *)data) + String(number++);
-  this->module.transmit(str);
+  if(this->getMode() != SENDING){
+    static int number = 0;
+    Serial.println(String(target) + String((char*)data) + String(size)+ String(nonblocking) + String(timeout));
+    String str = String((char *)data) + String(number++);
+    operationDone = false;
+    this->setMode(SENDING);
+    this->module.startTransmit(str);
+  }else{
+    Serial.println("busy");
+  }
   /*State previousMode = getMode();
 
   if (size > DATASIZE_MAC)

@@ -117,7 +117,7 @@ public:
 
   // Other member functions as needed
 private:
-  static bool transmission_detected;
+  static bool operationDone;
   static MAC *mac;
   static State state;
   double channels[NUM_OF_CHANNELS] = {433.05, 433.175, 433.3, 433.425,
@@ -155,8 +155,8 @@ private:
   MACPacket *createPacket(uint16_t sender, uint16_t target, unsigned char *data,
                           uint8_t size);
 
-  static void RecievedPacket();
-
+  static void setFlag(void);
+  
   void setFrequencyAndListen(uint16_t);
 
   bool transmissionAuthorized();
