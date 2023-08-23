@@ -84,6 +84,7 @@ typedef struct {
   uint16_t id;
   unsigned char data[];
 } LCMMPacketData;
+
 class LCMM {
 public:
   static void RecievedPacket(int size);
@@ -96,7 +97,8 @@ public:
  struct ACKWaitingSingle {
     AcknowledgmentCallback callback;
     LCMMPacketData *packet;
-    uint32_t timeout;
+    int timeout;
+    int timeLeft;
     uint16_t target;
     uint8_t size;
     uint16_t id;
@@ -118,17 +120,20 @@ public:
   uint16_t sendPacketSingle(bool needACK, uint16_t target, unsigned char *data,
                         uint8_t size, AcknowledgmentCallback callback,
                         uint32_t timeout = 5000, uint8_t attempts = 3);
-
+  
+  void loop();
   // Other member functions as needed
 
 private:
+
   static bool sending;
   static void ReceivePacket(MACPacket *packet, uint16_t size, uint32_t correct);
   static ACKWaitingSingle ackWaitingSingle;
   static bool waitingForACKSingle;
   static uint16_t packetId;
   static LCMM *lcmm;
-  static bool timeoutHandler(struct repeating_timer *);
+  static bool timeoutHandler();
+  int lastTick;
   //static repeating_timer_t ackTimer;
   LCMM(DataReceivedCallback dataRecieved,
        AcknowledgmentCallback TransmissionComplete);

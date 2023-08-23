@@ -288,12 +288,12 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size,
     uint8_t finalPacketLength = MAC_OVERHEAD + size;
     unsigned char *packetBytes = (unsigned char *)packet;
 
-    /*if (!waitForTransmissionAuthorization(timeout))
+    if (!waitForTransmissionAuthorization(timeout))
     {
       printf("timeout\n");
       free(packetBytes);
       return 1;
-    }*/
+    }
     Serial.print("starting to send->" + String(finalPacketLength));
     operationDone = false;
 
@@ -322,7 +322,7 @@ bool MAC::waitForTransmissionAuthorization(uint32_t timeout)
   uint32_t start = millis() / 1000;
   while (millis() / 1000 - start < timeout && !transmissionAuthorized())
   {
-    delay(TIME_BETWEENMEASUREMENTS);
+    delay(TIME_BETWEENMEASUREMENTS/3);
   }
   return millis() / 1000 - start < timeout;
 }
