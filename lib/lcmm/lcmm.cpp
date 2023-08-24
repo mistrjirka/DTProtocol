@@ -29,8 +29,7 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
     LCMMPacketDataRecieve *data = (LCMMPacketDataRecieve *)packet;
     packet = NULL;
     LCMM::getInstance()->dataReceived(data, size);
-    LCMMPacketResponseRecieve *response = (LCMMPacketResponseRecieve *)malloc(
-        sizeof(LCMMPacketResponseRecieve) + 1);
+    LCMMPacketResponse *response = (LCMMPacketResponse *)malloc(sizeof(LCMMPacketResponse));
     if (response == NULL)
     {
       Serial.println("Error allocating memory for response\n");
@@ -39,7 +38,7 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
     response->type = PACKET_TYPE_ACK;
     response->packetIds[0] = data->id;
     MAC::getInstance()->sendData(data->mac.sender, (unsigned char *)response,
-                                 sizeof(LCMMPacketResponseRecieve) + 2, 5000);
+                                 sizeof(LCMMPacketResponse), 5000);
   }
   else if (type == PACKET_TYPE_ACK)
   {
