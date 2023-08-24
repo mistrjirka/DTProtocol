@@ -13,7 +13,10 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
     // Serial.println("crc error %d %d \n", crc, packet->crc32);
     return;
   }
+
   uint8_t type = ((LCMMPacketUknownTypeRecieve *)packet)->type;
+  Serial.println("RECIEVIED packet response type: " + type);
+
   if (type == PACKET_TYPE_DATA_NOACK)
   {
     LCMMPacketDataRecieve *data = (LCMMPacketDataRecieve *)packet;
@@ -40,25 +43,26 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
   }
   else if (type == PACKET_TYPE_ACK)
   {
-
+    Serial.println("packet type ack received");
     LCMMPacketResponseRecieve *response = (LCMMPacketResponseRecieve *)packet;
-    if (response->type == PACKET_TYPE_ACK)
+
+    if (waitingForACKSingle &&
+        ackWaitingSingle.id == response->packetIds[0])
     {
-      if (waitingForACKSingle &&
-          size - sizeof(LCMMPacketResponseRecieve) == 2 &&
-          ackWaitingSingle.id == response->packetIds[0])
+      Serial.println("expected packet calling back");
+
+      ackWaitingSingle.callback(ackWaitingSingle.id, true);
+      // cancel_repeating_timer(&LCMM::ackTimer);
+      if (ackWaitingSingle.packet != NULL)
       {
-        ackWaitingSingle.callback(ackWaitingSingle.id, true);
-        // cancel_repeating_timer(&LCMM::ackTimer);
-        if (ackWaitingSingle.packet != NULL)
-        {
-          free(ackWaitingSingle.packet);
-        }
-        ackWaitingSingle.packet = NULL;
-        ackWaitingSingle.callback = NULL;
-        waitingForACKSingle = false;
-        sending = false;
+        free(ackWaitingSingle.packet);
       }
+      ackWaitingSingle.packet = NULL;
+      ackWaitingSingle.callback = NULL;
+      waitingForACKSingle = false;
+      sending = false;
+    }else{
+      Serial.println("unexpected ack");
     }
   }
   else if (type == PACKET_TYPE_DATA_CLUSTER_ACK)

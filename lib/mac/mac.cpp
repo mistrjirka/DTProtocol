@@ -132,6 +132,7 @@ void MAC::loop()
   {
     operationDone = false;
     Serial.println("transmit done");
+    this->module.finishTransmit();
     setMode(RECEIVING);
   }
 }
