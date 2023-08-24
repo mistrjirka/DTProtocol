@@ -115,7 +115,7 @@ void MAC::handlePacket()
     packet->crc32 = crcRecieved;*/
     if (RXCallback != nullptr)
     {
-      RXCallback(packet, length - sizeof(MACPacket), 0);
+      RXCallback(packet, length, 0);
     }
   }
 }

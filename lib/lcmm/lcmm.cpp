@@ -36,8 +36,10 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
       return;
     }
     response->type = PACKET_TYPE_ACK;
-    Serial.println(data->id);
+    Serial.println("packet number"+String(data->id));
+    
     response->packetIds[0] = data->id;
+    
     MAC::getInstance()->sendData(data->mac.sender, (unsigned char *)response,
                                  sizeof(LCMMPacketResponse), 5000);
   }
