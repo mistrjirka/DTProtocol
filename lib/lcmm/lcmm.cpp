@@ -36,6 +36,7 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
       return;
     }
     response->type = PACKET_TYPE_ACK;
+    Serial.println(data->id);
     response->packetIds[0] = data->id;
     MAC::getInstance()->sendData(data->mac.sender, (unsigned char *)response,
                                  sizeof(LCMMPacketResponse), 5000);
@@ -101,7 +102,6 @@ bool LCMM::timeoutHandler()
       {
         Serial.println("\n\n\nTRANSMIT COMPLETELY FAILED \n\n\n");
         LCMM::ackWaitingSingle.callback(LCMM::ackWaitingSingle.id, false);
-        // cancel_repeating_timer(&LCMM::ackTimer);
         if (LCMM::ackWaitingSingle.packet != NULL)
         {
           free(LCMM::ackWaitingSingle.packet);
