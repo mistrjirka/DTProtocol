@@ -10,7 +10,7 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
 {
   if (/*crc != packet->crc32 ||*/ size <= 0)
   {
-    // printf("crc error %d %d \n", crc, packet->crc32);
+    // Serial.println("crc error %d %d \n", crc, packet->crc32);
     return;
   }
   uint8_t type = ((LCMMPacketUknownTypeRecieve *)packet)->type;
@@ -30,14 +30,13 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
         sizeof(LCMMPacketResponseRecieve) + 1);
     if (response == NULL)
     {
-      printf("Error allocating memory for response\n");
+      Serial.println("Error allocating memory for response\n");
       return;
     }
     response->type = PACKET_TYPE_ACK;
     response->packetIds[0] = data->id;
     MAC::getInstance()->sendData(data->mac.sender, (unsigned char *)response,
-                                 sizeof(LCMMPacketResponseRecieve) + 2, false,
-                                 5000);
+                                 sizeof(LCMMPacketResponseRecieve) + 2, 5000);
   }
   else if (type == PACKET_TYPE_ACK)
   {
@@ -88,42 +87,42 @@ LCMM *LCMM::getInstance()
 
 bool LCMM::timeoutHandler()
 {
-  int currTime = millis();
-  LCMM::ackWaitingSingle.timeLeft-= currTime-LCMM::getInstance()->lastTick;
-  if (LCMM::waitingForACKSingle && LCMM::ackWaitingSingle.timeLeft <= 0)
+
+  if (LCMM::waitingForACKSingle)
   {
-
-    if (--LCMM::ackWaitingSingle.attemptsLeft <= 0)
+    int currTime = millis();
+    LCMM::ackWaitingSingle.timeLeft -= currTime - LCMM::getInstance()->lastTick;
+    if (LCMM::ackWaitingSingle.timeLeft <= 0)
     {
-      printf("transmission failed\n");
-      if (LCMM::waitingForACKSingle)
+      if (--LCMM::ackWaitingSingle.attemptsLeft <= 0)
       {
+        Serial.println("\n\n\nTRANSMIT COMPLETELY FAILED \n\n\n");
         LCMM::ackWaitingSingle.callback(LCMM::ackWaitingSingle.id, false);
-      }
-      // cancel_repeating_timer(&LCMM::ackTimer);
-      if (LCMM::ackWaitingSingle.packet != NULL)
-      {
-        free(LCMM::ackWaitingSingle.packet);
-      }
-      LCMM::ackWaitingSingle.packet = NULL;
-      LCMM::ackWaitingSingle.callback = NULL;
-      LCMM::waitingForACKSingle = false;
-      LCMM::sending = false;
+        // cancel_repeating_timer(&LCMM::ackTimer);
+        if (LCMM::ackWaitingSingle.packet != NULL)
+        {
+          free(LCMM::ackWaitingSingle.packet);
+        }
+        LCMM::ackWaitingSingle.packet = NULL;
+        LCMM::ackWaitingSingle.callback = NULL;
+        LCMM::waitingForACKSingle = false;
+        LCMM::sending = false;
 
-      return false;
+        return false;
+      }
+      else
+      {
+        LCMM::ackWaitingSingle.timeLeft = LCMM::ackWaitingSingle.timeout;
+        Serial.println("retransmitting");
+        MAC::getInstance()->sendData(LCMM::ackWaitingSingle.target,
+                                     (unsigned char *)LCMM::ackWaitingSingle.packet,
+                                     sizeof(LCMMPacketData) +
+                                         LCMM::ackWaitingSingle.size,
+                                     LCMM::ackWaitingSingle.timeout);
+      }
     }
-    else
-    {
-      LCMM::ackWaitingSingle.timeLeft = LCMM::ackWaitingSingle.timeout;
-      printf("retransmitting");
-      MAC::getInstance()->sendData(LCMM::ackWaitingSingle.target,
-                                   (unsigned char *)LCMM::ackWaitingSingle.packet,
-                                   sizeof(LCMMPacketData) +
-                                       LCMM::ackWaitingSingle.size,
-                                   true, LCMM::ackWaitingSingle.timeout);
-    }
+    LCMM::getInstance()->lastTick = currTime;
   }
-  LCMM::getInstance()->lastTick = currTime;
   return true;
 }
 
@@ -136,6 +135,7 @@ void LCMM::initialize(DataReceivedCallback dataRecieved,
   }
   MAC::getInstance()->setRXCallback(LCMM::ReceivePacket);
 }
+
 LCMM::LCMM(DataReceivedCallback dataRecieved,
            AcknowledgmentCallback transmissionComplete)
 {
@@ -157,6 +157,8 @@ void LCMM::handlePacket(/* Parameters as per your protocol */)
 
 void LCMM::loop()
 {
+  MAC::getInstance()->loop();
+  this->timeoutHandler();
 }
 
 void LCMM::sendPacketLarge(uint16_t target, unsigned char *data, uint32_t size,
@@ -169,7 +171,7 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
 {
   if (LCMM::sending)
   {
-    printf("already sending\n");
+    Serial.println("already sending\n");
     return 0;
   }
   LCMMPacketData *packet =
@@ -179,7 +181,7 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
   memcpy(packet->data, data, size);
   LCMM::sending = true;
   MAC::getInstance()->sendData(target, (unsigned char *)packet,
-                               sizeof(LCMMPacketData) + size, false, timeout);
+                               sizeof(LCMMPacketData) + size, timeout);
   if (needACK)
   {
     ACKWaitingSingle callbackStruct;
@@ -194,6 +196,7 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
     waitingForACKSingle = true;
     // add_repeating_timer_ms(timeout, timeoutHandler, NULL, &LCMM::ackTimer);
     ackWaitingSingle = callbackStruct;
+    lastTick = millis();
   }
   else
   {

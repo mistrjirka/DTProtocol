@@ -108,7 +108,7 @@ public:
 
   // Function to send packets to the next layer (DTP)
   uint8_t sendData(uint16_t target, unsigned char *data,
-                   uint8_t size, bool nonblocking, uint32_t timeout = 5000);
+                   uint8_t size, uint32_t timeout = 5000);
   void loop();
 
   void setMode(State state, bool force = true);

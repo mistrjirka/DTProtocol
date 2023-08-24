@@ -268,8 +268,7 @@ MACPacket *MAC::createPacket(uint16_t sender, uint16_t target,
  * allowed size.
  */
 
-uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size,
-                      bool nonblocking, uint32_t timeout /*= 5000*/)
+uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size, uint32_t timeout /*= 5000*/)
 {
   if (this->getMode() != SENDING)
   {
