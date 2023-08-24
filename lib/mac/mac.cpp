@@ -126,7 +126,6 @@ void MAC::loop()
     operationDone = false;
     Serial.println("PacketReceived");
     this->handlePacket();
-    setMode(RECEIVING, true);
   }
   if (operationDone && getMode() == SENDING)
   {
@@ -153,7 +152,6 @@ bool check(int statuscode)
     Serial.println("wrong settings error " + String(statuscode));
     return false;
   }
-  Serial.println("goodf");
   return true;
 }
 
@@ -273,6 +271,7 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size, uint32
 {
   if (this->getMode() != SENDING)
   {
+
     if (size > DATASIZE_MAC)
     {
       Serial.println("Data size cannot be greater than 247 bytes\n");
@@ -294,11 +293,14 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size, uint32
       free(packetBytes);
       return 1;
     }
+
     Serial.print("starting to send->" + String(finalPacketLength));
     operationDone = false;
 
     setMode(SENDING);
+
     check(this->module.startTransmit(packetBytes, finalPacketLength));
+    Serial.println("transmit start completed");
 
     free(packetBytes);
   }
@@ -367,6 +369,9 @@ void MAC::setMode(State state, boolean force)
     MAC::state = state;
     switch (state)
     {
+    case SENDING:
+      this->module.standby();
+      break;
     case IDLE:
       this->module.standby();
       break;
