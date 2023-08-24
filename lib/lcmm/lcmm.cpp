@@ -47,7 +47,16 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
   {
     Serial.println("packet type ack received");
     LCMMPacketResponseRecieve *response = (LCMMPacketResponseRecieve *)packet;
-    Serial.println(" exxpected packet ID" + String(ackWaitingSingle.id) + " recieved Packet id: "+ String(response->packetIds[0]));
+    Serial.println(" exxpected packet ID" + String(ackWaitingSingle.id) + " recieved Packet id: "+ String(response->packetIds[0])
+    + "  sender" + String(response->mac.sender));
+    Serial.println("starting BIN output");
+    for(int i = 0; i < size; i++){
+       char buffer[40];
+      sprintf(buffer,BYTE_TO_BINARY_PATTERN, BYTE_TO_BINARY(((byte *)packet)[i]));
+      Serial.println(buffer);
+    }
+        Serial.println("ending BIN output");
+
     if (waitingForACKSingle &&
         ackWaitingSingle.id == response->packetIds[0])
     {
