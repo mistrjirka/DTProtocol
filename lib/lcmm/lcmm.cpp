@@ -51,9 +51,7 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
     + "  sender" + String(response->mac.sender));
     Serial.println("starting BIN output");
     for(int i = 0; i < size; i++){
-       char buffer[40];
-      sprintf(buffer,BYTE_TO_BINARY_PATTERN, BYTE_TO_BINARY(((byte *)packet)[i]));
-      Serial.println(buffer);
+      Serial.println(((uint8_t*)packet)[0]);
     }
         Serial.println("ending BIN output");
 
