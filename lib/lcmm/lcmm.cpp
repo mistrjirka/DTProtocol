@@ -15,7 +15,7 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
   }
 
   uint8_t type = ((LCMMPacketUknownTypeRecieve *)packet)->type;
-  Serial.println("RECIEVIED packet response type: " + type);
+  Serial.println("RECIEVIED packet response type: " + String(type));
 
   if (type == PACKET_TYPE_DATA_NOACK)
   {
