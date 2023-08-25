@@ -5,7 +5,6 @@ LCMM::ACKWaitingSingle LCMM::ackWaitingSingle;
 bool LCMM::waitingForACKSingle = false;
 bool LCMM::sending = false;
 
-// struct repeating_timer LCMM::ackTimer;
 void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
 {
   if (/*crc != packet->crc32 ||*/ size <= 0)
@@ -17,62 +16,29 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
   uint8_t type = ((LCMMPacketUknownTypeRecieve *)packet)->type;
   Serial.println("RECIEVIED packet response type: " + String(type));
 
-  if (type == PACKET_TYPE_DATA_NOACK)
+  switch (type)
   {
-    LCMMPacketDataRecieve *data = (LCMMPacketDataRecieve *)packet;
-    packet = NULL;
-    LCMM::getInstance()->dataReceived(data,
-                                      size - sizeof(LCMMPacketDataRecieve));
-  }
-  else if (type == PACKET_TYPE_DATA_ACK)
-  {
-    LCMMPacketDataRecieve *data = (LCMMPacketDataRecieve *)packet;
-    packet = NULL;
-    LCMM::getInstance()->dataReceived(data, size);
-    LCMMPacketResponse *response = (LCMMPacketResponse *)malloc(sizeof(LCMMPacketResponse)+2);
-    if (response == NULL)
-    {
-      Serial.println("Error allocating memory for response\n");
-      return;
-    }
-    response->type = PACKET_TYPE_ACK;
-    Serial.println("packet number"+String(data->id));
-    
-    response->packetIds[0] = data->id;
-    
-    MAC::getInstance()->sendData(data->mac.sender, (unsigned char *)response,
-                                 sizeof(LCMMPacketResponse)+2, 5000);
-  }
-  else if (type == PACKET_TYPE_ACK)
-  {
-    Serial.println("packet type ack received");
-    LCMMPacketResponseRecieve *response = (LCMMPacketResponseRecieve *)packet;
-    Serial.println(" exxpected packet ID" + String(ackWaitingSingle.id) + " recieved Packet id: "+ String(response->packetIds[0])
-    + "  sender" + String(response->mac.sender));
-    Serial.println("starting BIN output");
-    for(int i = 0; i < size; i++){
-      Serial.println(((uint8_t*)packet)[i]);
-    }
-        Serial.println("ending BIN output");
+  case PACKET_TYPE_DATA_NOACK:
+    LCMM::getInstance()->handleDataNoACK((LCMMPacketDataRecieve *)packet, size);
+    break;
 
-    if (waitingForACKSingle &&
-        ackWaitingSingle.id == response->packetIds[0])
-    {
-      Serial.println("expected packet calling back");
+  case PACKET_TYPE_DATA_ACK:
+    LCMM::getInstance()->handleDataACK((LCMMPacketDataRecieve *)packet, size);
+    break;
 
-      ackWaitingSingle.callback(ackWaitingSingle.id, true);
-      // cancel_repeating_timer(&LCMM::ackTimer);
-      if (ackWaitingSingle.packet != NULL)
-      {
-        free(ackWaitingSingle.packet);
-      }
-      ackWaitingSingle.packet = NULL;
-      ackWaitingSingle.callback = NULL;
-      waitingForACKSingle = false;
-      sending = false;
-    }else{
-      Serial.println("unexpected ack");
-    }
+  case PACKET_TYPE_ACK:
+    LCMM::getInstance()->handleACK((LCMMPacketResponseRecieve *)packet, size);
+    break;
+    // Handle other packet types...
+  default:
+    // Handle unknown packet type
+    break;
+  }
+
+  // Other member function implementations...
+
+  if (type == PACKET_TYPE_ACK)
+  {
   }
   else if (type == PACKET_TYPE_DATA_CLUSTER_ACK)
   {
@@ -85,6 +51,64 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
     // Handle PACKET_TYPE_PACKET_NEGOTIATION,
     // PACKET_TYPE_PACKET_NEGOTIATION_REFUSED,
     // PACKET_TYPE_PACKET_NEGOTIATION_ACCEPTED
+  }
+}
+
+void LCMM::handleDataNoACK(LCMMPacketDataRecieve *packet, uint16_t size)
+{
+  LCMM::getInstance()->dataReceived(packet, size);
+}
+
+void LCMM::handleDataACK(LCMMPacketDataRecieve *packet, uint16_t size)
+{
+  LCMMPacketResponse *response = (LCMMPacketResponse *)malloc(sizeof(LCMMPacketResponse) + 2);
+  if (response == NULL)
+  {
+    Serial.println("Error allocating memory for response\n");
+    return;
+  }
+  response->type = PACKET_TYPE_ACK;
+  Serial.println("packet number" + String(packet->id));
+
+  response->packetIds[0] = packet->id;
+
+  MAC::getInstance()->sendData(packet->mac.sender, (unsigned char *)response,
+                               sizeof(LCMMPacketResponse) + 2, 5000);
+  LCMM::getInstance()->dataReceived(packet, size);
+}
+
+void LCMM::handleACK(LCMMPacketResponseRecieve *packet, uint16_t size)
+{
+  /*Serial.println("packet type ack received");
+  Serial.println(" exxpected packet ID" + String(ackWaitingSingle.id) + " recieved Packet id: " + String(packet->packetIds[0]) + "  sender" + String(packet->mac.sender));
+  Serial.println("starting BIN output");
+  for (int i = 0; i < size; i++)
+  {
+    Serial.println(((uint8_t *)packet)[i]);
+  }
+  Serial.println("ending BIN output");
+*/
+  int numOfAcknowledgedPackets = (size - sizeof(LCMMPacketResponseRecieve))/sizeof(uint16_t);
+  Serial.println("number of acknowledged packets: " + String(numOfAcknowledgedPackets) + "length of header wtf " + String(sizeof(LCMMPacketResponseRecieve))+" actual size "+ String(size));
+  if (waitingForACKSingle && numOfAcknowledgedPackets == 1 &&
+      ackWaitingSingle.id == packet->packetIds[0])
+  {
+    Serial.println("expected packet calling back");
+
+    ackWaitingSingle.callback(ackWaitingSingle.id, true);
+
+    if (ackWaitingSingle.packet != NULL)
+    {
+      free(ackWaitingSingle.packet);
+    }
+    ackWaitingSingle.packet = NULL;
+    ackWaitingSingle.callback = NULL;
+    waitingForACKSingle = false;
+    sending = false;
+  }
+  else
+  {
+    Serial.println("unexpected ack");
   }
 }
 

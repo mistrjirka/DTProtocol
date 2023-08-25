@@ -21,20 +21,20 @@ using namespace std;
 #define PACKET_TYPE_PACKET_NEGOTIATION_REFUSED 6
 #define PACKET_TYPE_PACKET_NEGOTIATION_ACCEPTED 7
 
-typedef struct {
+typedef struct  __attribute__((packed)) {
   MACHeader mac;
   uint8_t type;
   unsigned char data[];
 } LCMMPacketUknownTypeRecieve;
 
 
-typedef struct {
+typedef struct  __attribute__((packed)) {
   MACHeader mac;
   uint8_t type;
   uint16_t packetIds[];
 } LCMMPacketResponseRecieve;
 
-typedef struct {
+typedef struct  __attribute__((packed)) {
   MACHeader mac;
   uint8_t type;
   uint16_t id;
@@ -44,14 +44,14 @@ typedef struct {
   unsigned char data[];
 } LCMMPacketNegotiationRecieve;
 
-typedef struct {
+typedef struct  __attribute__((packed)) {
   MACHeader mac;
   uint8_t type;
   uint16_t id;
   unsigned char data[];
 } LCMMPacketNegotiationResponseRecieve;
 
-typedef struct {
+typedef struct __attribute__((packed)) {
   MACHeader mac;
   uint8_t type;
   uint16_t id;
@@ -59,12 +59,12 @@ typedef struct {
 } LCMMPacketDataRecieve;
 
 
-typedef struct {
+typedef struct __attribute__((packed)) {
   uint8_t type;
   uint16_t packetIds[];
 } LCMMPacketResponse;
 
-typedef struct {
+typedef struct __attribute__((packed)) {
   uint8_t type;
   uint16_t id;
   uint8_t ackInterval; // amount of time after which ack is expected from the point the ack to the transmission has been recieved
@@ -73,13 +73,13 @@ typedef struct {
   unsigned char data[];
 } LCMMPacketNegotiation;
 
-typedef struct {
+typedef struct __attribute__((packed)) {
   uint8_t type;
   uint16_t id;
   unsigned char data[];
 } LCMMPacketNegotiationResponse;
 
-typedef struct {
+typedef struct __attribute__((packed)) {
   uint8_t type;
   uint16_t id;
   unsigned char data[];
@@ -148,6 +148,12 @@ private:
   // Private member variables for LCMM layer
   DataReceivedCallback dataReceived;
   AcknowledgmentCallback transmissionComplete;
+
+  void handleDataNoACK(LCMMPacketDataRecieve *data, uint16_t size);
+  void handleDataACK(LCMMPacketDataRecieve *data, uint16_t size);
+  void handleDataClusterACK(LCMMPacketDataRecieve *data, uint16_t size);
+  void handleACK(LCMMPacketResponseRecieve *data, uint16_t size);
+  void handlePacketNegotiation(LCMMPacketNegotiationRecieve *data, uint16_t size);
 
   // Private helper functions as needed
 };

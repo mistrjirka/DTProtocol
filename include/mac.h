@@ -51,7 +51,7 @@ enum State
   SLEEPING
 };
 
-typedef struct
+typedef struct  __attribute__((packed))
 {
   uint32_t crc32;
   uint16_t sender;
@@ -59,7 +59,7 @@ typedef struct
   unsigned char data[];
 } MACPacket;
 
-typedef struct
+typedef struct __attribute__((packed))
 {
   uint32_t crc32;
   uint16_t sender;
