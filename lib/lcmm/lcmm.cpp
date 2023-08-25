@@ -9,7 +9,7 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
 {
   if (crc != packet->crc32 || size <= 0)
   {
-    Serial.println("crc error" + String(crc) + String(packet->crc32));
+    Serial.println("crc error" + String(crc) + " recieved crc" +String(packet->crc32));
     return;
   }
 
