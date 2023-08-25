@@ -25,4 +25,9 @@ typedef struct{
     uint16_t *proxies;
 } DTPPacketNACK;
 
+class DTP
+{
+
+};
+
 #endif // DTP_H
