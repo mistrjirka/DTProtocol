@@ -121,13 +121,13 @@ void MAC::handlePacket()
 
     uint32_t crcRecieved = packet->crc32;
     packet->crc32 = 0;
-    /*uint32_t crcCalculated =
-        MathExtension.crc32c(0, packet->data, length - sizeof(MACPacket));
-    packet->crc32 = crcRecieved;*/
+    uint32_t crcCalculated =
+        MathExtension.crc32c(0, packet->data, length);
+    packet->crc32 = crcRecieved;
 
     if (RXCallback != nullptr)
     {
-      RXCallback(packet, length, 0);
+      RXCallback(packet, length, crcCalculated);
     }
   }
 }
@@ -266,6 +266,7 @@ MACPacket *MAC::createPacket(uint16_t sender, uint16_t target,
   memcpy((*packet).data, data, size);
 
   (*packet).crc32 = MathExtension.crc32c(0, data, size);
+  Serial.println(" CRC calculated : " + String((*packet).crc32));
 
   return packet;
 }
@@ -291,7 +292,7 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size, uint32
     }
 
     MACPacket *packet = createPacket(this->id, target, data, size);
-    
+
     if (!packet)
       return 2;
     
