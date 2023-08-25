@@ -154,6 +154,7 @@ private:
 
   bool transmissionAuthorized();
   bool waitForTransmissionAuthorization(uint32_t timeout);
+  void calibrateBasedOnLastPacket()
 
   // Private member variables for MAC layer
   PacketReceivedCallback RXCallback;

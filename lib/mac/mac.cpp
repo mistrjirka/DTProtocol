@@ -18,7 +18,7 @@ int MAC::LORANoiseFloorCalibrate(int channel, bool save /* = true */)
 {
   State prev_state = getMode();
   this->setFrequencyAndListen(channel);
-  
+
   // Set frequency to the given channel
   MAC::channel = channel;                         // Set current channel
   int noise_measurements[NUMBER_OF_MEASUREMENTS]; // Array to hold noise
@@ -125,8 +125,6 @@ void MAC::handlePacket()
         MathExtension.crc32c(0, packet->data, length - sizeof(MACPacket));
     packet->crc32 = crcRecieved;*/
 
-    
-
     if (RXCallback != nullptr)
     {
       RXCallback(packet, length, 0);
@@ -136,7 +134,8 @@ void MAC::handlePacket()
 
 void MAC::loop()
 {
-  if(operationDone && getMode() == RECEIVING){
+  if (operationDone && getMode() == RECEIVING)
+  {
     operationDone = false;
     Serial.println("PacketReceived");
     this->handlePacket();
@@ -283,10 +282,8 @@ MACPacket *MAC::createPacket(uint16_t sender, uint16_t target,
 
 uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size, uint32_t timeout /*= 5000*/)
 {
-  
   if (this->getMode() != SENDING)
   {
-
     if (size > DATASIZE_MAC)
     {
       Serial.println("Data size cannot be greater than 247 bytes\n");
@@ -294,18 +291,12 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size, uint32
     }
 
     MACPacket *packet = createPacket(this->id, target, data, size);
+    
     if (!packet)
-    {
       return 2;
-    }
-    float frequencyError = (float)this->module.getFrequencyError();
-    if(frequencyError > 500){
-      Serial.println("Previous frequency: " + String(this->calibratedFrequency));
+    
 
-      this->calibratedFrequency -= frequencyError/1000000;
-      Serial.println("Previous frequency: " + String(this->channels[channel]) + " frequency error: " + String(frequencyError) + " calibrated frequency: " + String(this->calibratedFrequency));
-      this->module.setFrequency(this->calibratedFrequency);
-  }
+    calibrateBasedOnLastPacket();
     uint8_t finalPacketLength = MAC_OVERHEAD + size;
     unsigned char *packetBytes = (unsigned char *)packet;
 
@@ -334,6 +325,19 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size, uint32
   return 0;
 }
 
+void MAC::calibrateBasedOnLastPacket()
+{
+  float frequencyError = (float)this->module.getFrequencyError();
+  if (frequencyError > 500 && frequencyError<this->channels[this->channel] * 1000000 * 1.0001, frequencyError> this->channels[this->channel] * 1000000 * 0.9999)
+  {
+    Serial.println("Previous frequency: " + String(this->calibratedFrequency));
+
+    this->calibratedFrequency -= frequencyError / 1000000;
+    Serial.println("Previous frequency: " + String(this->channels[channel]) + " frequency error: " + String(frequencyError) + " calibrated frequency: " + String(this->calibratedFrequency));
+    this->module.setFrequency(this->calibratedFrequency);
+  }
+}
+
 /**
  * Waits for transmission authorization for a given timeout period.
  * @param timeout The timeout period in milliseconds.
@@ -343,13 +347,13 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size, uint32
 
 bool MAC::waitForTransmissionAuthorization(uint32_t timeout)
 {
-  uint32_t start = millis() ;
+  uint32_t start = millis();
   Serial.println("waiting for transmission authorization" + String(timeout) + "start" + String(start));
   while (millis() - start < timeout && !transmissionAuthorized())
   {
-    delay(TIME_BETWEENMEASUREMENTS/3);
+    delay(TIME_BETWEENMEASUREMENTS / 3);
   }
-  Serial.println("done waiting for transmission authorization end " + String(start-millis()));
+  Serial.println("done waiting for transmission authorization end " + String(start - millis()));
   return millis() - start < timeout;
 }
 
