@@ -119,7 +119,7 @@ public:
 
   uint16_t sendPacketSingle(bool needACK, uint16_t target, unsigned char *data,
                         uint8_t size, AcknowledgmentCallback callback,
-                        uint32_t timeout = 10000, uint8_t attempts = 3);
+                        uint32_t timeout = 3000, uint8_t attempts = 3);
   
   void loop();
   // Other member functions as needed
