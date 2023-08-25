@@ -117,8 +117,14 @@ void MAC::handlePacket()
       return;
     }
 
-    MACPacket *packet = (MACPacket *)data;
 
+
+    MACPacket *packet = (MACPacket *)data;
+    if(packet->target!=this->id){
+      free(data);
+      Serial.println("not for me");
+      return;
+    }
     uint32_t crcRecieved = packet->crc32;
     packet->crc32 = 0;
     uint32_t crcCalculated =
