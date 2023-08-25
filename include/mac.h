@@ -149,6 +149,8 @@ private:
   static void setFlag(void);
   
   void setFrequencyAndListen(uint16_t);
+  void setFrequency(uint16_t channel);
+
 
   bool transmissionAuthorized();
   bool waitForTransmissionAuthorization(uint32_t timeout);

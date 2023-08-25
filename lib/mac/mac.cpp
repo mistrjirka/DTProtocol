@@ -70,6 +70,14 @@ void MAC::setFrequencyAndListen(uint16_t channel)
   this->module.startReceive();
 }
 
+void MAC::setFrequency(uint16_t channel)
+{
+  if (getMode() == SLEEPING)
+    setMode(IDLE);
+  this->module.setFrequency(channels[channel]); // Set frequency to the given channel
+  this->calibratedFrequency = channels[channel];
+}
+
 void MAC::LORANoiseCalibrateAllChannels(bool save /*= true*/)
 {
   State prev_state = getMode();
@@ -82,8 +90,8 @@ void MAC::LORANoiseCalibrateAllChannels(bool save /*= true*/)
   }
   MAC::channel = previusChannel;
   // Set LoRa to idle and set frequency to current channel
-  this->module.setFrequency(channels[previusChannel]);
-  this->calibratedFrequency = channels[previusChannel];
+  setFrequency(previusChannel);
+
   setMode(prev_state);
 }
 

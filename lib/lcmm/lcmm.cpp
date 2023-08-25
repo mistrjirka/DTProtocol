@@ -34,24 +34,18 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
     // Handle unknown packet type
     break;
   }
+}
 
-  // Other member function implementations...
-
-  if (type == PACKET_TYPE_ACK)
+void LCMM::clearSendingPacket()
+{
+  if (LCMM::ackWaitingSingle.packet != NULL)
   {
+    free(LCMM::ackWaitingSingle.packet);
   }
-  else if (type == PACKET_TYPE_DATA_CLUSTER_ACK)
-  {
-    // Handle PACKET_TYPE_DATA_CLUSTER_ACK
-  }
-  else if (type == PACKET_TYPE_PACKET_NEGOTIATION ||
-           type == PACKET_TYPE_PACKET_NEGOTIATION_REFUSED ||
-           type == PACKET_TYPE_PACKET_NEGOTIATION_ACCEPTED)
-  {
-    // Handle PACKET_TYPE_PACKET_NEGOTIATION,
-    // PACKET_TYPE_PACKET_NEGOTIATION_REFUSED,
-    // PACKET_TYPE_PACKET_NEGOTIATION_ACCEPTED
-  }
+  LCMM::ackWaitingSingle.packet = NULL;
+  LCMM::ackWaitingSingle.callback = NULL;
+  LCMM::waitingForACKSingle = false;
+  LCMM::sending = false;
 }
 
 void LCMM::handleDataNoACK(LCMMPacketDataRecieve *packet, uint16_t size)
@@ -90,8 +84,8 @@ void LCMM::handleACK(LCMMPacketResponseRecieve *packet, uint16_t size)
   Serial.println("ending BIN output");
 */
 
-  int numOfAcknowledgedPackets = (size - sizeof(LCMMPacketResponseRecieve))/sizeof(uint16_t);
-  Serial.println("number of acknowledged packets: " + String(numOfAcknowledgedPackets) + "length of header wtf " + String(sizeof(LCMMPacketResponseRecieve))+" actual size "+ String(size));
+  int numOfAcknowledgedPackets = (size - sizeof(LCMMPacketResponseRecieve)) / sizeof(uint16_t);
+  Serial.println("number of acknowledged packets: " + String(numOfAcknowledgedPackets) + "length of header wtf " + String(sizeof(LCMMPacketResponseRecieve)) + " actual size " + String(size));
   if (waitingForACKSingle && numOfAcknowledgedPackets == 1 &&
       ackWaitingSingle.id == packet->packetIds[0])
   {
@@ -100,14 +94,7 @@ void LCMM::handleACK(LCMMPacketResponseRecieve *packet, uint16_t size)
 
     ackWaitingSingle.callback(ackWaitingSingle.id, true);
 
-    if (ackWaitingSingle.packet != NULL)
-    {
-      free(ackWaitingSingle.packet);
-    }
-    ackWaitingSingle.packet = NULL;
-    ackWaitingSingle.callback = NULL;
-    waitingForACKSingle = false;
-    sending = false;
+    this->clearSendingPacket();
   }
   else
   {
@@ -138,14 +125,7 @@ bool LCMM::timeoutHandler()
       {
         Serial.println("\n\n\nTRANSMIT COMPLETELY FAILED \n\n\n");
         LCMM::ackWaitingSingle.callback(LCMM::ackWaitingSingle.id, false);
-        if (LCMM::ackWaitingSingle.packet != NULL)
-        {
-          free(LCMM::ackWaitingSingle.packet);
-        }
-        LCMM::ackWaitingSingle.packet = NULL;
-        LCMM::ackWaitingSingle.callback = NULL;
-        LCMM::waitingForACKSingle = false;
-        LCMM::sending = false;
+        LCMM::getInstance()->clearSendingPacket();
 
         return false;
       }
@@ -213,29 +193,25 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
     Serial.println("already sending\n");
     return 0;
   }
+
   this->packetSendStart = millis();
+
   LCMMPacketData *packet =
       (LCMMPacketData *)malloc(sizeof(LCMMPacketData) + size);
+
   packet->id = LCMM::packetId++;
   packet->type = needACK ? 1 : 0;
   memcpy(packet->data, data, size);
+
   LCMM::sending = true;
   MAC::getInstance()->sendData(target, (unsigned char *)packet,
                                sizeof(LCMMPacketData) + size, timeout);
+
   if (needACK)
   {
-    ACKWaitingSingle callbackStruct;
-    callbackStruct.callback = callback;
-    callbackStruct.timeout = timeout;
-    callbackStruct.id = packet->id;
-    callbackStruct.packet = packet;
-    callbackStruct.attemptsLeft = attempts;
-    callbackStruct.timeLeft = timeout;
-    callbackStruct.target = target;
-    callbackStruct.size = size;
     waitingForACKSingle = true;
-    // add_repeating_timer_ms(timeout, timeoutHandler, NULL, &LCMM::ackTimer);
-    ackWaitingSingle = callbackStruct;
+    ackWaitingSingle = prepareAckWaitingSingle(callback, timeout, packet,
+                                               attempts, target, size);
     lastTick = millis();
   }
   else
@@ -244,4 +220,20 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
     LCMM::sending = false;
   }
   return packet->id;
+}
+
+LCMM::ACKWaitingSingle LCMM::prepareAckWaitingSingle(
+    AcknowledgmentCallback callback, uint32_t timeout, LCMMPacketData *packet,
+    uint8_t attemptsLeft, uint16_t target, uint8_t size)
+{
+  ACKWaitingSingle callbackStruct;
+  callbackStruct.callback = callback;
+  callbackStruct.timeout = timeout;
+  callbackStruct.id = packet->id;
+  callbackStruct.packet = packet;
+  callbackStruct.attemptsLeft = attemptsLeft;
+  callbackStruct.timeLeft = timeout;
+  callbackStruct.target = target;
+  callbackStruct.size = size;
+  return callbackStruct;
 }

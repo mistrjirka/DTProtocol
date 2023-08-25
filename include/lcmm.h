@@ -11,81 +11,89 @@
 #include <stdlib.h>
 
 using namespace std;
- 
+
 #define PACKET_TYPE_DATA_NOACK 0
 #define PACKET_TYPE_DATA_ACK 1
 #define PACKET_TYPE_DATA_CLUSTER_ACK 2
-//#define PACKET_TYPE_DATA_SET 3
+// #define PACKET_TYPE_DATA_SET 3
 #define PACKET_TYPE_ACK 4
 #define PACKET_TYPE_PACKET_NEGOTIATION 5
 #define PACKET_TYPE_PACKET_NEGOTIATION_REFUSED 6
 #define PACKET_TYPE_PACKET_NEGOTIATION_ACCEPTED 7
 
-typedef struct  __attribute__((packed)) {
+typedef struct __attribute__((packed))
+{
   MACHeader mac;
   uint8_t type;
   unsigned char data[];
 } LCMMPacketUknownTypeRecieve;
 
-
-typedef struct  __attribute__((packed)) {
+typedef struct __attribute__((packed))
+{
   MACHeader mac;
   uint8_t type;
   uint16_t packetIds[];
 } LCMMPacketResponseRecieve;
 
-typedef struct  __attribute__((packed)) {
+typedef struct __attribute__((packed))
+{
   MACHeader mac;
   uint8_t type;
   uint16_t id;
-  uint8_t ackInterval; // amount of time after which ack is expected from the point the ack to the transmission has been recieved
+  uint8_t ackInterval;    // amount of time after which ack is expected from the point the ack to the transmission has been recieved
   uint16_t packetIdStart; // number of packets being send
-  uint16_t packetIdEnd; // number of packets to be sent
+  uint16_t packetIdEnd;   // number of packets to be sent
   unsigned char data[];
 } LCMMPacketNegotiationRecieve;
 
-typedef struct  __attribute__((packed)) {
+typedef struct __attribute__((packed))
+{
   MACHeader mac;
   uint8_t type;
   uint16_t id;
   unsigned char data[];
 } LCMMPacketNegotiationResponseRecieve;
 
-typedef struct __attribute__((packed)) {
+typedef struct __attribute__((packed))
+{
   MACHeader mac;
   uint8_t type;
   uint16_t id;
   unsigned char data[];
 } LCMMPacketDataRecieve;
 
-
-typedef struct __attribute__((packed)) {
+typedef struct __attribute__((packed))
+{
   uint8_t type;
   uint16_t packetIds[];
 } LCMMPacketResponse;
 
-typedef struct __attribute__((packed)) {
+typedef struct __attribute__((packed))
+{
   uint8_t type;
   uint16_t id;
-  uint8_t ackInterval; // amount of time after which ack is expected from the point the ack to the transmission has been recieved
+  uint8_t ackInterval;    // amount of time after which ack is expected from the point the ack to the transmission has been recieved
   uint16_t packetIdStart; // number of packets being send
-  uint16_t packetIdEnd; // number of packets to be sent
+  uint16_t packetIdEnd;   // number of packets to be sent
   unsigned char data[];
 } LCMMPacketNegotiation;
 
-typedef struct __attribute__((packed)) {
+typedef struct __attribute__((packed))
+{
   uint8_t type;
   uint16_t id;
   unsigned char data[];
 } LCMMPacketNegotiationResponse;
 
-typedef struct __attribute__((packed)) {
+typedef struct __attribute__((packed))
+{
   uint8_t type;
   uint16_t id;
   unsigned char data[];
 } LCMMPacketData;
 
-class LCMM {
+class LCMM
+{
 public:
   static void RecievedPacket(int size);
   // Callback function type definition
@@ -93,8 +101,9 @@ public:
       function<void(LCMMPacketDataRecieve *data, uint32_t size)>;
   using AcknowledgmentCallback =
       function<void(uint16_t packetId, bool success)>;
-  int currentPing;  
- struct ACKWaitingSingle {
+  int currentPing;
+  struct ACKWaitingSingle
+  {
     AcknowledgmentCallback callback;
     LCMMPacketData *packet;
     int timeout;
@@ -109,7 +118,7 @@ public:
 
   // Function to initialize the LCMM layer
   static void initialize(DataReceivedCallback dataRecieved,
-                  AcknowledgmentCallback TransmissionComplete);
+                         AcknowledgmentCallback TransmissionComplete);
 
   // Function to handle incoming packets or events
   void handlePacket(/* Parameters as per your protocol */);
@@ -118,14 +127,13 @@ public:
                        uint32_t timeout = 50000, uint8_t attempts = 8);
 
   uint16_t sendPacketSingle(bool needACK, uint16_t target, unsigned char *data,
-                        uint8_t size, AcknowledgmentCallback callback,
-                        uint32_t timeout = 3000, uint8_t attempts = 3);
-  
+                            uint8_t size, AcknowledgmentCallback callback,
+                            uint32_t timeout = 3000, uint8_t attempts = 3);
+
   void loop();
   // Other member functions as needed
 
 private:
-
   static bool sending;
   static void ReceivePacket(MACPacket *packet, uint16_t size, uint32_t correct);
   static ACKWaitingSingle ackWaitingSingle;
@@ -135,7 +143,7 @@ private:
   static bool timeoutHandler();
   int lastTick;
   int packetSendStart;
-  //static repeating_timer_t ackTimer;
+  // static repeating_timer_t ackTimer;
   LCMM(DataReceivedCallback dataRecieved,
        AcknowledgmentCallback TransmissionComplete);
 
@@ -155,7 +163,10 @@ private:
   void handleDataClusterACK(LCMMPacketDataRecieve *data, uint16_t size);
   void handleACK(LCMMPacketResponseRecieve *data, uint16_t size);
   void handlePacketNegotiation(LCMMPacketNegotiationRecieve *data, uint16_t size);
-
+  void clearSendingPacket();
+  ACKWaitingSingle prepareAckWaitingSingle(
+      AcknowledgmentCallback callback, uint32_t timeout, LCMMPacketData *packet,
+      uint8_t attemptsLeft, uint16_t target, uint8_t size);
   // Private helper functions as needed
 };
 
