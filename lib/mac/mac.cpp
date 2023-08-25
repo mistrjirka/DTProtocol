@@ -116,10 +116,10 @@ void MAC::handlePacket()
         MathExtension.crc32c(0, packet->data, length - sizeof(MACPacket));
     packet->crc32 = crcRecieved;*/
 
-    int frequencyError = this->module.getFrequencyError();
-    this->calibratedFrequency -= frequencyError/1000000;
+    double frequencyError = (double)this->module.getFrequencyError();
+    this->calibratedFrequency += frequencyError/1000000;
+    Serial.println("Previous frequency: " + String(this->channels[channel]) + " frequency error: " + String(frequencyError) + " calibrated frequency: " + String(this->calibratedFrequency));
     this->module.setFrequency(this->calibratedFrequency);
-    Serial.println("frequency error " + String(frequencyError) + " calibrated frequency " + String(this->calibratedFrequency));
 
     if (RXCallback != nullptr)
     {
