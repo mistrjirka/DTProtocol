@@ -117,14 +117,7 @@ void MAC::handlePacket()
         MathExtension.crc32c(0, packet->data, length - sizeof(MACPacket));
     packet->crc32 = crcRecieved;*/
 
-    float frequencyError = (float)this->module.getFrequencyError();
-    if(frequencyError > 500){
-      Serial.println("Previous frequency: " + String(this->calibratedFrequency));
-
-      this->calibratedFrequency -= frequencyError/1000000;
-      Serial.println("Previous frequency: " + String(this->channels[channel]) + " frequency error: " + String(frequencyError) + " calibrated frequency: " + String(this->calibratedFrequency));
-      this->module.setFrequency(this->calibratedFrequency);
-    }
+    
 
     if (RXCallback != nullptr)
     {
@@ -282,6 +275,7 @@ MACPacket *MAC::createPacket(uint16_t sender, uint16_t target,
 
 uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size, uint32_t timeout /*= 5000*/)
 {
+  
   if (this->getMode() != SENDING)
   {
 
@@ -296,7 +290,14 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size, uint32
     {
       return 2;
     }
+    float frequencyError = (float)this->module.getFrequencyError();
+    if(frequencyError > 500){
+      Serial.println("Previous frequency: " + String(this->calibratedFrequency));
 
+      this->calibratedFrequency -= frequencyError/1000000;
+      Serial.println("Previous frequency: " + String(this->channels[channel]) + " frequency error: " + String(frequencyError) + " calibrated frequency: " + String(this->calibratedFrequency));
+      this->module.setFrequency(this->calibratedFrequency);
+  }
     uint8_t finalPacketLength = MAC_OVERHEAD + size;
     unsigned char *packetBytes = (unsigned char *)packet;
 
