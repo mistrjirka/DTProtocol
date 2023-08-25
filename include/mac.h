@@ -123,6 +123,7 @@ private:
   int squelch;
   int power;
   int coding_rate;
+  double calibratedFrequency;
   bool readyToReceive;
   bool packetTransmitting;
   // Private constructor

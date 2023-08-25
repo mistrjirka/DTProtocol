@@ -93,7 +93,7 @@ public:
       function<void(LCMMPacketDataRecieve *data, uint32_t size)>;
   using AcknowledgmentCallback =
       function<void(uint16_t packetId, bool success)>;
-      
+  int currentPing;  
  struct ACKWaitingSingle {
     AcknowledgmentCallback callback;
     LCMMPacketData *packet;
@@ -134,6 +134,7 @@ private:
   static LCMM *lcmm;
   static bool timeoutHandler();
   int lastTick;
+  int packetSendStart;
   //static repeating_timer_t ackTimer;
   LCMM(DataReceivedCallback dataRecieved,
        AcknowledgmentCallback TransmissionComplete);

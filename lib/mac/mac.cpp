@@ -18,6 +18,7 @@ int MAC::LORANoiseFloorCalibrate(int channel, bool save /* = true */)
 {
   State prev_state = getMode();
   this->setFrequencyAndListen(channel);
+  
   // Set frequency to the given channel
   MAC::channel = channel;                         // Set current channel
   int noise_measurements[NUMBER_OF_MEASUREMENTS]; // Array to hold noise
@@ -65,6 +66,7 @@ void MAC::setFrequencyAndListen(uint16_t channel)
     setMode(IDLE);
   setMode(RECEIVING);
   this->module.setFrequency(channels[channel]); // Set frequency to the given channel
+  this->calibratedFrequency = channels[channel];
   this->module.startReceive();
 }
 
@@ -113,6 +115,12 @@ void MAC::handlePacket()
     /*uint32_t crcCalculated =
         MathExtension.crc32c(0, packet->data, length - sizeof(MACPacket));
     packet->crc32 = crcRecieved;*/
+
+    int frequencyError = this->module.getFrequencyError();
+    this->calibratedFrequency -= frequencyError/1000000;
+    this->module.setFrequency(this->calibratedFrequency);
+    Serial.println("frequency error " + String(frequencyError) + " calibrated frequency " + String(this->calibratedFrequency));
+
     if (RXCallback != nullptr)
     {
       RXCallback(packet, length, 0);
@@ -321,12 +329,14 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size, uint32
 
 bool MAC::waitForTransmissionAuthorization(uint32_t timeout)
 {
-  uint32_t start = millis() / 1000;
-  while (millis() / 1000 - start < timeout && !transmissionAuthorized())
+  uint32_t start = millis() ;
+  Serial.println("waiting for transmission authorization" + String(timeout) + "start" + String(start));
+  while (millis() - start < timeout && !transmissionAuthorized())
   {
     delay(TIME_BETWEENMEASUREMENTS/3);
   }
-  return millis() / 1000 - start < timeout;
+  Serial.println("done waiting for transmission authorization end " + String(start-millis()));
+  return millis() - start < timeout;
 }
 
 bool MAC::transmissionAuthorized()

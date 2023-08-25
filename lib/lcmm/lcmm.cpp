@@ -61,6 +61,7 @@ void LCMM::handleDataNoACK(LCMMPacketDataRecieve *packet, uint16_t size)
 
 void LCMM::handleDataACK(LCMMPacketDataRecieve *packet, uint16_t size)
 {
+
   LCMMPacketResponse *response = (LCMMPacketResponse *)malloc(sizeof(LCMMPacketResponse) + 2);
   if (response == NULL)
   {
@@ -88,12 +89,14 @@ void LCMM::handleACK(LCMMPacketResponseRecieve *packet, uint16_t size)
   }
   Serial.println("ending BIN output");
 */
+
   int numOfAcknowledgedPackets = (size - sizeof(LCMMPacketResponseRecieve))/sizeof(uint16_t);
   Serial.println("number of acknowledged packets: " + String(numOfAcknowledgedPackets) + "length of header wtf " + String(sizeof(LCMMPacketResponseRecieve))+" actual size "+ String(size));
   if (waitingForACKSingle && numOfAcknowledgedPackets == 1 &&
       ackWaitingSingle.id == packet->packetIds[0])
   {
     Serial.println("expected packet calling back");
+    currentPing = millis() - packetSendStart;
 
     ackWaitingSingle.callback(ackWaitingSingle.id, true);
 
@@ -210,6 +213,7 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
     Serial.println("already sending\n");
     return 0;
   }
+  this->packetSendStart = millis();
   LCMMPacketData *packet =
       (LCMMPacketData *)malloc(sizeof(LCMMPacketData) + size);
   packet->id = LCMM::packetId++;
