@@ -82,7 +82,8 @@ void MAC::LORANoiseCalibrateAllChannels(bool save /*= true*/)
   }
   MAC::channel = previusChannel;
   // Set LoRa to idle and set frequency to current channel
-  this->setFrequencyAndListen(channels[previusChannel]);
+  this->module.setFrequency(channels[previusChannel]);
+  this->calibratedFrequency = channels[previusChannel];
   setMode(prev_state);
 }
 
@@ -116,12 +117,14 @@ void MAC::handlePacket()
         MathExtension.crc32c(0, packet->data, length - sizeof(MACPacket));
     packet->crc32 = crcRecieved;*/
 
-    float frequencyError = (float)this->module.getFrequencyError()/1000000;
-    Serial.println("Previous frequency: " + String(this->calibratedFrequency));
+    float frequencyError = (float)this->module.getFrequencyError();
+    if(frequencyError > 500){
+      Serial.println("Previous frequency: " + String(this->calibratedFrequency));
 
-    this->calibratedFrequency -= frequencyError;
-    Serial.println("Previous frequency: " + String(this->channels[channel]) + " frequency error: " + String(frequencyError*1000000) + " calibrated frequency: " + String(this->calibratedFrequency));
-    this->module.setFrequency(this->calibratedFrequency);
+      this->calibratedFrequency -= frequencyError/1000000;
+      Serial.println("Previous frequency: " + String(this->channels[channel]) + " frequency error: " + String(frequencyError) + " calibrated frequency: " + String(this->calibratedFrequency));
+      this->module.setFrequency(this->calibratedFrequency);
+    }
 
     if (RXCallback != nullptr)
     {
