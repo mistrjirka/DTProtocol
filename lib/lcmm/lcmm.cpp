@@ -141,6 +141,7 @@ bool LCMM::timeoutHandler()
                                          LCMM::ackWaitingSingle.size,
                                      LCMM::ackWaitingSingle.timeout);
         uint32_t timeAfterSending = millis();
+
         LCMM::ackWaitingSingle.timeLeft = LCMM::ackWaitingSingle.timeout + timeBeforeSending - timeAfterSending;
       }
     }
@@ -231,13 +232,14 @@ LCMM::ACKWaitingSingle LCMM::prepareAckWaitingSingle(
     AcknowledgmentCallback callback, uint32_t timeout, LCMMPacketData *packet,
     uint8_t attemptsLeft, uint16_t target, uint8_t size, uint32_t timeBeforeSending, uint32_t timeAfterSending)
 {
+  Serial.println("time on air: " + String(MathExtension.timeOnAir(size + MAC_OVERHEAD, 8, 9, 125, 7)));
   ACKWaitingSingle callbackStruct;
   callbackStruct.callback = callback;
-  callbackStruct.timeout = timeout + MathExtension.timeOnAir(size, 8, 9, 125, 7);
+  callbackStruct.timeout = timeout + MathExtension.timeOnAir(size + MAC_OVERHEAD, 8, 9, 125, 7);
   callbackStruct.id = packet->id;
   callbackStruct.packet = packet;
   callbackStruct.attemptsLeft = attemptsLeft;
-  callbackStruct.timeLeft = timeout + timeBeforeSending - timeAfterSending + MathExtension.timeOnAir(size, 8, 9, 125, 7);
+  callbackStruct.timeLeft = timeout + timeBeforeSending - timeAfterSending + (int)MathExtension.timeOnAir(size + MAC_OVERHEAD, 8, 9, 125, 7);
   callbackStruct.target = target;
   callbackStruct.size = size;
   return callbackStruct;
