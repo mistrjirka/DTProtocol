@@ -97,15 +97,15 @@ void MAC::LORANoiseCalibrateAllChannels(bool save /*= true*/)
 
 void MAC::handlePacket()
 {
-  Serial.println("packet received");
+  //Serial.println("packet received");
   uint16_t length = this->module.getPacketLength(true);
   if (length)
   {
-    Serial.println(length);
+    //Serial.println(length);
     uint8_t *data = (uint8_t *)malloc(sizeof(uint8_t) * length);
     if (data == NULL)
     {
-      Serial.println("failed to allocate");
+      //Serial.println("failed to allocate");
       return;
     }
 
@@ -113,7 +113,7 @@ void MAC::handlePacket()
 
     if (state != RADIOLIB_ERR_NONE)
     {
-      Serial.print("Error during recieve \n");
+      //Serial.print("Error during recieve \n");
       return;
     }
 
@@ -122,7 +122,7 @@ void MAC::handlePacket()
     MACPacket *packet = (MACPacket *)data;
     if(packet->target && packet->target!=this->id){
       free(data);
-      Serial.println("not for me");
+      //Serial.println("not for me");
       return;
     }
     uint32_t crcRecieved = packet->crc32;
@@ -143,15 +143,15 @@ void MAC::loop()
   if (operationDone && getMode() == RECEIVING)
   {
     operationDone = false;
-    Serial.println("PacketReceived");
+    //Serial.println("PacketReceived");
     this->handlePacket();
   }
   if (operationDone && getMode() == SENDING)
   {
     operationDone = false;
-    Serial.println("transmit done");
+    //Serial.println("transmit done");
     this->module.finishTransmit();
-    setMode(RECEIVING);
+    setMode(RECEIVING, true);
   }
 }
 // this function is called when a complete packet
@@ -168,7 +168,7 @@ bool check(int statuscode)
 {
   if (statuscode != 0)
   {
-    Serial.println("wrong settings error " + String(statuscode));
+    //Serial.println("wrong settings error " + String(statuscode));
     return false;
   }
   return true;
@@ -195,10 +195,10 @@ MAC::MAC(
   this->squelch = squelch;
   this->power = default_power;
   this->coding_rate = default_coding_rate;
-  Serial.println(String(default_power) + " " + String(default_spreading_factor) + " " + String(default_coding_rate) + " " + String(DEFAULT_SYNC_WORD) + " " + String(DEFAULT_PREAMBLE_LENGTH));
+  //Serial.println(String(default_power) + " " + String(default_spreading_factor) + " " + String(default_coding_rate) + " " + String(DEFAULT_SYNC_WORD) + " " + String(DEFAULT_PREAMBLE_LENGTH));
   // Initialize the LoRa module with the specified settings
   check(this->module.setFrequency(channels[channel]));
-  Serial.println("frequency" + String(channels[channel]));
+  //Serial.println("frequency" + String(channels[channel]));
   check(this->module.setOutputPower(default_power));
   check(this->module.setBandwidth(default_bandwidth));
 
@@ -209,9 +209,9 @@ MAC::MAC(
 
   this->module.setDio1Action(setFlag);
 
-  Serial.print("Calibration->");
+  //Serial.print("Calibration->");
   LORANoiseCalibrateAllChannels(true);
-  Serial.println("Calibration done");
+  //Serial.println("Calibration done");
   setMode(RECEIVING, true);
 }
 
@@ -272,7 +272,7 @@ MACPacket *MAC::createPacket(uint16_t sender, uint16_t target,
   memcpy((*packet).data, data, size);
 
   (*packet).crc32 = MathExtension.crc32c(0, data, size);
-  Serial.println(" CRC calculated : " + String((*packet).crc32));
+  //Serial.println(" CRC calculated : " + String((*packet).crc32));
 
   return packet;
 }
@@ -293,7 +293,7 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size, uint32
   {
     if (size > DATASIZE_MAC)
     {
-      Serial.println("Data size cannot be greater than 247 bytes\n");
+      //Serial.println("Data size cannot be greater than 247 bytes\n");
       return 3;
     }
 
@@ -314,19 +314,19 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size, uint32
       return 1;
     }
 
-    Serial.print("starting to send->" + String(finalPacketLength));
+    //Serial.print("starting to send->" + String(finalPacketLength));
     operationDone = false;
 
     setMode(SENDING);
 
     check(this->module.startTransmit(packetBytes, finalPacketLength));
-    Serial.println("transmit start completed");
+    //Serial.println("transmit start completed");
 
     free(packetBytes);
   }
   else
   {
-    Serial.println("busy");
+    //Serial.println("busy");
   }
 
   return 0;
@@ -337,10 +337,10 @@ void MAC::calibrateBasedOnLastPacket()
   float frequencyError = (float)this->module.getFrequencyError();
   if (frequencyError > 500 && frequencyError<this->channels[this->channel] * 1000000 * 1.0001, frequencyError> this->channels[this->channel] * 1000000 * 0.9999)
   {
-    Serial.println("Previous frequency: " + String(this->calibratedFrequency));
+    //Serial.println("Previous frequency: " + String(this->calibratedFrequency));
 
     this->calibratedFrequency -= frequencyError / 1000000;
-    Serial.println("Previous frequency: " + String(this->channels[channel]) + " frequency error: " + String(frequencyError) + " calibrated frequency: " + String(this->calibratedFrequency));
+    //Serial.println("Previous frequency: " + String(this->channels[channel]) + " frequency error: " + String(frequencyError) + " calibrated frequency: " + String(this->calibratedFrequency));
     this->module.setFrequency(this->calibratedFrequency);
   }
 }
@@ -355,12 +355,12 @@ void MAC::calibrateBasedOnLastPacket()
 bool MAC::waitForTransmissionAuthorization(uint32_t timeout)
 {
   uint32_t start = millis();
-  Serial.println("waiting for transmission authorization" + String(timeout) + "start" + String(start));
+  //Serial.println("waiting for transmission authorization" + String(timeout) + "start" + String(start));
   while (millis() - start < timeout && !transmissionAuthorized())
   {
     delay(TIME_BETWEENMEASUREMENTS / 3);
   }
-  Serial.println("done waiting for transmission authorization end " + String(start - millis()));
+  //Serial.println("done waiting for transmission authorization end " + String(start - millis()));
   return millis() - start < timeout;
 }
 
@@ -377,8 +377,8 @@ bool MAC::transmissionAuthorized()
     rssi += this->module.getRSSI(false);
   }
   rssi /= NUMBER_OF_MEASUREMENTS_LBT;
-  Serial.println("RSSI: " + String(rssi) + "noise floor" + String(noiseFloor[channel] + squelch));
-  // Serial.printf("rssi %d roof %d \n ", rssi, noiseFloor[channel] + squelch);
+  //Serial.println("RSSI: " + String(rssi) + "noise floor" + String(noiseFloor[channel] + squelch));
+  // //Serial.printf("rssi %d roof %d \n ", rssi, noiseFloor[channel] + squelch);
 
   setMode(previousMode);
   return rssi < noiseFloor[channel] + squelch;

@@ -9,12 +9,12 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
 {
   if (crc != packet->crc32 || size <= 0)
   {
-    Serial.println("crc error" + String(crc) + " recieved crc" + String(packet->crc32));
+    //Serial.println("crc error" + String(crc) + " recieved crc" + String(packet->crc32));
     return;
   }
 
   uint8_t type = ((LCMMPacketUknownTypeRecieve *)packet)->type;
-  Serial.println("RECIEVIED packet response type: " + String(type));
+  //Serial.println("RECIEVIED packet response type: " + String(type));
 
   switch (type)
   {
@@ -59,11 +59,11 @@ void LCMM::handleDataACK(LCMMPacketDataRecieve *packet, uint16_t size)
   LCMMPacketResponse *response = (LCMMPacketResponse *)malloc(sizeof(LCMMPacketResponse) + 2);
   if (response == NULL)
   {
-    Serial.println("Error allocating memory for response\n");
+    //Serial.println("Error allocating memory for response\n");
     return;
   }
   response->type = PACKET_TYPE_ACK;
-  Serial.println("packet number" + String(packet->id));
+  //Serial.println("packet number" + String(packet->id));
 
   response->packetIds[0] = packet->id;
 
@@ -74,22 +74,22 @@ void LCMM::handleDataACK(LCMMPacketDataRecieve *packet, uint16_t size)
 
 void LCMM::handleACK(LCMMPacketResponseRecieve *packet, uint16_t size)
 {
-  /*Serial.println("packet type ack received");
-  Serial.println(" exxpected packet ID" + String(ackWaitingSingle.id) + " recieved Packet id: " + String(packet->packetIds[0]) + "  sender" + String(packet->mac.sender));
-  Serial.println("starting BIN output");
+  /*//Serial.println("packet type ack received");
+  //Serial.println(" exxpected packet ID" + String(ackWaitingSingle.id) + " recieved Packet id: " + String(packet->packetIds[0]) + "  sender" + String(packet->mac.sender));
+  //Serial.println("starting BIN output");
   for (int i = 0; i < size; i++)
   {
-    Serial.println(((uint8_t *)packet)[i]);
+    //Serial.println(((uint8_t *)packet)[i]);
   }
-  Serial.println("ending BIN output");
+  //Serial.println("ending BIN output");
 */
 
   int numOfAcknowledgedPackets = (size - sizeof(LCMMPacketResponseRecieve)) / sizeof(uint16_t);
-  Serial.println("number of acknowledged packets: " + String(numOfAcknowledgedPackets) + "length of header wtf " + String(sizeof(LCMMPacketResponseRecieve)) + " actual size " + String(size));
+  //Serial.println("number of acknowledged packets: " + String(numOfAcknowledgedPackets) + "length of header wtf " + String(sizeof(LCMMPacketResponseRecieve)) + " actual size " + String(size));
   if (waitingForACKSingle && numOfAcknowledgedPackets == 1 &&
       ackWaitingSingle.id == packet->packetIds[0])
   {
-    Serial.println("expected packet calling back");
+    //Serial.println("expected packet calling back");
     currentPing = millis() - packetSendStart;
 
     ackWaitingSingle.callback(ackWaitingSingle.id, true);
@@ -98,7 +98,7 @@ void LCMM::handleACK(LCMMPacketResponseRecieve *packet, uint16_t size)
   }
   else
   {
-    Serial.println("unexpected ack");
+    //Serial.println("unexpected ack");
   }
 }
 
@@ -124,7 +124,7 @@ bool LCMM::timeoutHandler()
     {
       if (--LCMM::ackWaitingSingle.attemptsLeft <= 0)
       {
-        Serial.println("\n\n\nTRANSMIT COMPLETELY FAILED \n\n\n");
+        //Serial.println("\n\n\nTRANSMIT COMPLETELY FAILED \n\n\n");
         LCMM::ackWaitingSingle.callback(LCMM::ackWaitingSingle.id, false);
         LCMM::getInstance()->clearSendingPacket();
 
@@ -132,7 +132,7 @@ bool LCMM::timeoutHandler()
       }
       else
       {
-        Serial.println("retransmitting");
+        //Serial.println("retransmitting");
         uint32_t timeBeforeSending = millis();
 
         MAC::getInstance()->sendData(LCMM::ackWaitingSingle.target,
@@ -195,7 +195,7 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
 {
   if (LCMM::sending)
   {
-    Serial.println("already sending\n");
+    //Serial.println("already sending\n");
     return 0;
   }
 
@@ -232,7 +232,7 @@ LCMM::ACKWaitingSingle LCMM::prepareAckWaitingSingle(
     AcknowledgmentCallback callback, uint32_t timeout, LCMMPacketData *packet,
     uint8_t attemptsLeft, uint16_t target, uint8_t size, uint32_t timeBeforeSending, uint32_t timeAfterSending)
 {
-  Serial.println("time on air: " + String(MathExtension.timeOnAir(size + MAC_OVERHEAD, 8, 9, 125, 7)));
+  //Serial.println("time on air: " + String(MathExtension.timeOnAir(size + MAC_OVERHEAD, 8, 9, 125, 7)));
   ACKWaitingSingle callbackStruct;
   callbackStruct.callback = callback;
   callbackStruct.timeout = timeout + MathExtension.timeOnAir(size + MAC_OVERHEAD, 8, 9, 125, 7);
