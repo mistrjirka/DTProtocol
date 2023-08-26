@@ -64,6 +64,13 @@ typedef struct __attribute__((packed))
 
 typedef struct __attribute__((packed))
 {
+  MACHeader mac;
+  uint8_t type;
+  uint16_t id;
+} LCMMDataHeader;
+
+typedef struct __attribute__((packed))
+{
   uint8_t type;
   uint16_t packetIds[];
 } LCMMPacketResponse;
@@ -166,7 +173,7 @@ private:
   void clearSendingPacket();
   ACKWaitingSingle prepareAckWaitingSingle(
       AcknowledgmentCallback callback, uint32_t timeout, LCMMPacketData *packet,
-      uint8_t attemptsLeft, uint16_t target, uint8_t size);
+      uint8_t attemptsLeft, uint16_t target, uint8_t size, uint32_t timeBeforeSending, uint32_t timeAfterSending);
   // Private helper functions as needed
 };
 

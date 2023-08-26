@@ -2,7 +2,12 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <cstdio>
+#include <math.h>
 #include <cstdint>
+#define max(a, b) \
+    ({ __typeof__ (a) _a = (a); \
+       __typeof__ (b) _b = (b); \
+     _a > _b ? _a : _b; })
 /* CRC-32C (iSCSI) polynomial in reversed bit order. */
 #define POLY 0x82f63b78
 
@@ -15,12 +20,13 @@ uint32_t MathExtensionClass::crc32c(uint32_t crc, const unsigned char *buf, uint
 
     crc = ~crc;
     printf("before crc function\n");
-    while (len--) {
+    while (len--)
+    {
         crc ^= *buf++;
         for (k = 0; k < 8; k++)
             crc = crc & 1 ? (crc >> 1) ^ POLY : crc >> 1;
     }
-        printf("after crc function\n");
+    printf("after crc function\n");
 
     return ~crc;
 }
@@ -88,4 +94,22 @@ void MathExtensionClass::quickSort(int arr[], int start, int end)
     // Sorting the right part
     quickSort(arr, p + 1, end);
 }
+
+float MathExtensionClass::timeOnAir(uint16_t sizeOfPacket, uint8_t preambleLength, uint8_t spreadingFactor, float bandwidth, uint8_t codingRate, uint8_t crcLength, uint8_t nSymbolHeader)
+{
+    float symbolTime = (float)pow(2, spreadingFactor) / bandwidth;
+    bool LDO = symbolTime > 16;
+    float numOfSymbols = 0;
+
+    if (spreadingFactor >= 5 && spreadingFactor <= 6)
+    {
+        numOfSymbols = (float)preambleLength + 6.25 + 8.0 + (float)ceil((float)max(8 * sizeOfPacket + crcLength - 4 * spreadingFactor + nSymbolHeader, 0) / (4 * spreadingFactor)) * (codingRate);
+    }else if(LDO){
+        numOfSymbols = (float)preambleLength + 4.25 + 8.0 + (float)ceil((float)max(8 * sizeOfPacket + crcLength - 4 * spreadingFactor + nSymbolHeader, 0) / (4 * (spreadingFactor - 2))) * (codingRate);
+    }else{
+        numOfSymbols = (float)preambleLength + 4.25 + 8.0 + (float)ceil((float)max(8 * sizeOfPacket + crcLength - 4 * spreadingFactor + nSymbolHeader, 0) / (4 * (spreadingFactor))) * (codingRate);
+    }
+    return numOfSymbols * symbolTime;
+}
+
 MathExtensionClass MathExtension;

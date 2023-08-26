@@ -9,7 +9,7 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
 {
   if (crc != packet->crc32 || size <= 0)
   {
-    Serial.println("crc error" + String(crc) + " recieved crc" +String(packet->crc32));
+    Serial.println("crc error" + String(crc) + " recieved crc" + String(packet->crc32));
     return;
   }
 
@@ -108,6 +108,7 @@ LCMM *LCMM::getInstance()
   {
     // Throw an exception or handle the error case if initialize() has not been
     // called before getInstance()
+    return nullptr;
   }
   return lcmm;
 }
@@ -131,13 +132,16 @@ bool LCMM::timeoutHandler()
       }
       else
       {
-        LCMM::ackWaitingSingle.timeLeft = LCMM::ackWaitingSingle.timeout;
         Serial.println("retransmitting");
+        uint32_t timeBeforeSending = millis();
+
         MAC::getInstance()->sendData(LCMM::ackWaitingSingle.target,
                                      (unsigned char *)LCMM::ackWaitingSingle.packet,
                                      sizeof(LCMMPacketData) +
                                          LCMM::ackWaitingSingle.size,
                                      LCMM::ackWaitingSingle.timeout);
+        uint32_t timeAfterSending = millis();
+        LCMM::ackWaitingSingle.timeLeft = LCMM::ackWaitingSingle.timeout + timeBeforeSending - timeAfterSending;
       }
     }
     LCMM::getInstance()->lastTick = currTime;
@@ -204,14 +208,15 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
   memcpy(packet->data, data, size);
 
   LCMM::sending = true;
+  uint32_t timeBeforeSending = millis();
   MAC::getInstance()->sendData(target, (unsigned char *)packet,
                                sizeof(LCMMPacketData) + size, timeout);
-
+  uint32_t timeAfterSending = millis();
   if (needACK)
   {
     waitingForACKSingle = true;
     ackWaitingSingle = prepareAckWaitingSingle(callback, timeout, packet,
-                                               attempts, target, size);
+                                               attempts, target, size, timeBeforeSending, timeAfterSending);
     lastTick = millis();
   }
   else
@@ -224,15 +229,15 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
 
 LCMM::ACKWaitingSingle LCMM::prepareAckWaitingSingle(
     AcknowledgmentCallback callback, uint32_t timeout, LCMMPacketData *packet,
-    uint8_t attemptsLeft, uint16_t target, uint8_t size)
+    uint8_t attemptsLeft, uint16_t target, uint8_t size, uint32_t timeBeforeSending, uint32_t timeAfterSending)
 {
   ACKWaitingSingle callbackStruct;
   callbackStruct.callback = callback;
-  callbackStruct.timeout = timeout;
+  callbackStruct.timeout = timeout + MathExtension.timeOnAir(size, 8, 9, 125, 7);
   callbackStruct.id = packet->id;
   callbackStruct.packet = packet;
   callbackStruct.attemptsLeft = attemptsLeft;
-  callbackStruct.timeLeft = timeout;
+  callbackStruct.timeLeft = timeout + timeBeforeSending - timeAfterSending + MathExtension.timeOnAir(size, 8, 9, 125, 7);
   callbackStruct.target = target;
   callbackStruct.size = size;
   return callbackStruct;

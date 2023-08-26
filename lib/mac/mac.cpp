@@ -120,7 +120,7 @@ void MAC::handlePacket()
 
 
     MACPacket *packet = (MACPacket *)data;
-    if(packet->target!=this->id){
+    if(packet->target && packet->target!=this->id){
       free(data);
       Serial.println("not for me");
       return;
