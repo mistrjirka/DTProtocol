@@ -112,4 +112,20 @@ float MathExtensionClass::timeOnAir(uint16_t sizeOfPacket, uint8_t preambleLengt
     return numOfSymbols * symbolTime;
 }
 
+MathExtensionClass::MathExtensionClass()
+    : rand_dev(), generator(rand_dev()), distr(0, 1) // Default range for the random number generator
+{
+}
+
+int MathExtensionClass::getRandomNumber()
+{
+    return distr(generator);
+}
+
+void MathExtensionClass::setRandomRange(int range_from, int range_to)
+{
+    distr = std::uniform_int_distribution<int>(range_from, range_to);
+}
+
+
 MathExtensionClass MathExtension;

@@ -7,6 +7,7 @@
 #include "generalsettings.h"
 #include <vector>
 #include <unordered_map>
+#include <random>
 
 #define DTP_PACKET_TYPE_NAP 0
 
@@ -101,17 +102,25 @@ private:
     uint8_t NAPInterval;
     uint32_t numOfIntervalsElapsed;
     uint32_t lastNAPSsentInterval;
+    bool NAPPlaned;
+    DTPNAPTimeRecord myNAP;
+    
     uint16_t id;
+
     DTPStates state;
     vector<DTPNAPTimeRecord> activeNeighbors;
     unordered_map<uint16_t, vector<DTPRoutingItem>> routingTable;
+
 
     static DTP *dtp;
 
     DTP(uint16_t id, uint8_t NAPInterval);
 
     void parseNeigbours();
+    void sendNAP();
     void updateTime();
+    void NAPPlanRandom();
+    void cleaningDeamon();
 
     static void receivePacket(LCMMPacketDataRecieve *packet, uint16_t size);
     static void receiveAck(uint16_t id, bool success);
