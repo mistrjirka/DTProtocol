@@ -103,6 +103,7 @@ private:
     uint32_t numOfIntervalsElapsed;
     uint32_t lastNAPSsentInterval;
     bool NAPPlaned;
+    bool NAPSend;
     DTPNAPTimeRecord myNAP;
     
     uint16_t id;
@@ -116,10 +117,16 @@ private:
 
     DTP(uint16_t id, uint8_t NAPInterval);
 
+    uint32_t getTimeOnAirOfNAP();
+    DTPNAPTimeRecord getNearestTimeSlot(uint32_t ideal_min_time, uint32_t ideal_max_time, uint32_t min_start_time, uint32_t max_end_time);
+
+
     void parseNeigbours();
     void sendNAP();
+    void sendNAPPacket();
     void updateTime();
     void NAPPlanRandom();
+    void NAPPlanInteligent();
     void cleaningDeamon();
 
     static void receivePacket(LCMMPacketDataRecieve *packet, uint16_t size);

@@ -32,6 +32,7 @@ void DTP::initialize(uint16_t id, uint8_t NAPInterval)
 
 void DTP::cleaningDeamon()
 {
+    //This code removes all neighbors who have not been heard from in the last two intervals. It also removes any routes that go through the removed neighbors.
     for (auto i : this->routingTable)
     {
         uint16_t idOfTarget = i.first;
@@ -63,6 +64,7 @@ void DTP::updateTime()
     uint32_t newTime = (millis() - timeOfInit) % (NAPInterval * 1000);
     bool timeSwitch = newTime < currentTime;
     this->NAPPlaned &= !timeSwitch;
+    this->NAPSend   &= !timeSwitch;
     currentTime = newTime;
     if(timeSwitch)
         this->cleaningDeamon();
@@ -126,16 +128,110 @@ void DTP::parseNeigbours()
     }
 }
 
+uint32_t DTP::getTimeOnAirOfNAP(){
+    uint16_t sizeOfRouting = this->routingTable.size() * sizeof(NeighborRecord) + sizeof(DTPPacketNAP) + LCMM_OVERHEAD;
+    uint16_t timeOnAir = MathExtension.timeOnAir(sizeOfRouting, 8, 9, 125.0, 7);
+}
+
+
 void DTP::NAPPlanRandom()
 {
-    uint16_t sizeOfRouting = this->routingTable.size() * sizeof(NeighborRecord) + LCMM_OVERHEAD;
-    uint16_t timeOnAir = MathExtension.timeOnAir(sizeOfRouting, 8, 9, 125.0, 7);
+    uint32_t timeOnAir = getTimeOnAirOfNAP();
     uint32_t minTime = currentTime+timeOnAir;
     uint32_t maxTime = this->NAPInterval * 1000 - timeOnAir*1.3;
     MathExtension.setRandomRange(minTime, maxTime);
     uint32_t chosenTime = MathExtension.getRandomNumber();
     this->myNAP.startTime = chosenTime;
     this->myNAP.endTime = chosenTime + timeOnAir;
+    this->NAPPlaned = true;
+}
+
+DTPNAPTimeRecord DTP::getNearestTimeSlot(uint32_t ideal_min_time, uint32_t ideal_max_time, uint32_t min_start_time, uint32_t max_end_time)
+{
+    vector<DTPNAPTimeRecord> possibleTimeSlots;
+    
+    auto iterator = this->activeNeighbors.begin();
+
+    while(iterator != this->activeNeighbors.end())
+    {
+        DTPNAPTimeRecord neighbour = *iterator;
+        DTPNAPTimeRecord nextNeighbour = *(iterator+1);
+        if(nextNeighbour == this->activeNeighbors.end())
+            nextNeighbour = DTPNAPTimeRecord{0, max_end_time, max_end_time, 0};
+        
+        if(neighbour.endTime < ideal_min_time && nextNeighbour.startTime > ideal_max_time)
+            possibleTimeSlots.push_back(DTPNAPTimeRecord{0, neighbour.endTime, nextNeighbour.startTime, 0});
+    }
+
+    if(possibleTimeSlots.size() == 0)
+        return DTPNAPTimeRecord{0, 0, 0, 0};
+    
+    DTPNAPTimeRecord bestTimeSlot = possibleTimeSlots[0];
+    
+    for(DTPNAPTimeRecord i : possibleTimeSlots)
+    {
+        if(i.endTime - i.startTime < bestTimeSlot.endTime - bestTimeSlot.startTime)
+            bestTimeSlot = i;
+    }
+
+    return bestTimeSlot;
+}
+
+void DTP::NAPPlanInteligent()
+{
+    uint32_t timeOnAir = getTimeOnAirOfNAP();
+    
+    uint32_t denominator = 0;
+    uint32_t numerator = 0;
+
+    for(DTPNAPTimeRecord i : this->activeNeighbors){
+        denominator += (i.endTime - i.startTime) * ((i.startTime-i.endTime)/2);
+        numerator += i.endTime - i.startTime;
+    }
+
+    float balancePoint = denominator / numerator;
+    float idealPoint = this->NAPInterval * 1000 - balancePoint;
+
+    if(this->currentTime > idealPoint - timeOnAir*1.3/2)
+        idealPoint += this->currentTime * 1.2  + timeOnAir*1.3/2;
+
+    uint32_t idealMinTime = idealPoint - timeOnAir*1.3/2;
+    uint32_t idealMaxTime = idealPoint + timeOnAir*1.3/2;
+
+    DTPNAPTimeRecord bestTimeSlot = getNearestTimeSlot(idealMinTime, idealMaxTime, 0, this->NAPInterval * 1000);
+
+    if(!bestTimeSlot){
+        this->NAPPlanRandom();
+        return;
+    }
+
+    this->NAPPlaned = true;
+}
+
+bool compareBydistance(const DTPRoutingItem &a, const DTPRoutingItem &b)
+{
+    return a.distance < b.distance;
+}
+
+
+void DTP::sendNAPPacket()
+{
+    uint16_t sizeOfRouting = this->routingTable.size() * sizeof(NeighborRecord) + sizeof(DTPPacketNAP);
+
+    DTPPacketNAP *packet = (DTPPacketNAP *)malloc(sizeOfRouting);
+
+    packet->type = DTP_PACKET_TYPE_NAP;
+    int i = 0;
+    for(vector<DTPRoutingItem> routes : this->routingTable){
+        std::sort(routes.begin(), routes.end(), compareBydistance);\
+        if(routes.size() > 0){
+            packet->neighbors[] = {routes[0].routingId, routes.distance};
+        }else{
+            Serial.println("No route to " + String(i));
+        }
+    }
+
+
 }
 
 void DTP::sendNAP()
@@ -145,6 +241,21 @@ void DTP::sendNAP()
     
     if(!this->NAPPlaned && this->activeNeighbors.size() == 0)
         NAPPlanRandom();
+
+    if(!NAPPlaned)
+        this->planNAPInteligent();
+    
+    if(!NAPPlaned){
+        Serial.println("NAP not planed major issue");
+        return;
+    }
+
+    if(NAPPlaned && this->myNAP.startTime < this->currentTime && this->myNAP.endTime > this->currentTime){
+        Serial.println("Executing NAP transmission");
+        return;
+    }
+    
+
 }
 
 void DTP::loop()
