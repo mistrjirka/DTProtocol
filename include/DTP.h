@@ -8,6 +8,7 @@
 #include <vector>
 #include <unordered_map>
 #include <random>
+#include <algorithm>
 
 #define DTP_PACKET_TYPE_NAP 0
 

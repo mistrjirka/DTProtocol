@@ -156,7 +156,7 @@ DTPNAPTimeRecord DTP::getNearestTimeSlot(uint32_t ideal_min_time, uint32_t ideal
     {
         DTPNAPTimeRecord neighbour = *iterator;
         DTPNAPTimeRecord nextNeighbour = *(iterator+1);
-        if(nextNeighbour == this->activeNeighbors.end())
+        if((iterator+1) == this->activeNeighbors.end())
             nextNeighbour = DTPNAPTimeRecord{0, max_end_time, max_end_time, 0};
         
         if(neighbour.endTime < ideal_min_time && nextNeighbour.startTime > ideal_max_time)
@@ -200,7 +200,7 @@ void DTP::NAPPlanInteligent()
 
     DTPNAPTimeRecord bestTimeSlot = getNearestTimeSlot(idealMinTime, idealMaxTime, 0, this->NAPInterval * 1000);
 
-    if(!bestTimeSlot){
+    if(bestTimeSlot.startTime == 0 && bestTimeSlot.endTime == 0){
         this->NAPPlanRandom();
         return;
     }
@@ -222,16 +222,20 @@ void DTP::sendNAPPacket()
 
     packet->type = DTP_PACKET_TYPE_NAP;
     int i = 0;
-    for(vector<DTPRoutingItem> routes : this->routingTable){
-        std::sort(routes.begin(), routes.end(), compareBydistance);\
+    for(auto pair : this->routingTable){
+        vector<DTPRoutingItem> &routes = pair.second;
+        packet->neighbors[i].id = pair.first;
+        std::sort(routes.begin(), routes.end(), compareBydistance);
         if(routes.size() > 0){
-            packet->neighbors[] = {routes[0].routingId, routes.distance};
+            packet->neighbors[i] = {routes[0].routingId, routes[0].distance};
         }else{
-            Serial.println("No route to " + String(i));
+            Serial.println("No route to " + String(pair.first));
         }
     }
 
-
+    LCMM::getInstance()->sendPacketSingle(false, 0, (unsigned char *) packet, sizeOfRouting, DTP::receiveAck);
+    free(packet);
+    this->NAPSend = true;
 }
 
 void DTP::sendNAP()
@@ -243,14 +247,14 @@ void DTP::sendNAP()
         NAPPlanRandom();
 
     if(!NAPPlaned)
-        this->planNAPInteligent();
+        this->NAPPlanInteligent();
     
     if(!NAPPlaned){
         Serial.println("NAP not planed major issue");
         return;
     }
 
-    if(NAPPlaned && this->myNAP.startTime < this->currentTime && this->myNAP.endTime > this->currentTime){
+    if(NAPPlaned && !NAPSend && this->myNAP.startTime < this->currentTime && this->myNAP.endTime > this->currentTime){
         Serial.println("Executing NAP transmission");
         return;
     }
@@ -287,4 +291,5 @@ void DTP::receivePacket(LCMMPacketDataRecieve *packet, uint16_t size)
 
 void DTP::receiveAck(uint16_t id, bool success)
 {
+    Serial.println("Ack received");
 }
