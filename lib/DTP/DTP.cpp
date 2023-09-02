@@ -122,8 +122,7 @@ void DTP::updateTime()
 
 void DTP::parseNeigbours()
 {
-    if (!neighborPacketWaiting)
-    {
+    if (!neighborPacketWaiting){
         return;
     }
 
@@ -199,62 +198,56 @@ void DTP::parseNeigbours()
         this->neighborPacketToParse = nullptr;
     }
 
+    std::vector<uint16_t> idsFound = {  };
     for (int i = 0; i < numOfNeighbors; i++)
     {
         printf("going through neighbours %d\n", this->id);
-        printf("sneder: %d, id: %d, distance: %d\n", senderId, neighbors[i].id, neighbors[i].distance);
+        printf("sneder: %d, id: %d, distance: %d\n",senderId, neighbors[i].id, neighbors[i].distance);
         if (neighbors[i].id == this->id)
         {
             continue;
         }
-        for (auto &routingItem : this->routingTable)
-        {
-            if (routingItem.first == neighbors[i].id)
-            {
-                vector<DTPRoutingItem> &routes = (routingItem.second);
-                bool foundRoute = false;
-                for (unsigned int j = 0; j < routes.size(); j++)
-                {
-                    if (routes[j].routingId == senderId)
-                    {
-                        routes[j].distance = neighbors[i].distance;
-                        foundRoute = true;
-                        break;
-                    }
-                }
-                if (!foundRoute)
-                    routes.push_back((DTPRoutingItem){senderId, (uint8_t)(neighbors[i].distance)});
-                continue;
-            }else{
-                vector<DTPRoutingItem> &routes = (routingItem.second);
-
-                for (unsigned int j = 0; j < routes.size(); j++)
-                {
-                    if (routes[j].routingId == senderId)
-                    {
-                        routes[j].distance = neighbors[i].distance;
-                        routes.erase(routes.begin() + j);
-                        break;
-                    }
-                }
-            }
-        }
+        idsFound.push_back(neighbors[i].id);
         auto found = this->routingTable.find(neighbors[i].id);
         Serial.println("after finding");
         if (found != this->routingTable.end())
         {
             Serial.println("found something");
+
+            vector<DTPRoutingItem> &routes = (found->second);
+            
+            bool foundRoute = false;
+            for (unsigned int j = 0; j < routes.size(); j++)
+            {
+                if (routes[j].routingId == senderId)
+                {
+                    routes[j].distance = neighbors[i].distance;
+                    foundRoute = true;
+                    break;
+                }
+            }
+            if (!foundRoute)
+                routes.push_back((DTPRoutingItem){senderId, (uint8_t)(neighbors[i].distance)});
         }
     }
     Serial.println("end of parsing");
     for (auto i : this->routingTable)
     {
-        Serial.println("routing table");
-        Serial.println(i.first);
-        for (auto j : i.second)
-        {
-            Serial.println(j.routingId);
-            Serial.println(j.distance);
+        auto route = i.second.begin();
+        while(route != i.second.end()) {
+            DTPRoutingItem j = *route;
+            bool deletedRoute = false;
+            if(j.routingId == senderId)
+            {
+                bool found = std::count(idsFound.begin(), idsFound.end(), i.first) > 0;
+                if(!found){
+                    i.second.erase(route);
+                    deletedRoute = true;
+                }
+            }
+
+            if(!deletedRoute)
+                route++;
         }
     }
 }
@@ -310,15 +303,16 @@ DTPNAPTimeRecord DTP::getNearestTimeSlot(uint32_t ideal_min_time, uint32_t ideal
             bestTimeSlot = i;
     }
 
-    int howMuchCanFit = (bestTimeSlot.endTime - bestTimeSlot.startTime) / (ideal_max_time - ideal_min_time);
-    if (howMuchCanFit > 1)
-    {
+    int howMuchCanFit = (bestTimeSlot.endTime - bestTimeSlot.startTime)/(ideal_max_time - ideal_min_time);
+    if(howMuchCanFit > 1){
         int margin = (bestTimeSlot.endTime - bestTimeSlot.startTime) - howMuchCanFit * (ideal_max_time - ideal_min_time);
-        int sideMargin = margin / (howMuchCanFit * 2);
-        int timeSlotChosen = MathExtension.getRandomNumber(0, howMuchCanFit - 1);
-        bestTimeSlot.startTime = bestTimeSlot.startTime + timeSlotChosen * (sideMargin + ideal_max_time - ideal_min_time);
+        int sideMargin = margin/(howMuchCanFit*2);
+        int timeSlotChosen = MathExtension.getRandomNumber(0, howMuchCanFit-1);
+        bestTimeSlot.startTime = bestTimeSlot.startTime +  timeSlotChosen * (sideMargin + ideal_max_time - ideal_min_time);
         bestTimeSlot.endTime = bestTimeSlot.startTime + (ideal_max_time - ideal_min_time);
     }
+    
+        
 
     return bestTimeSlot;
 }
@@ -388,11 +382,11 @@ void DTP::sendNAPPacket()
         std::sort(routes.begin(), routes.end(), compareBydistance);
         if (routes.size() > 0)
         {
-            packet->neighbors[i] = {routes[0].routingId, (unsigned char)(routes[0].distance + 1)};
+            packet->neighbors[i] = {routes[0].routingId,  (unsigned char)(routes[0].distance + 1)};
         }
         else
         {
-            // printf("No route to " + String(pair.first));
+            //printf("No route to " + String(pair.first));
         }
     }
 
@@ -423,8 +417,8 @@ void DTP::sendNAP()
         printf("NAP not planed major issue\n");
         return;
     }
-    // Serial.println("NAP planned" + String(NAPPlaned) + " nap sent " + String(NAPSend) + "NAP current time: " + String(this->currentTime)+" planning " + String(this->myNAP.startTime) + " to " + String(this->myNAP.endTime));
-    if (NAPPlaned && !NAPSend && this->myNAP.startTime<this->currentTime &&this->myNAP.endTime> this->currentTime)
+   // Serial.println("NAP planned" + String(NAPPlaned) + " nap sent " + String(NAPSend) + "NAP current time: " + String(this->currentTime)+" planning " + String(this->myNAP.startTime) + " to " + String(this->myNAP.endTime));
+    if (NAPPlaned && !NAPSend && this->myNAP.startTime < this->currentTime &&this->myNAP.endTime> this->currentTime)
     {
         sendNAPPacket();
         printf("Executing NAP transmission\n");
