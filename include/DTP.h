@@ -69,9 +69,14 @@ typedef struct __attribute__((packed))
 
 typedef struct
 {
-    uint16_t routingId;
     uint8_t distance;
 } DTPRoutingItem;
+
+typedef struct
+{
+    uint16_t id;
+    uint8_t distance;
+} DTPRoutingItemFull;
 
 typedef struct
 {
@@ -79,6 +84,7 @@ typedef struct
     uint32_t startTime;
     uint32_t endTime;
     uint32_t lastIntervalHeard;
+    unordered_map<uint16_t, DTPRoutingItem> routes;
 } DTPNAPTimeRecord;
 
 class DTP
@@ -93,8 +99,9 @@ public:
     void loop();
     DTPStates getState();
     DTPNAPTimeRecord getMyNAP();
-    unordered_map<uint16_t, vector<DTPRoutingItem>> getRoutingTable();
-    
+    unordered_map<uint16_t, DTPRoutingItemFull> getRoutingTable();
+    vector<DTPNAPTimeRecord> neighbors();
+
 
 private:
     static bool neighborPacketWaiting;
@@ -113,8 +120,8 @@ private:
 
     DTPStates state;
     vector<DTPNAPTimeRecord> activeNeighbors;
-    unordered_map<uint16_t, vector<DTPRoutingItem>> routingTable;
-
+    unordered_map<uint16_t, DTPRoutingItemFull> routingCacheTable;
+    size_t sizeOfRouting();
 
     static DTP *dtp;
 
