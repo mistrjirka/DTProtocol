@@ -52,14 +52,14 @@ typedef struct __attribute__((packed))
 typedef struct __attribute__((packed))
 {
     uint8_t type;
-    NeighborRecord *neighbors;
+    NeighborRecord neighbors[];
 } DTPPacketNAP;
 
 typedef struct __attribute__((packed))
 {
     LCMMDataHeader lcmm;
     uint8_t type;
-    NeighborRecord *neighbors;
+    NeighborRecord neighbors[];
 } DTPPacketNAPRecieve;
 
 typedef struct __attribute__((packed))
