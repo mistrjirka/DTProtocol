@@ -14,7 +14,8 @@ DTP::DTP(uint16_t id, uint8_t NAPInterval)
     this->lastNAPSsentInterval = 0;
     this->numOfIntervalsElapsed = 0;
     this->NAPPlaned = false;
-    randomSeed(MAC::getInstance()->random());
+    randomSeed({MAC::getInstance()->random() << 32 | MAC::getInstance()->random()});
+    Serial.println("DTP initialized " + String(MAC::getInstance()->random()));
 
     LCMM::initialize(DTP::receivePacket, DTP::receiveAck);
     timeOfInit = millis();
@@ -390,7 +391,7 @@ void DTP::sendNAPPacket()
         std::sort(routes.begin(), routes.end(), compareBydistance);
         if (routes.size() > 0)
         {
-            printf(" index %d \n", i);
+            Serial.println(" index "+String(i)+" \n");
             Serial.println("found route" + String(routes[0].routingId) + " " + String(routes[0].distance));
             packet->neighbors[i] = {routes[0].routingId,  (unsigned char)(routes[0].distance + 1)};
             i++; 
