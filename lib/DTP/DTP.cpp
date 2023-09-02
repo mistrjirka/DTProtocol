@@ -29,8 +29,19 @@ DTP *DTP::getInstance()
     return dtp;
 }
 
+unordered_map<uint16_t, vector<DTPRoutingItem>> DTP::getRoutingTable()
+{
+    return this->routingTable;
+}
+
+DTPNAPTimeRecord DTP::getMyNAP()
+{
+    return this->myNAP;
+}
+
 void DTP::initialize(uint16_t id, uint8_t NAPInterval)
 {
+    printf("Initializing DTP\n");
     if (dtp == nullptr)
         dtp = new DTP(id, NAPInterval);
 }
@@ -47,12 +58,12 @@ bool DTP::checkIfCurrentPlanIsColliding()
 
 void DTP::cleaningDeamon()
 {
-    Serial.println("Cleaning deamon");
+    printf("Cleaning deamon\n");
     if (this->numOfIntervalsElapsed)
     {
         this->myNAP.endTime = this->myNAP.startTime + this->getTimeOnAirOfNAP();
-        Serial.println("is collision eminent?: " + String(this->NAPPlaned));
-        Serial.println(checkIfCurrentPlanIsColliding());
+        printf(("is collision eminent?: " + String(this->NAPPlaned)).c_str());
+        printf(String(checkIfCurrentPlanIsColliding()).c_str());
         this->NAPPlaned *= !checkIfCurrentPlanIsColliding();
     }
 
@@ -97,10 +108,11 @@ void DTP::updateTime()
 
 void DTP::parseNeigbours()
 {
-    if (!neighborPacketWaiting)
+    if (!neighborPacketWaiting){
         return;
+    }
 
-    Serial.println("Parsing neighbours");
+    printf("Parsing neighbours\n");
 
     neighborPacketWaiting = false;
 
@@ -163,7 +175,7 @@ uint32_t DTP::getTimeOnAirOfNAP()
 
 void DTP::NAPPlanRandom()
 {
-    Serial.println("planning ranodm");
+    printf("planning ranodm\n");
 
     uint32_t timeOnAir = getTimeOnAirOfNAP();
     uint32_t minTime = currentTime + timeOnAir;
@@ -171,7 +183,7 @@ void DTP::NAPPlanRandom()
     uint32_t chosenTime = MathExtension.getRandomNumber(minTime, maxTime);
     this->myNAP.startTime = chosenTime;
     this->myNAP.endTime = chosenTime + timeOnAir;
-    Serial.println("NAP planned for " + String(chosenTime) + " to " + String(chosenTime + timeOnAir));
+    printf(("NAP planned for " + String(chosenTime) + " to " + String(chosenTime + timeOnAir)).c_str());
     this->NAPPlaned = true;
 }
 
@@ -235,7 +247,7 @@ void DTP::NAPPlanInteligent()
         this->NAPPlanRandom();
         return;
     }
-    Serial.println("planning intelligent");
+    printf("planning intelligent\n");
     this->NAPPlaned = true;
 }
 
@@ -246,7 +258,7 @@ bool compareBydistance(const DTPRoutingItem &a, const DTPRoutingItem &b)
 
 void DTP::sendNAPPacket()
 {
-    Serial.println("Sending NAP packet");
+    printf("Sending NAP packet\n");
     uint16_t sizeOfRouting = this->routingTable.size() * sizeof(NeighborRecord) + sizeof(DTPPacketNAP);
 
     DTPPacketNAP *packet = (DTPPacketNAP *)malloc(sizeOfRouting);
@@ -264,7 +276,7 @@ void DTP::sendNAPPacket()
         }
         else
         {
-            Serial.println("No route to " + String(pair.first));
+            //printf("No route to " + String(pair.first));
         }
     }
 
@@ -279,35 +291,37 @@ void DTP::sendNAP()
     if (this->lastNAPSsentInterval == this->numOfIntervalsElapsed)
         return;
     if (!this->NAPPlaned && this->activeNeighbors.size() == 0){
-        Serial.println("No neighbours");
+        printf("No neighbours\n");
         NAPPlanRandom();
     }
 
     if (!NAPPlaned){
-        Serial.println("Planning intelligent");
+        printf("Planning intelligent\n");
         
         this->NAPPlanInteligent();
     }
     if (!NAPPlaned)
     {
-        Serial.println("NAP not planed major issue");
+        printf("NAP not planed major issue\n");
         return;
     }
 
     if (NAPPlaned && !NAPSend && this->myNAP.startTime<this->currentTime &&this->myNAP.endTime> this->currentTime)
     {
         sendNAPPacket();
-        Serial.println("Executing NAP transmission");
+        printf("Executing NAP transmission\n");
         return;
     }
 }
 
 void DTP::loop()
 {
+    //printf("looping\n\n");
     updateTime();
     LCMM::getInstance()->loop();
     updateTime();
     sendNAP();
+    parseNeigbours();
 
     // Implement your loop logic here
 }
@@ -321,9 +335,12 @@ void DTP::receivePacket(LCMMPacketDataRecieve *packet, uint16_t size)
 {
     DTPPacketUnkown *dtpPacket = (DTPPacketUnkown *)packet->data;
     uint16_t dtpSize = size - sizeof(LCMMPacketDataRecieve);
+    printf("Packet received %d\n", dtpPacket->type);
     switch (dtpPacket->type)
     {
     case DTP_PACKET_TYPE_NAP:
+        printf("NAP receives\n");
+
         DTP::neighborPacketWaiting = true;
         DTP::neighborPacketToParse = (DTPPacketNAPRecieve *)packet;
         DTP::dtpPacketSize = dtpSize;
@@ -333,5 +350,5 @@ void DTP::receivePacket(LCMMPacketDataRecieve *packet, uint16_t size)
 
 void DTP::receiveAck(uint16_t id, bool success)
 {
-    Serial.println("Ack received");
+    printf("Ack received\n");
 }

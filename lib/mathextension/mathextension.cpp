@@ -15,14 +15,12 @@ uint32_t MathExtensionClass::crc32c(uint32_t crc, const unsigned char *buf, uint
     int k;
 
     crc = ~crc;
-    printf("before crc function\n");
     while (len--)
     {
         crc ^= *buf++;
         for (k = 0; k < 8; k++)
             crc = crc & 1 ? (crc >> 1) ^ POLY : crc >> 1;
     }
-    printf("after crc function\n");
 
     return ~crc;
 }

@@ -92,6 +92,9 @@ public:
     static void initialize(uint16_t id, uint8_t NAPInterval = 30);
     void loop();
     DTPStates getState();
+    DTPNAPTimeRecord getMyNAP();
+    unordered_map<uint16_t, vector<DTPRoutingItem>> getRoutingTable();
+    
 
 private:
     static bool neighborPacketWaiting;
