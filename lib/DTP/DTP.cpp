@@ -14,7 +14,7 @@ DTP::DTP(uint16_t id, uint8_t NAPInterval)
     this->lastNAPSsentInterval = 0;
     this->numOfIntervalsElapsed = 0;
     this->NAPPlaned = false;
-    randomSeed({MAC::getInstance()->random() << 32 | MAC::getInstance()->random()});
+    randomSeed((uint64_t) ((uint64_t)MAC::getInstance()->random()) << 32 | MAC::getInstance()->random());
     Serial.println("DTP initialized " + String(MAC::getInstance()->random()));
 
     LCMM::initialize(DTP::receivePacket, DTP::receiveAck);
@@ -52,7 +52,7 @@ bool DTP::checkIfCurrentPlanIsColliding()
 {
     for (DTPNAPTimeRecord i : this->activeNeighbors)
     {
-        if (i.startTime < this->myNAP.endTime && i.endTime > this->myNAP.endTime || i.startTime < this->myNAP.startTime && i.endTime > this->myNAP.startTime)
+        if ((i.startTime < this->myNAP.endTime && i.endTime > this->myNAP.endTime) || (i.startTime < this->myNAP.startTime && i.endTime > this->myNAP.startTime))
             return true;
     }
     return false;
@@ -174,7 +174,7 @@ void DTP::parseNeigbours()
     if (foundSender == this->routingTable.end())
     {
         Serial.println("inserting into routing table");
-        this->routingTable.insert({senderId, vector<DTPRoutingItem>({(DTPRoutingItem){senderId, 1}})});
+        this->routingTable[senderId] = vector<DTPRoutingItem>({(DTPRoutingItem){senderId, 1}});
     }
     else
     {
@@ -232,7 +232,8 @@ void DTP::parseNeigbours()
                 routes.push_back((DTPRoutingItem){senderId, (uint8_t)(neighbors[i].distance)});
         }else{
             printf("didnt find anything");
-            this->routingTable.insert({neighbors[i].id, vector<DTPRoutingItem>({(DTPRoutingItem){senderId, (uint8_t)(neighbors[i].distance)}})});
+            
+            this->routingTable[neighbors[i].id] = (vector<DTPRoutingItem>){(DTPRoutingItem){senderId, (uint8_t)(neighbors[i].distance)}};
         }
     }
     Serial.println("end of parsing");
