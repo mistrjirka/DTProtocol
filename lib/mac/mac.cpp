@@ -171,7 +171,7 @@ bool check(int statuscode)
 {
   if (statuscode != 0)
   {
-    // Serial.println("wrong settings error " + String(statuscode));
+     printf(("wrong settings error " + String(statuscode)).c_str());
     return false;
   }
   return true;

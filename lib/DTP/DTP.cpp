@@ -230,6 +230,9 @@ void DTP::parseNeigbours()
             }
             if (!foundRoute)
                 routes.push_back((DTPRoutingItem){senderId, (uint8_t)(neighbors[i].distance)});
+        }else{
+            printf("didnt find anything");
+            this->routingTable.insert({neighbors[i].id, vector<DTPRoutingItem>({(DTPRoutingItem){senderId, (uint8_t)(neighbors[i].distance)}})});
         }
     }
     Serial.println("end of parsing");
@@ -242,7 +245,9 @@ void DTP::parseNeigbours()
             if(j.routingId == senderId)
             {
                 bool found = std::count(idsFound.begin(), idsFound.end(), i.first) > 0;
-                if(!found){
+                if(!found)
+                {
+                    printf("removing route to %d\n", i.first);
                     i.second.erase(route);
                     deletedRoute = true;
                 }
