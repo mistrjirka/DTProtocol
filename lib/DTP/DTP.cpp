@@ -95,11 +95,14 @@ void DTP::cleaningDeamon()
         DTPNAPTimeRecord &neighbour = *neighbourIterator;
         if (neighbour.lastIntervalHeard - numOfIntervalsElapsed > 1)
         {
+            printf("ereasing %d %d \n", neighbour.lastIntervalHeard, numOfIntervalsElapsed);
             this->activeNeighbors.erase(neighbourIterator);
         }
         else
         {
             routingCacheTable[neighbour.id] = DTPRoutingItemFull{neighbour.id, 1};
+            this->lengthOfSendablePackets++;
+
             for (auto routing : neighbour.routes)
             {
                 DTPRoutingItem &route = routing.second;
@@ -343,7 +346,7 @@ bool compareBydistance(const DTPRoutingItem &a, const DTPRoutingItem &b)
 
 void DTP::sendNAPPacket()
 {
-    printf("Sending NAP packet\n");
+    printf("Sending NAP packet %d\n", this->lengthOfSendablePackets);
     uint16_t sizeOfRouting = this->lengthOfSendablePackets * sizeof(NeighborRecord) + sizeof(DTPPacketNAP);
 
     DTPPacketNAP *packet = (DTPPacketNAP *)malloc(sizeOfRouting);
@@ -352,8 +355,10 @@ void DTP::sendNAPPacket()
     int i = 0;
     for (auto pair : this->routingCacheTable)
     {
-        if(!pair.second.sharable)
+        if(!pair.second.sharable){
+           Serial.println("not sharable");
            continue;
+        }
         DTPRoutingItemFull &route = pair.second;
         packet->neighbors[i].id = pair.first;
         packet->neighbors[i].distance = route.distance + 1;
