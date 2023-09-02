@@ -100,7 +100,7 @@ public:
   uint8_t sendData(uint16_t target, unsigned char *data,
                    uint8_t size, uint32_t timeout = 5000);
   void loop();
-
+  uint32_t random();
   void setMode(State state, bool force = true);
   State getMode();
   SX1262 module;
@@ -151,7 +151,7 @@ private:
   void setFrequencyAndListen(uint16_t);
   void setFrequency(uint16_t channel);
 
-
+  
   bool transmissionAuthorized();
   bool waitForTransmissionAuthorization(uint32_t timeout);
   void calibrateBasedOnLastPacket();

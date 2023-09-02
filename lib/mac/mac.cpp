@@ -60,6 +60,10 @@ int MAC::LORANoiseFloorCalibrate(int channel, bool save /* = true */)
   setMode(prev_state);
 }
 
+uint32_t MAC::random(){
+  return this->module.random(65000);
+}
+
 void MAC::setFrequencyAndListen(uint16_t channel)
 {
   if (getMode() == SLEEPING)
