@@ -330,7 +330,7 @@ void DTP::sendNAPPacket()
         DTPRoutingItemFull &route = pair.second;
 
         packet->neighbors[i].id = pair.first;
-        packet->neighbors[i].distance = route.distance;
+        packet->neighbors[i].distance = route.distance + 1;
         i++;
     }
 
