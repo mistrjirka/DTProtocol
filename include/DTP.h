@@ -113,7 +113,6 @@ private:
     uint8_t NAPInterval;
     uint32_t numOfIntervalsElapsed;
     uint32_t lastNAPSsentInterval;
-    size_t lengthOfSendablePackets;
     bool NAPPlaned;
     bool NAPSend;
     DTPNAPTimeRecord myNAP;
