@@ -133,7 +133,9 @@ void DTP::parseNeigbours()
 
     for (int i = 0; i < numOfNeighbors; i++)
     {
-        auto found = this->routingTable.find(senderId);
+        if(neighbors[i].id == this->id)
+            continue;
+        auto found = this->routingTable.find(neighbors[i].id);
         if (found != this->routingTable.end())
         {
             vector<DTPRoutingItem> &routes = (found->second);
@@ -148,7 +150,7 @@ void DTP::parseNeigbours()
                 }
             }
             if (!foundRoute)
-                routes.push_back({neighbors[i].id, neighbors[i].distance});
+                routes.push_back((DTPRoutingItem){senderId, (uint8_t)(neighbors[i].distance+1)});
         }
     }
 }
