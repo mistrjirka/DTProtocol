@@ -7,9 +7,8 @@
 #include "generalsettings.h"
 #include <vector>
 #include <unordered_map>
-#include <random>
 #include <algorithm>
-
+#include <mathextension.h>
 #define DTP_PACKET_TYPE_NAP 0
 
 enum DTPStates
@@ -90,7 +89,7 @@ public:
         std::function<void(MACPacket *packet, uint16_t size, uint32_t crcCalculated)>;
     static DTP *getInstance();
 
-    void initialize(uint16_t id, uint8_t NAPInterval = 30);
+    static void initialize(uint16_t id, uint8_t NAPInterval = 30);
     void loop();
     DTPStates getState();
 
@@ -120,7 +119,7 @@ private:
 
     uint32_t getTimeOnAirOfNAP();
     DTPNAPTimeRecord getNearestTimeSlot(uint32_t ideal_min_time, uint32_t ideal_max_time, uint32_t min_start_time, uint32_t max_end_time);
-
+    bool checkIfCurrentPlanIsColliding();
 
     void parseNeigbours();
     void sendNAP();

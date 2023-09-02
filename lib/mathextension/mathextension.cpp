@@ -1,9 +1,5 @@
 #include "include/mathextension.h"
-#include <stddef.h>
-#include <stdint.h>
-#include <cstdio>
-#include <math.h>
-#include <cstdint>
+
 #define max(a, b) \
     ({ __typeof__ (a) _a = (a); \
        __typeof__ (b) _b = (b); \
@@ -112,20 +108,12 @@ float MathExtensionClass::timeOnAir(uint16_t sizeOfPacket, uint8_t preambleLengt
     return numOfSymbols * symbolTime;
 }
 
-MathExtensionClass::MathExtensionClass()
-    : rand_dev(), generator(rand_dev()), distr(0, 1) // Default range for the random number generator
+int MathExtensionClass::getRandomNumber(int range_from, int range_to)
 {
+ return random(range_from, range_to);
 }
 
-int MathExtensionClass::getRandomNumber()
-{
-    return distr(generator);
-}
 
-void MathExtensionClass::setRandomRange(int range_from, int range_to)
-{
-    distr = std::uniform_int_distribution<int>(range_from, range_to);
-}
 
 
 MathExtensionClass MathExtension;
