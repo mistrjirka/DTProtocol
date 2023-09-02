@@ -91,7 +91,7 @@ void DTP::cleaningDeamon()
     while (neighbourIterator != this->activeNeighbors.end())
     {
         DTPNAPTimeRecord &neighbour = *neighbourIterator;
-        if (neighbour.lastIntervalHeard - numOfIntervalsElapsed > 1)
+        if (neighbour.lastIntervalHeard - numOfIntervalsElapsed > 0)
         {
             printf("ereasing %d %d \n", neighbour.lastIntervalHeard, numOfIntervalsElapsed);
             this->activeNeighbors.erase(neighbourIterator);
