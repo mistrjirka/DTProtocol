@@ -41,7 +41,7 @@ DTPNAPTimeRecord DTP::getMyNAP()
 
 void DTP::initialize(uint16_t id, uint8_t NAPInterval)
 {
-    printf("Initializing DTP\n");
+    //printf("Initializing DTP\n");
     if (dtp == nullptr)
         dtp = new DTP(id, NAPInterval);
 }
@@ -63,8 +63,8 @@ void DTP::cleaningDeamon()
     if (this->numOfIntervalsElapsed)
     {
         this->myNAP.endTime = this->myNAP.startTime + this->getTimeOnAirOfNAP();
-        printf(("is collision eminent?: " + String(this->NAPPlaned)).c_str());
-        printf(String(checkIfCurrentPlanIsColliding()).c_str());
+        //printf(("is collision eminent?: " + String(this->NAPPlaned)).c_str());
+        //printf(String(checkIfCurrentPlanIsColliding()).c_str());
         this->NAPPlaned *= !checkIfCurrentPlanIsColliding();
     }
 
@@ -126,7 +126,7 @@ void DTP::parseNeigbours()
         return;
     }
 
-    printf("Parsing neighbours\n");
+    //printf("Parsing neighbours\n");
 
     neighborPacketWaiting = false;
 
@@ -201,8 +201,8 @@ void DTP::parseNeigbours()
     std::vector<uint16_t> idsFound = {  };
     for (int i = 0; i < numOfNeighbors; i++)
     {
-        printf("going through neighbours %d\n", this->id);
-        printf("sneder: %d, id: %d, distance: %d\n",senderId, neighbors[i].id, neighbors[i].distance);
+        //printf("going through neighbours %d\n", this->id);
+        //printf("sneder: %d, id: %d, distance: %d\n",senderId, neighbors[i].id, neighbors[i].distance);
         if (neighbors[i].id == this->id)
         {
             continue;
@@ -260,7 +260,7 @@ uint32_t DTP::getTimeOnAirOfNAP()
 
 void DTP::NAPPlanRandom()
 {
-    printf("planning ranodm\n");
+    //printf("planning ranodm\n");
 
     uint32_t timeOnAir = getTimeOnAirOfNAP();
     uint32_t minTime = currentTime + timeOnAir;
@@ -268,7 +268,7 @@ void DTP::NAPPlanRandom()
     uint32_t chosenTime = MathExtension.getRandomNumber(minTime, maxTime);
     this->myNAP.startTime = chosenTime;
     this->myNAP.endTime = chosenTime + timeOnAir;
-    printf(("NAP planned for " + String(chosenTime) + " to " + String(chosenTime + timeOnAir)).c_str());
+    //printf(("NAP planned for " + String(chosenTime) + " to " + String(chosenTime + timeOnAir)).c_str());
     this->NAPPlaned = true;
 }
 
@@ -354,7 +354,7 @@ void DTP::NAPPlanInteligent()
         this->NAPPlanRandom();
         return;
     }
-    printf(("planning intelligent\n" + String(bestTimeSlot.startTime) + " to " + String(bestTimeSlot.endTime)).c_str());
+    //printf(("planning intelligent\n" + String(bestTimeSlot.startTime) + " to " + String(bestTimeSlot.endTime)).c_str());
     this->myNAP.startTime = bestTimeSlot.startTime;
     this->myNAP.endTime = bestTimeSlot.endTime;
     this->NAPPlaned = true;
@@ -368,7 +368,7 @@ bool compareBydistance(const DTPRoutingItem &a, const DTPRoutingItem &b)
 
 void DTP::sendNAPPacket()
 {
-    printf("Sending NAP packet\n");
+    //printf("Sending NAP packet\n");
     uint16_t sizeOfRouting = this->routingTable.size() * sizeof(NeighborRecord) + sizeof(DTPPacketNAP);
 
     DTPPacketNAP *packet = (DTPPacketNAP *)malloc(sizeOfRouting);
@@ -378,16 +378,25 @@ void DTP::sendNAPPacket()
     for (auto pair : this->routingTable)
     {
         vector<DTPRoutingItem> &routes = pair.second;
+        for(auto route : routes){
+            Serial.println("going through routes");
+            Serial.println(route.routingId);
+            Serial.println(route.distance);
+        }
+
         packet->neighbors[i].id = pair.first;
+        
         std::sort(routes.begin(), routes.end(), compareBydistance);
         if (routes.size() > 0)
         {
+            Serial.println("found route" + String(routes[0].routingId) + " " + String(routes[0].distance));
             packet->neighbors[i] = {routes[0].routingId,  (unsigned char)(routes[0].distance + 1)};
         }
         else
         {
-            //printf("No route to " + String(pair.first));
+            ////printf("No route to " + String(pair.first));
         }
+        i++; 
     }
 
     LCMM::getInstance()->sendPacketSingle(false, 0, (unsigned char *)packet, sizeOfRouting, DTP::receiveAck);
@@ -414,14 +423,14 @@ void DTP::sendNAP()
     }
     if (!NAPPlaned)
     {
-        printf("NAP not planed major issue\n");
+        //printf("NAP not planed major issue\n");
         return;
     }
    // Serial.println("NAP planned" + String(NAPPlaned) + " nap sent " + String(NAPSend) + "NAP current time: " + String(this->currentTime)+" planning " + String(this->myNAP.startTime) + " to " + String(this->myNAP.endTime));
     if (NAPPlaned && !NAPSend && this->myNAP.startTime < this->currentTime &&this->myNAP.endTime> this->currentTime)
     {
         sendNAPPacket();
-        printf("Executing NAP transmission\n");
+        //printf("Executing NAP transmission\n");
         return;
     }
 }
@@ -449,7 +458,7 @@ void DTP::receivePacket(LCMMPacketDataRecieve *packet, uint16_t size)
 
     Serial.println(dtpPacket->type);
     uint16_t dtpSize = size - sizeof(LCMMPacketDataRecieve);
-    printf("Packet received %d\n", dtpPacket->type);
+    //printf("Packet received %d\n", dtpPacket->type);
     switch (dtpPacket->type)
     {
     case DTP_PACKET_TYPE_NAP:
@@ -463,5 +472,5 @@ void DTP::receivePacket(LCMMPacketDataRecieve *packet, uint16_t size)
 
 void DTP::receiveAck(uint16_t id, bool success)
 {
-    printf("Ack received\n");
+    //printf("Ack received\n");
 }
