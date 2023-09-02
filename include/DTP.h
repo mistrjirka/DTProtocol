@@ -76,6 +76,7 @@ typedef struct
 {
     uint16_t id;
     uint8_t distance;
+    bool sharable;
 } DTPRoutingItemFull;
 
 typedef struct
@@ -112,6 +113,7 @@ private:
     uint8_t NAPInterval;
     uint32_t numOfIntervalsElapsed;
     uint32_t lastNAPSsentInterval;
+    size_t lengthOfSendablePackets;
     bool NAPPlaned;
     bool NAPSend;
     DTPNAPTimeRecord myNAP;
@@ -119,6 +121,8 @@ private:
 
     DTPStates state;
     vector<DTPNAPTimeRecord> activeNeighbors;
+    unordered_map<uint16_t, DTPNAPTimeRecord> previousActiveNeighbors;
+
     unordered_map<uint16_t, DTPRoutingItemFull> routingCacheTable;
     size_t sizeOfRouting();
 
@@ -137,6 +141,7 @@ private:
     void NAPPlanRandom();
     void NAPPlanInteligent();
     void cleaningDeamon();
+    void savePreviousActiveNeighbors();
 
     static void receivePacket(LCMMPacketDataRecieve *packet, uint16_t size);
     static void receiveAck(uint16_t id, bool success);
