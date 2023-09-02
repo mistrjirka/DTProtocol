@@ -100,7 +100,7 @@ void DTP::cleaningDeamon()
         }
         else
         {
-            routingCacheTable[neighbour.id] = DTPRoutingItemFull{neighbour.id, 1};
+            routingCacheTable[neighbour.id] = DTPRoutingItemFull{neighbour.id, 1, true};
             this->lengthOfSendablePackets++;
 
             for (auto routing : neighbour.routes)
