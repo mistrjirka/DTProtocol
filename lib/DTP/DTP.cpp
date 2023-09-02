@@ -5,10 +5,9 @@ DTPPacketNAPRecieve *DTP::neighborPacketToParse = nullptr;
 bool DTP::neighborPacketWaiting = false;
 uint16_t DTP::dtpPacketSize = 0;
 
-DTP::DTP(uint16_t id, uint8_t NAPInterval)
+DTP::DTP(uint8_t NAPInterval)
 {
     this->state = DTPStates::INITIAL_LISTENING;
-    this->id = id;
     this->NAPInterval = NAPInterval;
     this->neighborPacketWaiting = false;
     this->lastNAPSsentInterval = 0;
@@ -41,17 +40,16 @@ vector<DTPNAPTimeRecord> DTP::neighbors()
     return this->activeNeighbors;
 }
 
-
 DTPNAPTimeRecord DTP::getMyNAP()
 {
     return this->myNAP;
 }
 
-void DTP::initialize(uint16_t id, uint8_t NAPInterval)
+void DTP::initialize(uint8_t NAPInterval)
 {
     printf("Initializing DTP\n");
     if (dtp == nullptr)
-        dtp = new DTP(id, NAPInterval);
+        dtp = new DTP(NAPInterval);
 }
 
 bool DTP::checkIfCurrentPlanIsColliding()
@@ -76,7 +74,7 @@ void DTP::cleaningDeamon()
 
     // This code removes all neighbors who have not been heard from in the last two intervals. It also removes any routes that go through the removed neighbors.
     routingCacheTable.clear();
-    
+
     auto neighbourIterator = this->activeNeighbors.begin();
     bool routeIteratorRemoved = false;
     while (neighbourIterator != this->activeNeighbors.end())
@@ -89,11 +87,13 @@ void DTP::cleaningDeamon()
         else
         {
             routingCacheTable[neighbour.id] = DTPRoutingItemFull{neighbour.id, 1};
-            for(auto routing : neighbour.routes) {
+            for (auto routing : neighbour.routes)
+            {
                 DTPRoutingItem &route = routing.second;
-                if(routingCacheTable.find(routing.first) == routingCacheTable.end())
+                if (routingCacheTable.find(routing.first) == routingCacheTable.end())
                     routingCacheTable[routing.first] = DTPRoutingItemFull{neighbour.id, route.distance};
-                else if(route.distance < routingCacheTable[routing.first].distance){
+                else if (route.distance < routingCacheTable[routing.first].distance)
+                {
                     routingCacheTable[routing.first] = DTPRoutingItemFull{neighbour.id, route.distance};
                 }
             }
@@ -102,8 +102,6 @@ void DTP::cleaningDeamon()
     }
 
     sort(this->activeNeighbors.begin(), this->activeNeighbors.end(), compareByStartTime);
-
-    
 
     if (this->numOfIntervalsElapsed)
     {
@@ -138,12 +136,9 @@ void DTP::parseNeigbours()
     DTPPacketNAPRecieve *packet = neighborPacketToParse;
     uint16_t size = dtpPacketSize;
     uint16_t numOfNeighbors = (size - sizeof(DTPPacketNAP)) / sizeof(NeighborRecord);
-    Serial.println(size);
-    Serial.println(sizeof(DTPPacketNAP));
-    Serial.println(sizeof(NeighborRecord));
-    Serial.println((size - sizeof(DTPPacketNAP)));
+
     NeighborRecord *neighbors = packet->neighbors;
-    Serial.println("Parsing neighbours" + String(numOfNeighbors));
+    Serial.println("Parsing neighbours " + String(numOfNeighbors));
 
     float timeOnAir = MathExtension.timeOnAir(size, 8, 9, 125, 7);
     uint32_t startTime = currentTime - timeOnAir * 1.05;
@@ -155,7 +150,8 @@ void DTP::parseNeigbours()
 
     for (int i = 0; i < numOfNeighbors; i++)
     {
-        routes[neighbors[i].id] = (DTPRoutingItem){neighbors[i].distance};
+        if (MAC::getInstance()->getId() != neighbors[i].id)
+            routes[neighbors[i].id] = (DTPRoutingItem){neighbors[i].distance};
     }
 
     bool alreadyInNeighbours = false;
@@ -192,9 +188,12 @@ size_t DTP::sizeOfRouting()
 {
     size_t size = 0;
     vector<uint16_t> alreadyAdded;
-    for(auto activeNeighbour : this->activeNeighbors){
-        for(auto route : activeNeighbour.routes){
-            if(find(alreadyAdded.begin(), alreadyAdded.end(), route.first) == alreadyAdded.end()){
+    for (auto activeNeighbour : this->activeNeighbors)
+    {
+        for (auto route : activeNeighbour.routes)
+        {
+            if (find(alreadyAdded.begin(), alreadyAdded.end(), route.first) == alreadyAdded.end())
+            {
                 size += sizeof(NeighborRecord);
                 alreadyAdded.push_back(route.first);
             }
@@ -329,7 +328,6 @@ void DTP::sendNAPPacket()
     for (auto pair : this->routingCacheTable)
     {
         DTPRoutingItemFull &route = pair.second;
-        
 
         packet->neighbors[i].id = pair.first;
         packet->neighbors[i].distance = route.distance;

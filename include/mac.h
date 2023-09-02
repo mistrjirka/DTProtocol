@@ -103,7 +103,9 @@ public:
   uint32_t random();
   void setMode(State state, bool force = true);
   State getMode();
+  uint16_t getId();
   SX1262 module;
+  
 
   // Other member functions as needed
 private:
@@ -116,7 +118,7 @@ private:
                                       434.55, 434.675, 434.8};
 
   int noiseFloor[NUM_OF_CHANNELS];
-  int id;
+  uint16_t id;
   int channel;
   int spreading_factor;
   int bandwidth;

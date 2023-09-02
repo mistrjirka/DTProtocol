@@ -99,6 +99,11 @@ void MAC::LORANoiseCalibrateAllChannels(bool save /*= true*/)
   setMode(prev_state);
 }
 
+uint16_t MAC::getId(){
+  return this->id;
+}
+
+
 void MAC::handlePacket()
 {
   // Serial.println("packet received");

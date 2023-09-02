@@ -95,7 +95,7 @@ public:
         std::function<void(MACPacket *packet, uint16_t size, uint32_t crcCalculated)>;
     static DTP *getInstance();
 
-    static void initialize(uint16_t id, uint8_t NAPInterval = 30);
+    static void initialize(uint8_t NAPInterval = 30);
     void loop();
     DTPStates getState();
     DTPNAPTimeRecord getMyNAP();
@@ -116,7 +116,6 @@ private:
     bool NAPSend;
     DTPNAPTimeRecord myNAP;
     
-    uint16_t id;
 
     DTPStates state;
     vector<DTPNAPTimeRecord> activeNeighbors;
@@ -125,7 +124,7 @@ private:
 
     static DTP *dtp;
 
-    DTP(uint16_t id, uint8_t NAPInterval);
+    DTP(uint8_t NAPInterval);
 
     uint32_t getTimeOnAirOfNAP();
     DTPNAPTimeRecord getNearestTimeSlot(uint32_t ideal_min_time, uint32_t ideal_max_time, uint32_t min_start_time, uint32_t max_end_time);
