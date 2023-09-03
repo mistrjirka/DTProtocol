@@ -88,6 +88,12 @@ typedef struct
     unordered_map<uint16_t, DTPRoutingItem> routes;
 } DTPNAPTimeRecord;
 
+typedef struct 
+{
+    uint32_t startTime;
+    uint32_t endTime;
+} DTPNAPTimeRecordSimple;
+
 class DTP
 {
 public:
@@ -130,7 +136,7 @@ private:
     DTP(uint8_t NAPInterval);
 
     uint32_t getTimeOnAirOfNAP();
-    DTPNAPTimeRecord getNearestTimeSlot(uint32_t ideal_min_time, uint32_t ideal_max_time, uint32_t min_start_time, uint32_t max_end_time);
+    DTPNAPTimeRecordSimple getNearestTimeSlot(uint32_t ideal_min_time, uint32_t ideal_max_time, uint32_t min_start_time, uint32_t max_end_time);
     bool checkIfCurrentPlanIsColliding();
 
     void parseNeigbours();

@@ -5,6 +5,11 @@ DTPPacketNAPRecieve *DTP::neighborPacketToParse = nullptr;
 bool DTP::neighborPacketWaiting = false;
 uint16_t DTP::dtpPacketSize = 0;
 
+bool compareByStartTime(const DTPNAPTimeRecord &a, const DTPNAPTimeRecord &b)
+{
+    return a.startTime < b.startTime;
+}
+
 DTP::DTP(uint8_t NAPInterval)
 {
     this->state = DTPStates::INITIAL_LISTENING;
@@ -17,6 +22,7 @@ DTP::DTP(uint8_t NAPInterval)
     Serial.println("DTP initialized " + String(MAC::getInstance()->random()));
 
     LCMM::initialize(DTP::receivePacket, DTP::receiveAck);
+    MAC::getInstance()->setMode(RECEIVING, true);
     timeOfInit = millis();
     currentTime = 0;
 }
@@ -54,17 +60,14 @@ void DTP::initialize(uint8_t NAPInterval)
 
 bool DTP::checkIfCurrentPlanIsColliding()
 {
+    sort(this->activeNeighbors.begin(), this->activeNeighbors.end(), compareByStartTime);
+
     for (DTPNAPTimeRecord i : this->activeNeighbors)
     {
         if ((i.startTime < this->myNAP.endTime && i.endTime > this->myNAP.endTime) || (i.startTime < this->myNAP.startTime && i.endTime > this->myNAP.startTime))
             return true;
     }
     return false;
-}
-
-bool compareByStartTime(const DTPNAPTimeRecord &a, const DTPNAPTimeRecord &b)
-{
-    return a.startTime < b.startTime;
 }
 
 void DTP::savePreviousActiveNeighbors()
@@ -91,7 +94,7 @@ void DTP::cleaningDeamon()
     while (neighbourIterator != this->activeNeighbors.end())
     {
         DTPNAPTimeRecord &neighbour = *neighbourIterator;
-        printf("ereasing %d %d \n", neighbour.lastIntervalHeard, numOfIntervalsElapsed);
+        printf("Going through %d last interval heard %d num of intervals elapsed %d \n",neighbour.id, neighbour.lastIntervalHeard, numOfIntervalsElapsed);
 
         if (neighbour.lastIntervalHeard - numOfIntervalsElapsed > 0)
         {
@@ -100,10 +103,12 @@ void DTP::cleaningDeamon()
         }
         else
         {
+            printf("going to save the neighbour\n");
             routingCacheTable[neighbour.id] = DTPRoutingItemFull{neighbour.id, 1, true};
 
             for (auto routing : neighbour.routes)
             {
+                printf("going through routes\n");
                 DTPRoutingItem &route = routing.second;
                 if (routingCacheTable.find(routing.first) == routingCacheTable.end())
                 {
@@ -125,12 +130,15 @@ void DTP::cleaningDeamon()
             neighbourIterator++;
         }
     }
-
+    printf("sorting now\n");
     sort(this->activeNeighbors.begin(), this->activeNeighbors.end(), compareByStartTime);
+    printf("sorted now\n");
     this->savePreviousActiveNeighbors();
+    printf("saving\n");
 
     if (this->numOfIntervalsElapsed)
     {
+        printf("num of intervals elapsed check\n");;
         this->myNAP.endTime = this->myNAP.startTime + this->getTimeOnAirOfNAP();
         printf(("is collision eminent?: " + String(this->NAPPlaned)).c_str());
         printf(String(checkIfCurrentPlanIsColliding()).c_str());
@@ -254,32 +262,34 @@ void DTP::NAPPlanRandom()
     this->NAPPlaned = true;
 }
 
-DTPNAPTimeRecord DTP::getNearestTimeSlot(uint32_t ideal_min_time, uint32_t ideal_max_time, uint32_t min_start_time, uint32_t max_end_time)
+DTPNAPTimeRecordSimple DTP::getNearestTimeSlot(uint32_t ideal_min_time, uint32_t ideal_max_time, uint32_t min_start_time, uint32_t max_end_time)
 {
-    vector<DTPNAPTimeRecord> possibleTimeSlots;
+
+    vector<DTPNAPTimeRecordSimple> possibleTimeSlots;
 
     auto iterator = this->activeNeighbors.begin();
 
     while (iterator != this->activeNeighbors.end())
     {
-        DTPNAPTimeRecord neighbour = *iterator;
-        DTPNAPTimeRecord nextNeighbour = *(iterator + 1);
-        if ((iterator + 1) == this->activeNeighbors.end())
-            nextNeighbour = DTPNAPTimeRecord{0, max_end_time, max_end_time, 0};
+        DTPNAPTimeRecordSimple neighbour = {(*iterator).startTime, (*iterator).endTime};
+        DTPNAPTimeRecordSimple nextNeighbour = {max_end_time, max_end_time};
+        
+        if ((iterator + 1) != this->activeNeighbors.end())
+             nextNeighbour = {(*(iterator + 1)).startTime, (*(iterator + 1)).endTime};
 
         if (nextNeighbour.startTime - neighbour.endTime > ideal_max_time - ideal_min_time)
         {
-            possibleTimeSlots.push_back(DTPNAPTimeRecord{0, neighbour.endTime, nextNeighbour.startTime, 0});
+            possibleTimeSlots.push_back(DTPNAPTimeRecordSimple{ neighbour.endTime, nextNeighbour.startTime });
         }
         iterator++;
     }
 
     if (possibleTimeSlots.size() == 0)
-        return DTPNAPTimeRecord{0, 0, 0, 0};
+        return DTPNAPTimeRecordSimple{0, 0};
 
-    DTPNAPTimeRecord bestTimeSlot = possibleTimeSlots[0];
+    DTPNAPTimeRecordSimple bestTimeSlot = possibleTimeSlots[0];
 
-    for (DTPNAPTimeRecord i : possibleTimeSlots)
+    for (DTPNAPTimeRecordSimple i : possibleTimeSlots)
     {
         if (i.endTime - i.startTime < bestTimeSlot.endTime - bestTimeSlot.startTime)
             bestTimeSlot = i;
@@ -304,6 +314,8 @@ void DTP::NAPPlanInteligent()
 
     uint32_t denominator = 0;
     uint32_t numerator = 0;
+    sort(this->activeNeighbors.begin(), this->activeNeighbors.end(), compareByStartTime);
+    
 
     for (DTPNAPTimeRecord i : this->activeNeighbors)
     {
@@ -324,12 +336,13 @@ void DTP::NAPPlanInteligent()
 
         idealPoint += this->currentTime * 1.2 + timeOnAir * 1.3 / 2;
     }
+    
 
     uint32_t idealMinTime = idealPoint - timeOnAir * 1.3 / 2;
     uint32_t idealMaxTime = idealPoint + timeOnAir * 1.3 / 2;
 
-    DTPNAPTimeRecord bestTimeSlot = getNearestTimeSlot(idealMinTime, idealMaxTime, 0, this->NAPInterval * 1000);
-
+    DTPNAPTimeRecordSimple bestTimeSlot = getNearestTimeSlot(idealMinTime, idealMaxTime, 0, this->NAPInterval * 1000);
+    
     if (bestTimeSlot.startTime == 0 && bestTimeSlot.endTime == 0)
     {
         this->NAPPlanRandom();
@@ -357,10 +370,6 @@ void DTP::sendNAPPacket()
             sendableItems.push_back(NeighborRecord{element.first, element.second.distance});
         }
     }      
-    
-
-
-    printf("Sending NAP packet %d\n", sendableItems.size());
     uint16_t sizeOfRouting = sendableItems.size() * sizeof(NeighborRecord) + sizeof(DTPPacketNAP);
 
     DTPPacketNAP *packet = (DTPPacketNAP *)malloc(sizeOfRouting);
@@ -387,10 +396,15 @@ void DTP::sendNAPPacket()
 
 void DTP::sendNAP()
 {
+
     if (this->lastNAPSsentInterval == this->numOfIntervalsElapsed)
         return;
+    
+  
     if (!this->NAPPlaned && this->activeNeighbors.size() == 0)
     {
+        printf("No neighbours\n");
+        //printf("size of active neighbours %d", this->activeNeighbors.size());
         Serial.println("No neighbours");
         NAPPlanRandom();
     }
@@ -398,6 +412,7 @@ void DTP::sendNAP()
     if (!NAPPlaned)
     {
         Serial.println("Planning intelligent");
+        printf("Planning inteligently");
 
         this->NAPPlanInteligent();
     }
@@ -418,7 +433,6 @@ void DTP::sendNAP()
 void DTP::loop()
 {
     parseNeigbours();
-    updateTime();
     LCMM::getInstance()->loop();
     updateTime();
     sendNAP();
