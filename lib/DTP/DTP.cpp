@@ -296,13 +296,17 @@ DTPNAPTimeRecordSimple DTP::getNearestTimeSlot(uint32_t ideal_min_time, uint32_t
     }
 
     int howMuchCanFit = (bestTimeSlot.endTime - bestTimeSlot.startTime) / (ideal_max_time - ideal_min_time);
+    Serial.println("how much can fit " + String(howMuchCanFit));
     if (howMuchCanFit > 1)
     {
         int margin = (bestTimeSlot.endTime - bestTimeSlot.startTime) - howMuchCanFit * (ideal_max_time - ideal_min_time);
+        Serial.println("margin " + String(margin));
         int sideMargin = margin / (howMuchCanFit * 2);
         int timeSlotChosen = MathExtension.getRandomNumber(0, howMuchCanFit - 1);
+        Serial.println("time slot chosen " + String(timeSlotChosen));
         bestTimeSlot.startTime = bestTimeSlot.startTime + timeSlotChosen * (sideMargin + ideal_max_time - ideal_min_time);
         bestTimeSlot.endTime = bestTimeSlot.startTime + (ideal_max_time - ideal_min_time);
+        Serial.println("best time slot " + String(bestTimeSlot.startTime) + " to " + String(bestTimeSlot.endTime));
     }
 
     return bestTimeSlot;
