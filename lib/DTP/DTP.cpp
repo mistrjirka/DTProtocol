@@ -182,9 +182,8 @@ uint16_t DTP::sendPacket(uint8_t *data, uint8_t size, uint16_t target)
 
     DTPPacketGeneric *packet =(DTPPacketGeneric *)malloc(sizeof(DTPPacketGeneric)+ size);
     
-    if(!packet){
+    if(!packet)
         return -1;
-    }
 
     packet->finalTarget = target;
     packet->originalSender = MAC::getInstance()->getId();
@@ -209,6 +208,13 @@ void DTP::parseDataPacket()
 
     if (packet->finalTarget == MAC::getInstance()->getId())
     {
+        DTPPacketACK *responsePacket = (DTPPacketACK *)malloc(sizeof(DTPPacketACK));
+        responsePacket->header.finalTarget = packet->originalSender;
+        responsePacket->header.id = this->packetIdCounter++;
+        responsePacket->header.originalSender = MAC::getInstance()->getId();
+        responsePacket->header.type = DTP_PACKET_TYPE_ACK;
+        responsePacket->responseId = packet->id;
+        LCMM::getInstance()->sendPacketSingle(false, packet->lcmm.mac.sender, (unsigned char *)responsePacket, sizeof(DTPPacketACK), DTP::receiveAck);
         this->recieveCallback(packet, this->dataPacketSize);
         this->dataPacketToParse = nullptr;
         this->dataPacketSize = 0;
@@ -232,6 +238,7 @@ void DTP::parseDataPacket()
         }
         else
         {
+
             Serial.println("havent found target");
             // possible implementation with flood routing
         }

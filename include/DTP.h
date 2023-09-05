@@ -11,6 +11,10 @@
 #include <mathextension.h>
 #define DTP_PACKET_TYPE_NAP 0
 #define DTP_PACKET_TYPE_DATA_SINGLE 1
+#define DTP_PACKET_TYPE_ACK 2
+#define DTP_PACKET_TYPE_NACK_NOTFOUND 3
+#define DTP_PACKET_TYPE_NACK_TIMEOUT 4
+#define DTP_PACKET_TYPE_NACK_REFUSED 5
 
 enum DTPStates
 {
@@ -42,6 +46,14 @@ typedef struct __attribute__((packed))
 
 typedef struct __attribute__((packed))
 {
+    uint8_t type; // 0 = NAP, 1 = DATA, 2 = ACK, 3 = NACK - target not in database, 4 = NACK - target unresponsive
+    uint16_t originalSender;
+    uint16_t finalTarget;
+    uint16_t id;
+} DTPPacketHeader;
+
+typedef struct __attribute__((packed))
+{
     LCMMDataHeader lcmm;
     uint8_t type;// 0 = NAP, 1 = DATA, 2 = ACK, 3 = NACK - target not in database, 4 = NACK - target unresponsive
     uint16_t originalSender;
@@ -64,9 +76,10 @@ typedef struct __attribute__((packed))
 } DTPPacketNAPRecieve;
 
 typedef struct __attribute__((packed))
-{
-    uint16_t *proxies;
-} DTPPacketNACK;
+{   
+    DTPPacketHeader header;
+    uint16_t responseId;
+} DTPPacketACK;
 
 typedef struct
 {
@@ -95,13 +108,22 @@ typedef struct
     uint32_t endTime;
 } DTPNAPTimeRecordSimple;
 
+typedef struct
+{
+    uint16_t id;
+    uint16_t timeLeft;
+    uint16_t timeout;
+    DTP::PacketAckCallback callback;
+} DTPPacketWaiting;
+
 class DTP
 {
 public:
     // Callback function type definition
     using PacketReceivedCallback =
         std::function<void(DTPPacketGenericRecieve *packet, uint16_t size)>;
-
+    using PacketAckCallback =
+        std::function<void(DTPPacketGenericRecieve *packet, uint16_t size)>;
     static DTP *getInstance();
 
     static void initialize(uint8_t NAPInterval = 30);
@@ -134,6 +156,7 @@ private:
 
     DTPStates state;
     vector<DTPNAPTimeRecord> activeNeighbors;
+    vector<uint16_t> waitingToBeConfirmedPackets;
     unordered_map<uint16_t, DTPNAPTimeRecord> previousActiveNeighbors;
 
     unordered_map<uint16_t, DTPRoutingItemFull> routingCacheTable;
