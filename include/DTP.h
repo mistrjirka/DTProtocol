@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <mathextension.h>
 #define DTP_PACKET_TYPE_NAP 0
+#define DTP_PACKET_TYPE_DATA_SINGLE 1
 
 enum DTPStates
 {
@@ -99,30 +100,37 @@ class DTP
 public:
     // Callback function type definition
     using PacketReceivedCallback =
-        std::function<void(MACPacket *packet, uint16_t size, uint32_t crcCalculated)>;
+        std::function<void(DTPPacketGenericRecieve *packet, uint16_t size)>;
+
     static DTP *getInstance();
 
     static void initialize(uint8_t NAPInterval = 30);
     void loop();
     DTPStates getState();
     DTPNAPTimeRecord getMyNAP();
+    void setPacketRecievedCallback(PacketReceivedCallback fun);
+    uint16_t sendPacket(uint8_t *data, uint8_t size, uint16_t target);
     unordered_map<uint16_t, DTPRoutingItemFull> getRoutingTable();
     vector<DTPNAPTimeRecord> neighbors();
 
 
 private:
     static bool neighborPacketWaiting;
+    static bool dataPacketWaiting;
+    static DTPPacketGenericRecieve *dataPacketToParse;
     static DTPPacketNAPRecieve *neighborPacketToParse;
     static uint16_t dtpPacketSize;
+    static uint16_t dataPacketSize;
     uint32_t timeOfInit;
     uint16_t currentTime;
     uint8_t NAPInterval;
     uint32_t numOfIntervalsElapsed;
     uint32_t lastNAPSsentInterval;
+    uint32_t packetIdCounter;
     bool NAPPlaned;
     bool NAPSend;
     DTPNAPTimeRecord myNAP;
-    
+    PacketReceivedCallback recieveCallback;
 
     DTPStates state;
     vector<DTPNAPTimeRecord> activeNeighbors;
@@ -136,10 +144,12 @@ private:
     DTP(uint8_t NAPInterval);
 
     uint32_t getTimeOnAirOfNAP();
+    uint16_t getRoutingItem(uint16_t id);
     DTPNAPTimeRecordSimple getNearestTimeSlot(uint32_t ideal_min_time, uint32_t ideal_max_time, uint32_t min_start_time, uint32_t max_end_time);
     bool checkIfCurrentPlanIsColliding();
 
     void parseNeigbours();
+    void parseDataPacket();
     void sendNAP();
     void sendNAPPacket();
     void updateTime();
