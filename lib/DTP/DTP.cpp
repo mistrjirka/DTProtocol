@@ -12,7 +12,6 @@ uint16_t DTP::dtpPacketSize = 0;
 uint16_t DTP::dataPacketSize = 0;
 bool DTP::sending = false;
 
-
 bool compareByStartTime(const DTPNAPTimeRecord &a, const DTPNAPTimeRecord &b)
 {
     return a.startTime < b.startTime;
@@ -96,7 +95,7 @@ void DTP::savePreviousActiveNeighbors()
 
 void DTP::sendingDeamon()
 {
-    if(DTP::sending)
+    if (DTP::sending)
         return;
 
     if (this->sendingQueue.size() == 0)
@@ -108,7 +107,6 @@ void DTP::sendingDeamon()
 
     this->sendingQueue.erase(this->sendingQueue.begin());
 }
-
 
 void DTP::cleaningDeamon()
 {
@@ -232,7 +230,6 @@ uint16_t DTP::sendPacket(uint8_t *data, uint8_t size, uint16_t target, uint16_t 
     printf("sending packets adding new one");
     memcpy(packet->data, data, size);
 
-    
     this->addPacketToSendingQueue(true, proxyId, (uint8_t *)packet, sizeof(DTPPacketGeneric) + size, timeout);
     DTPPacketWaiting waitingPacket;
     waitingPacket.id = packet->id;
@@ -257,20 +254,25 @@ void DTP::parseDataPacket()
     if (packet->finalTarget == MAC::getInstance()->getId())
     {
         DTPPacketACK *responsePacket = (DTPPacketACK *)malloc(sizeof(DTPPacketACK));
-        if(!responsePacket){
-            Serial.println("major failure in allocation"); 
+        if (!responsePacket)
+        {
+            Serial.println("major failure in allocation");
         }
-        responsePacket->header.finalTarget = packet->originalSender;
-        responsePacket->header.id = this->packetIdCounter++;
-        responsePacket->header.originalSender = MAC::getInstance()->getId();
-        responsePacket->header.type = DTP_PACKET_TYPE_ACK;
-        responsePacket->responseId = packet->id;
+        if (packet->type == DTP_PACKET_TYPE_DATA_SINGLE)
+        {
+            responsePacket->header.finalTarget = packet->originalSender;
+            responsePacket->header.id = this->packetIdCounter++;
+            responsePacket->header.originalSender = MAC::getInstance()->getId();
+            responsePacket->header.type = DTP_PACKET_TYPE_ACK;
+            responsePacket->responseId = packet->id;
 
-        Serial.println("sending ack " + String(packet->id)+ " to " + String(packet->originalSender) + " throught " + String(packet->lcmm.mac.sender) + " with id " + String(responsePacket->header.id));
-        
-        this->addPacketToSendingQueue(false, packet->lcmm.mac.sender, (unsigned char *)responsePacket, sizeof(DTPPacketACK), 2000);
-        Serial.println("ack sent");
-        if(this->recieveCallback != nullptr){
+            Serial.println("sending ack " + String(packet->id) + " to " + String(packet->originalSender) + " throught " + String(packet->lcmm.mac.sender) + " with id " + String(responsePacket->header.id));
+
+            this->addPacketToSendingQueue(false, packet->lcmm.mac.sender, (unsigned char *)responsePacket, sizeof(DTPPacketACK), 2000);
+            Serial.println("ack sent");
+        }
+        if (this->recieveCallback != nullptr)
+        {
             this->recieveCallback(packet, this->dataPacketSize);
         }
         Serial.println("after callback");
@@ -548,7 +550,7 @@ void DTP::sendNAPPacket()
         printf("sending %d %d\n", packet->neighbors[i].id, packet->neighbors[i].distance);
         Serial.println("sending " + String(packet->neighbors[i].id) + " " + String(packet->neighbors[i].distance));
     }
-    
+
     this->addPacketToSendingQueue(false, 0, (unsigned char *)packet, sizeOfRouting, 200);
     free(packet);
     this->lastNAPSsentInterval = this->numOfIntervalsElapsed;
@@ -604,7 +606,7 @@ void DTP::timeoutDeamon()
             printf("time runned out");
             // Due to deletion in loop, iterator became
             // invalidated. So reset the iterator to next item.
-            if(waitingPacket.callback != nullptr)
+            if (waitingPacket.callback != nullptr)
                 waitingPacket.callback(0);
 
             it = this->waitingForAck.erase(it);
