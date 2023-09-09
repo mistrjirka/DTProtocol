@@ -18,8 +18,12 @@ DTP::DTP(uint8_t NAPInterval)
     this->neighborPacketWaiting = false;
     this->lastNAPSsentInterval = 0;
     this->numOfIntervalsElapsed = 0;
+    this->lastTick = 0;
     this->packetIdCounter = 1;
     this->NAPPlaned = false;
+    this->ackPacketToParse = nullptr;
+    this->ackPacketWaiting = false;
+    this->waitingForAck = vector<DTPPacketWaiting>();
     randomSeed((uint64_t)((uint64_t)MAC::getInstance()->random()) << 32 | MAC::getInstance()->random());
     Serial.println("DTP initialized " + String(MAC::getInstance()->random()));
 
@@ -174,15 +178,15 @@ void DTP::setPacketRecievedCallback(PacketReceivedCallback fun)
     this->recieveCallback = fun;
 }
 
-uint16_t DTP::sendPacket(uint8_t *data, uint8_t size, uint16_t target)
+uint16_t DTP::sendPacket(uint8_t *data, uint8_t size, uint16_t target, uint16_t timeout, DTP::PacketAckCallback callback)
 {
     uint16_t proxyId = this->getRoutingItem(target);
-    if(!proxyId)
+    if (!proxyId)
         return proxyId;
 
-    DTPPacketGeneric *packet =(DTPPacketGeneric *)malloc(sizeof(DTPPacketGeneric)+ size);
-    
-    if(!packet)
+    DTPPacketGeneric *packet = (DTPPacketGeneric *)malloc(sizeof(DTPPacketGeneric) + size);
+
+    if (!packet)
         return -1;
 
     packet->finalTarget = target;
@@ -191,9 +195,14 @@ uint16_t DTP::sendPacket(uint8_t *data, uint8_t size, uint16_t target)
     packet->type = DTP_PACKET_TYPE_DATA_SINGLE;
     memcpy(packet->data, data, size);
 
-    LCMM::getInstance()->sendPacketSingle(true,proxyId, (uint8_t*) packet, sizeof(DTPPacketGeneric)+ size, DTP::receiveAck);
+    LCMM::getInstance()->sendPacketSingle(true, proxyId, (uint8_t *)packet, sizeof(DTPPacketGeneric) + size, DTP::receiveAck);
+    DTPPacketWaiting waitingPacket;
+    waitingPacket.id = packet->id;
+    waitingPacket.timeout = timeout;
+    waitingPacket.timeLeft = timeout;
+    this->waitingForAck.push_back(waitingPacket);
+    return packet->id;
 }
-
 
 void DTP::parseDataPacket()
 {
@@ -530,12 +539,73 @@ void DTP::sendNAP()
     }
 }
 
+void DTP::timeoutDeamon()
+{
+    auto it = this->waitingForAck.begin();
+    uint32_t currTime = millis();
+    while (it != this->waitingForAck.end())
+    {
+        // If element is even number then delete it
+        DTPPacketWaiting waitingPacket = *it;
+        if (currTime - this->lastTick >= waitingPacket.timeLeft)
+        {
+            // Due to deletion in loop, iterator became
+            // invalidated. So reset the iterator to next item.
+            waitingPacket.callback(0);
+
+            it = this->waitingForAck.erase(it);
+        }
+        else
+        {
+            waitingPacket.timeLeft -= currTime - this->lastTick;
+            it++;
+        }
+    }
+
+    this->lastTick = millis();
+}
+
+void DTP::parseAckPacket()
+{
+    if(ackPacketWaiting)
+    {
+        ackPacketWaiting = false;
+        DTPPacketACKRecieve *packet = ackPacketToParse;
+        uint16_t id = packet->responseId;
+        auto it = this->waitingForAck.begin();
+        while (it != this->waitingForAck.end())
+        {
+            // If element is even number then delete it
+            DTPPacketWaiting waitingPacket = *it;
+            if (waitingPacket.id == id)
+            {
+                // Due to deletion in loop, iterator became
+                // invalidated. So reset the iterator to next item.
+                waitingPacket.callback(1);
+                it = this->waitingForAck.erase(it);
+            }
+            else
+            {
+                it++;
+            }
+        }
+        if(this->ackPacketToParse)
+            free(this->ackPacketToParse);
+            this->ackPacketToParse = nullptr;
+        
+    }
+
+}
+
 void DTP::loop()
 {
     parseNeigbours();
     LCMM::getInstance()->loop();
     updateTime();
     sendNAP();
+    parseDataPacket();
+    parseAckPacket();
+    timeoutDeamon();
 
     // Implement your loop logic here
 }
@@ -566,6 +636,12 @@ void DTP::receivePacket(LCMMPacketDataRecieve *packet, uint16_t size)
         DTP::dataPacketWaiting = true;
         DTP::dataPacketToParse = (DTPPacketGenericRecieve *)packet;
         DTP::dataPacketSize = dtpSize;
+        break;
+    case DTP_PACKET_TYPE_ACK:
+        Serial.println("ACK packet received");
+        printf("ack recieved");
+        DTP::ackPacketWaiting = true;
+        DTP::ackPacketToParse = (DTPPacketACKRecieve *)packet;
         break;
     }
 }

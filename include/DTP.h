@@ -55,7 +55,7 @@ typedef struct __attribute__((packed))
 typedef struct __attribute__((packed))
 {
     LCMMDataHeader lcmm;
-    uint8_t type;// 0 = NAP, 1 = DATA, 2 = ACK, 3 = NACK - target not in database, 4 = NACK - target unresponsive
+    uint8_t type; // 0 = NAP, 1 = DATA, 2 = ACK, 3 = NACK - target not in database, 4 = NACK - target unresponsive
     uint16_t originalSender;
     uint16_t finalTarget;
     uint16_t id;
@@ -76,7 +76,14 @@ typedef struct __attribute__((packed))
 } DTPPacketNAPRecieve;
 
 typedef struct __attribute__((packed))
-{   
+{
+    LCMMDataHeader lcmm;
+    DTPPacketHeader header;
+    uint16_t responseId;
+} DTPPacketACKRecieve;
+
+typedef struct __attribute__((packed))
+{
     DTPPacketHeader header;
     uint16_t responseId;
 } DTPPacketACK;
@@ -102,19 +109,11 @@ typedef struct
     unordered_map<uint16_t, DTPRoutingItem> routes;
 } DTPNAPTimeRecord;
 
-typedef struct 
+typedef struct
 {
     uint32_t startTime;
     uint32_t endTime;
 } DTPNAPTimeRecordSimple;
-
-typedef struct
-{
-    uint16_t id;
-    uint16_t timeLeft;
-    uint16_t timeout;
-    DTP::PacketAckCallback callback;
-} DTPPacketWaiting;
 
 class DTP
 {
@@ -123,7 +122,14 @@ public:
     using PacketReceivedCallback =
         std::function<void(DTPPacketGenericRecieve *packet, uint16_t size)>;
     using PacketAckCallback =
-        std::function<void(DTPPacketGenericRecieve *packet, uint16_t size)>;
+        std::function<void(uint8_t result)>;
+    typedef struct
+    {
+        uint16_t id;
+        uint16_t timeLeft;
+        uint16_t timeout;
+        DTP::PacketAckCallback callback;
+    } DTPPacketWaiting;
     static DTP *getInstance();
 
     static void initialize(uint8_t NAPInterval = 30);
@@ -131,14 +137,15 @@ public:
     DTPStates getState();
     DTPNAPTimeRecord getMyNAP();
     void setPacketRecievedCallback(PacketReceivedCallback fun);
-    uint16_t sendPacket(uint8_t *data, uint8_t size, uint16_t target);
+    uint16_t sendPacket(uint8_t *data, uint8_t size, uint16_t target, uint16_t timeout, DTP::PacketAckCallback callback);
     unordered_map<uint16_t, DTPRoutingItemFull> getRoutingTable();
     vector<DTPNAPTimeRecord> neighbors();
-
 
 private:
     static bool neighborPacketWaiting;
     static bool dataPacketWaiting;
+    static bool ackPacketWaiting;
+    static DTPPacketACKRecieve *ackPacketToParse;
     static DTPPacketGenericRecieve *dataPacketToParse;
     static DTPPacketNAPRecieve *neighborPacketToParse;
     static uint16_t dtpPacketSize;
@@ -149,12 +156,14 @@ private:
     uint32_t numOfIntervalsElapsed;
     uint32_t lastNAPSsentInterval;
     uint32_t packetIdCounter;
+    uint32_t lastTick;
     bool NAPPlaned;
     bool NAPSend;
     DTPNAPTimeRecord myNAP;
     PacketReceivedCallback recieveCallback;
 
     DTPStates state;
+    vector<DTPPacketWaiting> waitingForAck;
     vector<DTPNAPTimeRecord> activeNeighbors;
     vector<uint16_t> waitingToBeConfirmedPackets;
     unordered_map<uint16_t, DTPNAPTimeRecord> previousActiveNeighbors;
@@ -173,12 +182,14 @@ private:
 
     void parseNeigbours();
     void parseDataPacket();
+    void parseAckPacket();
     void sendNAP();
     void sendNAPPacket();
     void updateTime();
     void NAPPlanRandom();
     void NAPPlanInteligent();
     void cleaningDeamon();
+    void timeoutDeamon();
     void savePreviousActiveNeighbors();
 
     static void receivePacket(LCMMPacketDataRecieve *packet, uint16_t size);
