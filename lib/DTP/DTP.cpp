@@ -240,6 +240,91 @@ uint16_t DTP::sendPacket(uint8_t *data, uint8_t size, uint16_t target, uint16_t 
     return packet->id;
 }
 
+void DTP::redistributePackets()
+{
+    if (!this->dataPacketWaiting && !this->ackPacketWaiting)
+        return;
+
+    uint16_t proxyId = 0;
+    size_t sizeToAllocate = 0;
+    unsigned char *dataToSend = nullptr;
+
+    if (this->dataPacketWaiting && this->dataPacketToParse->finalTarget != MAC::getInstance()->getId())
+    {
+        this->dataPacketWaiting = false;
+        proxyId = this->getRoutingItem(this->dataPacketToParse->finalTarget);
+        if (proxyId != 0)
+        {
+            Serial.println("routing found");
+            sizeToAllocate = this->dataPacketSize;
+            dataToSend = (unsigned char *)malloc(sizeToAllocate);
+            if (!dataToSend)
+            {
+                if (this->dataPacketToParse){
+                    free(this->dataPacketToParse);
+                    this->dataPacketToParse = nullptr;
+                }
+                Serial.println("memory allloc failed major fuckup");
+                return;
+            }
+
+            memcpy(dataToSend, ((LCMMPacketDataRecieve *)this->dataPacketToParse)->data, sizeToAllocate);
+        }
+        else
+        {
+
+            Serial.println("havent found target");
+            // possible implementation with flood routing
+        }
+
+        if (this->dataPacketToParse)
+        {
+            free(this->dataPacketToParse);
+            this->dataPacketToParse = nullptr;
+        }
+    }
+
+    if (this->ackPacketWaiting && this->ackPacketToParse->header.finalTarget != MAC::getInstance()->getId())
+    {
+        this->ackPacketWaiting = false;
+        proxyId = this->getRoutingItem(this->ackPacketToParse->header.finalTarget);
+        if (proxyId != 0)
+        {
+            Serial.println("routing found");
+            sizeToAllocate = sizeof(DTPPacketACK);
+            dataToSend = (unsigned char *)malloc(sizeToAllocate);
+            if (!dataToSend)
+            {
+                if (this->ackPacketToParse){
+                    free(this->ackPacketToParse);
+                    this->ackPacketToParse = nullptr;
+                }
+                Serial.println("memory allloc failed major fuckup");
+                return;
+            }
+
+            memcpy(dataToSend, ((LCMMPacketDataRecieve *)this->ackPacketToParse)->data, sizeToAllocate);
+        }
+        else
+        {
+
+            Serial.println("havent found target");
+            // possible implementation with flood routing
+        }
+
+        if (this->ackPacketToParse)
+        {
+            free(this->ackPacketToParse);
+            this->ackPacketToParse = nullptr;
+        }
+    }
+
+    if (sizeToAllocate > 0 && dataToSend != nullptr)
+        this->addPacketToSendingQueue(true, proxyId, dataToSend, sizeToAllocate, 3000);
+
+    
+}
+
 void DTP::parseDataPacket()
 {
     if (!dataPacketWaiting)
@@ -279,37 +364,6 @@ void DTP::parseDataPacket()
 
         this->dataPacketToParse = nullptr;
         this->dataPacketSize = 0;
-    }
-    else
-    {
-        Serial.println("not final target");
-        uint16_t proxyId = this->getRoutingItem(packet->finalTarget);
-        if (proxyId != 0)
-        {
-            Serial.println("routing found");
-            DTPPacketGeneric *proxyPacket = (DTPPacketGeneric *)malloc(this->dataPacketSize);
-            if (!proxyPacket)
-            {
-                Serial.println("memory allloc failed major fuckup");
-                return;
-            }
-
-            memcpy(proxyPacket, ((LCMMPacketDataRecieve *)packet)->data, this->dataPacketSize);
-
-            this->addPacketToSendingQueue(true, proxyId, (unsigned char *)proxyPacket, this->dataPacketSize, 3000);
-        }
-        else
-        {
-
-            Serial.println("havent found target");
-            // possible implementation with flood routing
-        }
-
-        if (this->dataPacketToParse)
-        {
-            free(this->dataPacketToParse);
-            this->dataPacketToParse = nullptr;
-        }
     }
 }
 
@@ -623,7 +677,7 @@ void DTP::timeoutDeamon()
 
 void DTP::parseAckPacket()
 {
-    if (ackPacketWaiting)
+    if (ackPacketWaiting && ackPacketToParse->header.finalTarget == MAC::getInstance()->getId())
     {
         printf("\n\n parsing ack packet \n\n\n");
         ackPacketWaiting = false;
@@ -659,6 +713,7 @@ void DTP::loop()
     LCMM::getInstance()->loop();
     updateTime();
     sendNAP();
+    redistributePackets();
     parseDataPacket();
     parseAckPacket();
     timeoutDeamon();

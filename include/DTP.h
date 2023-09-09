@@ -203,6 +203,7 @@ private:
     void timeoutDeamon();
     void sendingDeamon();
     void sendingFront();
+    void redistributePackets();
     void savePreviousActiveNeighbors();
     void addPacketToSendingQueue(bool needACK, uint16_t target,
                                 unsigned char *data, uint8_t size,
