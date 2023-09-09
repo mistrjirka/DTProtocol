@@ -3,12 +3,12 @@
 DTP *DTP::dtp = nullptr;
 DTPPacketNAPRecieve *DTP::neighborPacketToParse = nullptr;
 DTPPacketGenericRecieve *DTP::dataPacketToParse = nullptr;
-bool DTP::neighborPacketWaiting = false;
-uint16_t DTP::dtpPacketSize = 0;
 DTPPacketACKRecieve *DTP::ackPacketToParse = nullptr;
 bool DTP::ackPacketWaiting = false;
 bool DTP::dataPacketWaiting = false;
-DTPPacketGenericRecieve *DTP::dataPacketToParse = nullptr;
+bool DTP::neighborPacketWaiting = false;
+uint16_t DTP::dtpPacketSize = 0;
+uint16_t DTP::dataPacketSize = 0;
 
 bool compareByStartTime(const DTPNAPTimeRecord &a, const DTPNAPTimeRecord &b)
 {
@@ -570,7 +570,7 @@ void DTP::timeoutDeamon()
 
 void DTP::parseAckPacket()
 {
-    if(ackPacketWaiting)
+    if (ackPacketWaiting)
     {
         ackPacketWaiting = false;
         DTPPacketACKRecieve *packet = ackPacketToParse;
@@ -592,12 +592,10 @@ void DTP::parseAckPacket()
                 it++;
             }
         }
-        if(this->ackPacketToParse)
+        if (this->ackPacketToParse)
             free(this->ackPacketToParse);
-            this->ackPacketToParse = nullptr;
-        
+        this->ackPacketToParse = nullptr;
     }
-
 }
 
 void DTP::loop()
