@@ -159,7 +159,6 @@ private:
     static DTPPacketNAPRecieve *neighborPacketToParse;
     static uint16_t dtpPacketSize;
     static uint16_t dataPacketSize;
-    bool sending;
     uint32_t timeOfInit;
     uint16_t currentTime;
     uint8_t NAPInterval;
