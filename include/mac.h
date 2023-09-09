@@ -72,7 +72,8 @@ public:
   // Callback function type definition
   using PacketReceivedCallback =
       std::function<void(MACPacket *packet, uint16_t size, uint32_t crcCalculated)>;
-
+  using TransmitDone =
+      std::function<void(void)>;
   int LORANoiseFloorCalibrate(int channel, bool save = true);
   void LORANoiseCalibrateAllChannels(bool save /*= true*/);
   // Function to access the singleton instance
@@ -105,7 +106,8 @@ public:
   State getMode();
   uint16_t getId();
   SX1262 module;
-  
+  void setTransmitDone(TransmitDone callback);
+
 
   // Other member functions as needed
 private:
@@ -128,6 +130,7 @@ private:
   double calibratedFrequency;
   bool readyToReceive;
   bool packetTransmitting;
+  TransmitDone transmitDone;
   // Private constructor
 
   MAC(SX1262 loramodule, int id,

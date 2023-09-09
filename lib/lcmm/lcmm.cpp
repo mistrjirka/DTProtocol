@@ -185,6 +185,20 @@ void LCMM::loop()
   this->timeoutHandler();
 }
 
+void dummyFunction()
+{
+  //Serial.println("dummy function");
+}
+
+uint16_t _id = 0;
+LCMM::AcknowledgmentCallback _noAckcallback = nullptr;
+
+void noAckCallback(){
+  if(_noAckcallback != nullptr){
+    _noAckcallback(_id, false);
+  }
+}
+
 void LCMM::sendPacketLarge(uint16_t target, unsigned char *data, uint32_t size,
                            uint32_t timeout, uint8_t attempts) {}
 
@@ -210,6 +224,14 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
 
   LCMM::sending = true;
   uint32_t timeBeforeSending = millis();
+  if(!needACK){
+    _noAckcallback = callback;
+    _id = packet->id;
+    MAC::getInstance()->setTransmitDone(noAckCallback);
+  }else{
+    MAC::getInstance()->setTransmitDone(dummyFunction);
+  }
+
   MAC::getInstance()->sendData(target, (unsigned char *)packet,
                                sizeof(LCMMPacketData) + size, timeout);
   uint32_t timeAfterSending = millis();
@@ -222,6 +244,7 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
   }
   else
   {
+
     free(packet);
     LCMM::sending = false;
   }

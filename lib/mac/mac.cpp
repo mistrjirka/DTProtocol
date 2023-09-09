@@ -146,6 +146,10 @@ void MAC::handlePacket()
   }
 }
 
+void MAC::setTransmitDone(TransmitDone fun){
+  this->transmitDone = fun;
+}
+
 void MAC::loop()
 {
   if (operationDone && getMode() == RECEIVING)
@@ -157,7 +161,8 @@ void MAC::loop()
   if (operationDone && getMode() == SENDING)
   {
     operationDone = false;
-    // Serial.println("transmit done");
+    if(this->transmitDone != nullptr)
+      this->transmitDone();
     this->module.finishTransmit();
     setMode(RECEIVING, true);
   }
