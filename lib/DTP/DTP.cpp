@@ -221,18 +221,28 @@ void DTP::parseDataPacket()
     if (packet->finalTarget == MAC::getInstance()->getId())
     {
         DTPPacketACK *responsePacket = (DTPPacketACK *)malloc(sizeof(DTPPacketACK));
+        if(!responsePacket){
+            Serial.println("major failure in allocation"); 
+        }
         responsePacket->header.finalTarget = packet->originalSender;
         responsePacket->header.id = this->packetIdCounter++;
         responsePacket->header.originalSender = MAC::getInstance()->getId();
         responsePacket->header.type = DTP_PACKET_TYPE_ACK;
         responsePacket->responseId = packet->id;
+        Serial.println("sending ack");
         LCMM::getInstance()->sendPacketSingle(false, packet->lcmm.mac.sender, (unsigned char *)responsePacket, sizeof(DTPPacketACK), DTP::receiveAck);
-        this->recieveCallback(packet, this->dataPacketSize);
+        Serial.println("ack sent");
+        if(this->recieveCallback != nullptr){
+            this->recieveCallback(packet, this->dataPacketSize);
+        }
+        Serial.println("after callback");
+
         this->dataPacketToParse = nullptr;
         this->dataPacketSize = 0;
     }
     else
     {
+        Serial.println("not final target");
         uint16_t proxyId = this->getRoutingItem(packet->finalTarget);
         if (proxyId != 0)
         {
