@@ -148,6 +148,11 @@ private:
   static uint16_t packetId;
   static LCMM *lcmm;
   static bool timeoutHandler();
+
+  static LCMMPacketDataRecieve *afterCallbackSent_packet;
+  static uint16_t afterCallbackSent_size;
+  static void afterCallbackSent();
+
   int lastTick;
   int packetSendStart;
   // static repeating_timer_t ackTimer;

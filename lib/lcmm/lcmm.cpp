@@ -4,7 +4,12 @@ uint16_t LCMM::packetId = 1;
 LCMM::ACKWaitingSingle LCMM::ackWaitingSingle;
 bool LCMM::waitingForACKSingle = false;
 bool LCMM::sending = false;
-
+LCMMPacketDataRecieve *LCMM::afterCallbackSent_packet = nullptr;
+uint16_t LCMM::afterCallbackSent_size = 0;
+void dummyFunction()
+{
+  //Serial.println("dummy function");
+}
 void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
 {
   if (crc != packet->crc32 || size <= 0)
@@ -53,6 +58,14 @@ void LCMM::handleDataNoACK(LCMMPacketDataRecieve *packet, uint16_t size)
   LCMM::getInstance()->dataReceived(packet, size);
 }
 
+
+void LCMM::afterCallbackSent(){
+  if(LCMM::afterCallbackSent_packet != nullptr){
+      LCMM::getInstance()->dataReceived(LCMM::afterCallbackSent_packet, LCMM::afterCallbackSent_size);
+  }
+  MAC::getInstance()->setTransmitDone(dummyFunction);
+}
+
 void LCMM::handleDataACK(LCMMPacketDataRecieve *packet, uint16_t size)
 {
 
@@ -66,10 +79,13 @@ void LCMM::handleDataACK(LCMMPacketDataRecieve *packet, uint16_t size)
   //Serial.println("packet number" + String(packet->id));
 
   response->packetIds[0] = packet->id;
+  LCMM::afterCallbackSent_packet = packet;
+  LCMM::afterCallbackSent_size = size;
+  MAC::getInstance()->setTransmitDone(afterCallbackSent);
 
   MAC::getInstance()->sendData(packet->mac.sender, (unsigned char *)response,
                                sizeof(LCMMPacketResponse) + 2, 5000);
-  LCMM::getInstance()->dataReceived(packet, size);
+                              
 }
 
 void LCMM::handleACK(LCMMPacketResponseRecieve *packet, uint16_t size)
@@ -185,10 +201,7 @@ void LCMM::loop()
   this->timeoutHandler();
 }
 
-void dummyFunction()
-{
-  //Serial.println("dummy function");
-}
+
 
 uint16_t _id = 0;
 LCMM::AcknowledgmentCallback _noAckcallback = nullptr;
@@ -196,7 +209,9 @@ LCMM::AcknowledgmentCallback _noAckcallback = nullptr;
 void noAckCallback(){
   if(_noAckcallback != nullptr){
     _noAckcallback(_id, false);
+    _noAckcallback = nullptr;
   }
+  MAC::getInstance()->setTransmitDone(dummyFunction);
 }
 
 void LCMM::sendPacketLarge(uint16_t target, unsigned char *data, uint32_t size,
