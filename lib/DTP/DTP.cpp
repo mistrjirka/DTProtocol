@@ -10,6 +10,7 @@ bool DTP::neighborPacketWaiting = false;
 
 uint16_t DTP::dtpPacketSize = 0;
 uint16_t DTP::dataPacketSize = 0;
+bool DTP::sending = false;
 
 
 bool compareByStartTime(const DTPNAPTimeRecord &a, const DTPNAPTimeRecord &b)
@@ -27,6 +28,7 @@ DTP::DTP(uint8_t NAPInterval)
     this->lastTick = 0;
     this->packetIdCounter = 1;
     this->NAPPlaned = false;
+    this->sendingQueue = vector<DTPSendRequest>();
 
     this->waitingForAck = vector<DTPPacketWaiting>();
     randomSeed((uint64_t)((uint64_t)MAC::getInstance()->random()) << 32 | MAC::getInstance()->random());
@@ -91,6 +93,22 @@ void DTP::savePreviousActiveNeighbors()
         this->previousActiveNeighbors[i.id] = newRecord;
     }
 }
+
+void DTP::sendingDeamon()
+{
+    if(DTP::sending)
+        return;
+
+    if (this->sendingQueue.size() == 0)
+        return;
+
+    DTPSendRequest request = this->sendingQueue[0];
+    printf("sending packet %d", request.target);
+    LCMM::getInstance()->sendPacketSingle(request.ack, request.target, request.data, request.size, DTP::receiveAck, request.timeout);
+
+    this->sendingQueue.erase(this->sendingQueue.begin());
+}
+
 
 void DTP::cleaningDeamon()
 {
@@ -183,6 +201,19 @@ void DTP::setPacketRecievedCallback(PacketReceivedCallback fun)
     this->recieveCallback = fun;
 }
 
+void DTP::addPacketToSendingQueue(bool needACK, uint16_t target,
+                                  unsigned char *data, uint8_t size,
+                                  uint32_t timeout)
+{
+    DTPSendRequest request;
+    request.ack = needACK;
+    request.target = target;
+    request.data = data;
+    request.size = size;
+    request.timeout = timeout;
+    this->sendingQueue.push_back(request);
+}
+
 uint16_t DTP::sendPacket(uint8_t *data, uint8_t size, uint16_t target, uint16_t timeout, DTP::PacketAckCallback callback)
 {
     uint16_t proxyId = this->getRoutingItem(target);
@@ -198,13 +229,16 @@ uint16_t DTP::sendPacket(uint8_t *data, uint8_t size, uint16_t target, uint16_t 
     packet->originalSender = MAC::getInstance()->getId();
     packet->id = packetIdCounter++;
     packet->type = DTP_PACKET_TYPE_DATA_SINGLE;
+    printf("sending packets adding new one");
     memcpy(packet->data, data, size);
 
-    LCMM::getInstance()->sendPacketSingle(true, proxyId, (uint8_t *)packet, sizeof(DTPPacketGeneric) + size, DTP::receiveAck);
+    
+    this->addPacketToSendingQueue(true, proxyId, (uint8_t *)packet, sizeof(DTPPacketGeneric) + size, timeout);
     DTPPacketWaiting waitingPacket;
     waitingPacket.id = packet->id;
     waitingPacket.timeout = timeout;
     waitingPacket.timeLeft = timeout;
+    waitingPacket.callback = callback;
     this->waitingForAck.push_back(waitingPacket);
     return packet->id;
 }
@@ -233,7 +267,8 @@ void DTP::parseDataPacket()
         responsePacket->responseId = packet->id;
 
         Serial.println("sending ack " + String(packet->id)+ " to " + String(packet->originalSender) + " throught " + String(packet->lcmm.mac.sender) + " with id " + String(responsePacket->header.id));
-        LCMM::getInstance()->sendPacketSingle(false, packet->lcmm.mac.sender, (unsigned char *)responsePacket, sizeof(DTPPacketACK), DTP::receiveAck);
+        
+        this->addPacketToSendingQueue(false, packet->lcmm.mac.sender, (unsigned char *)responsePacket, sizeof(DTPPacketACK), 2000);
         Serial.println("ack sent");
         if(this->recieveCallback != nullptr){
             this->recieveCallback(packet, this->dataPacketSize);
@@ -259,7 +294,7 @@ void DTP::parseDataPacket()
 
             memcpy(proxyPacket, ((LCMMPacketDataRecieve *)packet)->data, this->dataPacketSize);
 
-            LCMM::getInstance()->sendPacketSingle(true, proxyId, (unsigned char *)proxyPacket, this->dataPacketSize, DTP::receiveAck);
+            this->addPacketToSendingQueue(true, proxyId, (unsigned char *)proxyPacket, this->dataPacketSize, 3000);
         }
         else
         {
@@ -513,8 +548,8 @@ void DTP::sendNAPPacket()
         printf("sending %d %d\n", packet->neighbors[i].id, packet->neighbors[i].distance);
         Serial.println("sending " + String(packet->neighbors[i].id) + " " + String(packet->neighbors[i].distance));
     }
-
-    LCMM::getInstance()->sendPacketSingle(false, 0, (unsigned char *)packet, sizeOfRouting, DTP::receiveAck);
+    
+    this->addPacketToSendingQueue(false, 0, (unsigned char *)packet, sizeOfRouting, 200);
     free(packet);
     this->lastNAPSsentInterval = this->numOfIntervalsElapsed;
     this->NAPSend = true;
@@ -562,12 +597,15 @@ void DTP::timeoutDeamon()
     while (it != this->waitingForAck.end())
     {
         // If element is even number then delete it
-        DTPPacketWaiting waitingPacket = *it;
+        DTPPacketWaiting &waitingPacket = *it;
+
         if (currTime - this->lastTick >= waitingPacket.timeLeft)
         {
+            printf("time runned out");
             // Due to deletion in loop, iterator became
             // invalidated. So reset the iterator to next item.
-            waitingPacket.callback(0);
+            if(waitingPacket.callback != nullptr)
+                waitingPacket.callback(0);
 
             it = this->waitingForAck.erase(it);
         }
@@ -578,13 +616,14 @@ void DTP::timeoutDeamon()
         }
     }
 
-    this->lastTick = millis();
+    this->lastTick = currTime;
 }
 
 void DTP::parseAckPacket()
 {
     if (ackPacketWaiting)
     {
+        printf("\n\n parsing ack packet \n\n\n");
         ackPacketWaiting = false;
         DTPPacketACKRecieve *packet = ackPacketToParse;
         uint16_t id = packet->responseId;
@@ -613,6 +652,7 @@ void DTP::parseAckPacket()
 
 void DTP::loop()
 {
+    sendingDeamon();
     parseNeigbours();
     LCMM::getInstance()->loop();
     updateTime();
@@ -663,4 +703,5 @@ void DTP::receivePacket(LCMMPacketDataRecieve *packet, uint16_t size)
 void DTP::receiveAck(uint16_t id, bool success)
 {
     printf("Ack received\n");
+    DTP::sending = false;
 }
