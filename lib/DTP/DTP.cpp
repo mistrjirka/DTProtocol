@@ -229,7 +229,8 @@ void DTP::parseDataPacket()
         responsePacket->header.originalSender = MAC::getInstance()->getId();
         responsePacket->header.type = DTP_PACKET_TYPE_ACK;
         responsePacket->responseId = packet->id;
-        Serial.println("sending ack");
+
+        Serial.println("sending ack " + String(packet->id)+ " to " + String(packet->originalSender) + " throught " + String(packet->lcmm.mac.sender) + " with id " + String(responsePacket->header.id));
         LCMM::getInstance()->sendPacketSingle(false, packet->lcmm.mac.sender, (unsigned char *)responsePacket, sizeof(DTPPacketACK), DTP::receiveAck);
         Serial.println("ack sent");
         if(this->recieveCallback != nullptr){
