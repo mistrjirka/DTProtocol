@@ -98,7 +98,7 @@ void DTP::sendingDeamon()
     if (DTP::sending)
         return;
 
-    if (this->sendingQueue.size() == 0)
+    if (this->sendingQueue.size() <= 0)
         return;
 
     DTPSendRequest request = this->sendingQueue[0];
@@ -251,6 +251,7 @@ void DTP::redistributePackets()
 
     if (this->dataPacketWaiting && this->dataPacketToParse->finalTarget != MAC::getInstance()->getId())
     {
+        printf("redistribution data");
         this->dataPacketWaiting = false;
         proxyId = this->getRoutingItem(this->dataPacketToParse->finalTarget);
         if (proxyId != 0)
@@ -286,6 +287,7 @@ void DTP::redistributePackets()
 
     if (this->ackPacketWaiting && this->ackPacketToParse->header.finalTarget != MAC::getInstance()->getId())
     {
+        printf("redistribution");
         this->ackPacketWaiting = false;
         proxyId = this->getRoutingItem(this->ackPacketToParse->header.finalTarget);
         if (proxyId != 0)
@@ -395,6 +397,7 @@ void DTP::parseNeigbours()
 
     for (int i = 0; i < numOfNeighbors; i++)
     {
+        printf("adding %d %d\n", neighbors[i].id, neighbors[i].distance);
         if (MAC::getInstance()->getId() != neighbors[i].id)
             routes[neighbors[i].id] = (DTPRoutingItem){neighbors[i].distance};
     }
@@ -402,7 +405,6 @@ void DTP::parseNeigbours()
     bool alreadyInNeighbours = false;
     for (unsigned int i = 0; i < this->activeNeighbors.size(); i++)
     {
-        Serial.println("Going thtough neihbours");
 
         if (this->activeNeighbors[i].id == senderId)
         {
