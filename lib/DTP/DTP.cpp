@@ -5,6 +5,8 @@ DTPPacketNAPRecieve *DTP::neighborPacketToParse = nullptr;
 DTPPacketGenericRecieve *DTP::dataPacketToParse = nullptr;
 bool DTP::neighborPacketWaiting = false;
 uint16_t DTP::dtpPacketSize = 0;
+DTPPacketACKRecieve *DTP::ackPacketToParse = nullptr;
+bool DTP::ackPacketWaiting = false;
 
 bool compareByStartTime(const DTPNAPTimeRecord &a, const DTPNAPTimeRecord &b)
 {
@@ -21,8 +23,7 @@ DTP::DTP(uint8_t NAPInterval)
     this->lastTick = 0;
     this->packetIdCounter = 1;
     this->NAPPlaned = false;
-    this->ackPacketToParse = nullptr;
-    this->ackPacketWaiting = false;
+
     this->waitingForAck = vector<DTPPacketWaiting>();
     randomSeed((uint64_t)((uint64_t)MAC::getInstance()->random()) << 32 | MAC::getInstance()->random());
     Serial.println("DTP initialized " + String(MAC::getInstance()->random()));
