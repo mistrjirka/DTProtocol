@@ -7,6 +7,8 @@ bool DTP::neighborPacketWaiting = false;
 uint16_t DTP::dtpPacketSize = 0;
 DTPPacketACKRecieve *DTP::ackPacketToParse = nullptr;
 bool DTP::ackPacketWaiting = false;
+bool DTP::dataPacketWaiting = false;
+DTPPacketGenericRecieve *DTP::dataPacketToParse = nullptr;
 
 bool compareByStartTime(const DTPNAPTimeRecord &a, const DTPNAPTimeRecord &b)
 {
