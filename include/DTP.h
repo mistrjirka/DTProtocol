@@ -115,6 +115,15 @@ typedef struct
     uint32_t endTime;
 } DTPNAPTimeRecordSimple;
 
+typedef struct
+{
+    bool ack;
+    uint16_t target;
+    unsigned char *data;
+    uint8_t size;
+    uint16_t timeout;
+} DTPSendRequest;
+
 class DTP
 {
 public:
@@ -159,6 +168,7 @@ private:
     uint32_t lastTick;
     bool NAPPlaned;
     bool NAPSend;
+    static bool sending;
     DTPNAPTimeRecord myNAP;
     PacketReceivedCallback recieveCallback;
 
@@ -169,6 +179,7 @@ private:
     unordered_map<uint16_t, DTPNAPTimeRecord> previousActiveNeighbors;
 
     unordered_map<uint16_t, DTPRoutingItemFull> routingCacheTable;
+    vector<DTPSendRequest> sendingQueue;
     size_t sizeOfRouting();
 
     static DTP *dtp;
@@ -190,7 +201,12 @@ private:
     void NAPPlanInteligent();
     void cleaningDeamon();
     void timeoutDeamon();
+    void sendingDeamon();
+    void sendingFront();
     void savePreviousActiveNeighbors();
+    void addPacketToSendingQueue(bool needACK, uint16_t target,
+                                unsigned char *data, uint8_t size,
+                                uint32_t timeout);
 
     static void receivePacket(LCMMPacketDataRecieve *packet, uint16_t size);
     static void receiveAck(uint16_t id, bool success);
