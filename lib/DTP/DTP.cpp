@@ -103,6 +103,16 @@ void DTP::sendingDeamon()
 
     DTPSendRequest request = this->sendingQueue[0];
     printf("sending packet %d", request.target);
+
+    DTPPacketUnkown *packet = (DTPPacketUnkown*) request.data;
+    Serial.println("packet Type that is about to send: " + String(packet->type) );
+    if(packet->type == DTP_PACKET_TYPE_NAP){
+        Serial.println("NAP packet");
+        DTPPacketNAP *napPacket = (DTPPacketNAP*) request.data;
+        for(uint16_t i = 0; i < (request.size - sizeof(DTPPacketNAP)) / sizeof(NeighborRecord); i++){
+            Serial.println("sending " + String(napPacket->neighbors[i].id) + " " + String(napPacket->neighbors[i].distance));
+        }
+    }
     LCMM::getInstance()->sendPacketSingle(request.ack, request.target, request.data, request.size, DTP::receiveAck, request.timeout);
 
     this->sendingQueue.erase(this->sendingQueue.begin());
@@ -583,8 +593,8 @@ void DTP::sendNAPPacket()
     {
         if (element.second.sharable)
         {
-            printf("sending %d %d\n", element.first, element.second.distance);
-            Serial.println("sending " + String(element.first) + " " + String(element.second.distance));
+            //printf("sending %d %d\n", element.first, element.second.distance);
+            //Serial.println("sending " + String(element.first) + " " + String(element.second.distance));
             sendableItems.push_back(NeighborRecord{element.first, element.second.distance});
         }
     }
@@ -608,7 +618,6 @@ void DTP::sendNAPPacket()
     }
 
     this->addPacketToSendingQueue(false, 0, (unsigned char *)packet, sizeOfRouting, 200);
-    free(packet);
     this->lastNAPSsentInterval = this->numOfIntervalsElapsed;
     this->NAPSend = true;
 }
