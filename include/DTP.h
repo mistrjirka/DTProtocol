@@ -131,7 +131,7 @@ public:
     using PacketReceivedCallback =
         std::function<void(DTPPacketGenericRecieve *packet, uint16_t size)>;
     using PacketAckCallback =
-        std::function<void(uint8_t result)>;
+        std::function<void(uint8_t result, uint16_t ping)>;
     typedef struct
     {
         uint16_t id;
@@ -204,6 +204,7 @@ private:
     void sendingDeamon();
     void sendingFront();
     void redistributePackets();
+    void addNeighbourIfNotExist(DTPNAPTimeRecord record);
     void savePreviousActiveNeighbors();
     void addPacketToSendingQueue(bool needACK, uint16_t target,
                                 unsigned char *data, uint8_t size,
