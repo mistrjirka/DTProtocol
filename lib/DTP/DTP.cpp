@@ -70,16 +70,22 @@ void DTP::initialize(uint8_t NAPInterval)
         dtp = new DTP(NAPInterval);
 }
 
-bool DTP::checkIfCurrentPlanIsColliding()
+bool DTP::checkIftransmissionIsColliding(uint32_t startTime, uint32_t endTime)
 {
     sort(this->activeNeighbors.begin(), this->activeNeighbors.end(), compareByStartTime);
+    endTime %= this->NAPInterval * 1000;
 
     for (DTPNAPTimeRecord i : this->activeNeighbors)
     {
-        if ((i.startTime < this->myNAP.endTime && i.endTime > this->myNAP.endTime) || (i.startTime < this->myNAP.startTime && i.endTime > this->myNAP.startTime))
+        if ((i.startTime < endTime && i.endTime > endTime) || (i.startTime < startTime && i.endTime > startTime))
             return true;
     }
     return false;
+}
+
+bool DTP::checkIfCurrentPlanIsColliding()
+{
+    return checkIftransmissionIsColliding(this->myNAP.startTime, this->myNAP.endTime);
 }
 
 void DTP::savePreviousActiveNeighbors()
@@ -102,17 +108,14 @@ void DTP::sendingDeamon()
         return;
 
     DTPSendRequest request = this->sendingQueue[0];
-    printf("sending packet %d", request.target);
+    uint16_t sizeOfRequest = request.size + LCMM_OVERHEAD;
 
-    DTPPacketUnkown *packet = (DTPPacketUnkown*) request.data;
-    Serial.println("packet Type that is about to send: " + String(packet->type) );
-    if(packet->type == DTP_PACKET_TYPE_NAP){
-        Serial.println("NAP packet");
-        DTPPacketNAP *napPacket = (DTPPacketNAP*) request.data;
-        for(uint16_t i = 0; i < (request.size - sizeof(DTPPacketNAP)) / sizeof(NeighborRecord); i++){
-            Serial.println("sending " + String(napPacket->neighbors[i].id) + " " + String(napPacket->neighbors[i].distance));
-        }
-    }
+    float duration = MathExtension.timeOnAir(sizeOfRequest, 8, 9, 125.0, 7);
+    if (checkIftransmissionIsColliding(this->currentTime, (this->currentTime + duration)))
+        return;
+
+    DTPPacketUnkown *packet = (DTPPacketUnkown *)request.data;
+
     LCMM::getInstance()->sendPacketSingle(request.ack, request.target, request.data, request.size, DTP::receiveAck, request.timeout);
 
     this->sendingQueue.erase(this->sendingQueue.begin());
@@ -250,7 +253,6 @@ uint16_t DTP::sendPacket(uint8_t *data, uint8_t size, uint16_t target, uint16_t 
     return packet->id;
 }
 
-
 void DTP::addNeighbourIfNotExist(DTPNAPTimeRecord record)
 {
     bool alreadyInNeighbours = false;
@@ -260,8 +262,10 @@ void DTP::addNeighbourIfNotExist(DTPNAPTimeRecord record)
         if (this->activeNeighbors[i].id == record.id)
         {
             alreadyInNeighbours = true;
-            for(auto route : record.routes){
-                if(this->activeNeighbors[i].routes.find(route.first) == this->activeNeighbors[i].routes.end()){
+            for (auto route : record.routes)
+            {
+                if (this->activeNeighbors[i].routes.find(route.first) == this->activeNeighbors[i].routes.end())
+                {
                     this->activeNeighbors[i].routes[route.first] = route.second;
                 }
             }
@@ -299,7 +303,8 @@ void DTP::redistributePackets()
             dataToSend = (unsigned char *)malloc(sizeToAllocate);
             if (!dataToSend)
             {
-                if (this->dataPacketToParse){
+                if (this->dataPacketToParse)
+                {
                     free(this->dataPacketToParse);
                     this->dataPacketToParse = nullptr;
                 }
@@ -336,7 +341,8 @@ void DTP::redistributePackets()
             dataToSend = (unsigned char *)malloc(sizeToAllocate);
             if (!dataToSend)
             {
-                if (this->ackPacketToParse){
+                if (this->ackPacketToParse)
+                {
                     free(this->ackPacketToParse);
                     this->ackPacketToParse = nullptr;
                 }
@@ -360,14 +366,15 @@ void DTP::redistributePackets()
         }
     }
 
-    if (sizeToAllocate > 0 && dataToSend != nullptr){
+    if (sizeToAllocate > 0 && dataToSend != nullptr)
+    {
         DTPNAPTimeRecord potentialNeighbour;
         potentialNeighbour.endTime = 0;
         potentialNeighbour.startTime = 0;
         potentialNeighbour.id = sender;
         potentialNeighbour.lastIntervalHeard = this->numOfIntervalsElapsed;
         potentialNeighbour.routes = unordered_map<uint16_t, DTPRoutingItem>();
-        if(originalSender != sender)
+        if (originalSender != sender)
         {
             DTPRoutingItem routing;
             routing.distance = 2;
@@ -378,8 +385,6 @@ void DTP::redistributePackets()
 
         this->addPacketToSendingQueue(true, proxyId, dataToSend, sizeToAllocate, 3000);
     }
-
-    
 }
 
 void DTP::parseDataPacket()
@@ -423,8 +428,6 @@ void DTP::parseDataPacket()
         this->dataPacketSize = 0;
     }
 }
-
-
 
 void DTP::parseNeigbours()
 {
@@ -640,8 +643,8 @@ void DTP::sendNAPPacket()
     {
         if (element.second.sharable)
         {
-            //printf("sending %d %d\n", element.first, element.second.distance);
-            //Serial.println("sending " + String(element.first) + " " + String(element.second.distance));
+            // printf("sending %d %d\n", element.first, element.second.distance);
+            // Serial.println("sending " + String(element.first) + " " + String(element.second.distance));
             sendableItems.push_back(NeighborRecord{element.first, element.second.distance});
         }
     }
@@ -696,7 +699,7 @@ void DTP::sendNAP()
         return;
     }
     // Serial.println("NAP planned" + String(NAPPlaned) + " nap sent " + String(NAPSend) + "NAP current time: " + String(this->currentTime)+" planning " + String(this->myNAP.startTime) + " to " + String(this->myNAP.endTime));
-    if (NAPPlaned && !NAPSend && this->myNAP.startTime<this->currentTime && this->myNAP.endTime> this->currentTime)
+    if (NAPPlaned && !NAPSend && this->myNAP.startTime<this->currentTime &&this->myNAP.endTime> this->currentTime)
     {
         sendNAPPacket();
         printf("Executing NAP transmission\n");
@@ -725,12 +728,11 @@ void DTP::timeoutDeamon()
         }
         else
         {
-            //printf("time left %d \n", waitingPacket.timeLeft - (currTime - this->lastTick));
+            // printf("time left %d \n", waitingPacket.timeLeft - (currTime - this->lastTick));
             waitingPacket.timeLeft -= currTime - this->lastTick;
             it++;
         }
     }
-
 
     this->lastTick = currTime;
 }
@@ -752,7 +754,7 @@ void DTP::parseAckPacket()
             {
                 // Due to deletion in loop, iterator became
                 // invalidated. So reset the iterator to next item.
-                waitingPacket.callback(1, waitingPacket.timeout- waitingPacket.timeLeft);
+                waitingPacket.callback(1, waitingPacket.timeout - waitingPacket.timeLeft);
                 it = this->waitingForAck.erase(it);
             }
             else
@@ -795,7 +797,6 @@ void DTP::receivePacket(LCMMPacketDataRecieve *packet, uint16_t size)
 
     Serial.println("Packet received");
     DTPPacketUnkown *dtpPacket = (DTPPacketUnkown *)packet->data;
-    
 
     Serial.println(dtpPacket->type);
     uint16_t dtpSize = size - sizeof(LCMMPacketDataRecieve);
