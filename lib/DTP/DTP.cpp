@@ -445,6 +445,7 @@ void DTP::parseNeigbours()
     uint16_t numOfNeighbors = (size - sizeof(DTPPacketNAP)) / sizeof(NeighborRecord);
 
     NeighborRecord *neighbors = packet->neighbors;
+    printf("packet recieved from %d number of neighbours %d size %d\n", packet->lcmm.mac.sender, numOfNeighbors, size);
     Serial.println("Parsing neighbours " + String(numOfNeighbors));
 
     float timeOnAir = MathExtension.timeOnAir(size, 8, 9, 125, 7);
@@ -468,6 +469,7 @@ void DTP::parseNeigbours()
 
         if (this->activeNeighbors[i].id == senderId)
         {
+            printf("already in neighbours\n");
             this->activeNeighbors[i].startTime = startTime;
             this->activeNeighbors[i].endTime = endTime;
             this->activeNeighbors[i].lastIntervalHeard = this->numOfIntervalsElapsed;
@@ -480,6 +482,7 @@ void DTP::parseNeigbours()
     }
     if (!alreadyInNeighbours)
     {
+        printf("pushing into neighbours\n");
         Serial.println("pushing into neighbours");
         this->activeNeighbors.push_back((DTPNAPTimeRecord){senderId, startTime, endTime, this->numOfIntervalsElapsed, routes});
     }
