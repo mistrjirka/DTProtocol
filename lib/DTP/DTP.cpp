@@ -788,7 +788,7 @@ DTPStates DTP::getState()
 
 void DTP::receivePacket(LCMMPacketDataRecieve *packet, uint16_t size)
 {
-    /*if(packet->mac.sender == 5){ only for testing purposes
+    /*if(packet->mac.sender == 5){// only for testing purposes
         free(packet);
         return;
     }*/
