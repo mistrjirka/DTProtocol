@@ -60,7 +60,8 @@ int MAC::LORANoiseFloorCalibrate(int channel, bool save /* = true */)
   setMode(prev_state);
 }
 
-uint32_t MAC::random(){
+uint32_t MAC::random()
+{
   return this->module.random(65000);
 }
 
@@ -99,10 +100,10 @@ void MAC::LORANoiseCalibrateAllChannels(bool save /*= true*/)
   setMode(prev_state);
 }
 
-uint16_t MAC::getId(){
+uint16_t MAC::getId()
+{
   return this->id;
 }
-
 
 void MAC::handlePacket()
 {
@@ -127,26 +128,26 @@ void MAC::handlePacket()
     }
 
     MACPacket *packet = (MACPacket *)data;
-    if (packet->target && packet->target != this->id)
-    {
-      free(data);
-      // Serial.println("not for me");
-      return;
-    }
+
     uint32_t crcRecieved = packet->crc32;
     packet->crc32 = 0;
     uint32_t crcCalculated =
         MathExtension.crc32c(0, packet->data, length - sizeof(MACPacket));
     packet->crc32 = crcRecieved;
 
-    if (RXCallback != nullptr)
+    if (packet->target == this->id && RXCallback != nullptr)
     {
       RXCallback(packet, length, crcCalculated);
+    }
+    else if (packet->target && packet->target != this->id && RXAlienCallback != nullptr)
+    {
+      RXAlienCallback(packet, length, crcCalculated);
     }
   }
 }
 
-void MAC::setTransmitDone(TransmitDone fun){
+void MAC::setTransmitDone(TransmitDone fun)
+{
   this->transmitDone = fun;
 }
 
@@ -161,7 +162,7 @@ void MAC::loop()
   if (operationDone && getMode() == SENDING)
   {
     operationDone = false;
-    if(this->transmitDone != nullptr)
+    if (this->transmitDone != nullptr)
       this->transmitDone();
     this->module.finishTransmit();
     setMode(RECEIVING, true);
@@ -181,7 +182,7 @@ bool check(int statuscode)
 {
   if (statuscode != 0)
   {
-     printf(("wrong settings error " + String(statuscode)).c_str());
+    printf(("wrong settings error " + String(statuscode)).c_str());
     return false;
   }
   return true;
@@ -199,6 +200,7 @@ MAC::MAC(
     ) : module(loramodule)
 {
   this->RXCallback = nullptr;
+  this->RXAlienCallback = nullptr;
   this->packetTransmitting = false;
   this->readyToReceive = false;
   this->id = id;
@@ -344,13 +346,16 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size, uint32
   return 0;
 }
 
+void MAC::setRXAlienCallback(PacketReceivedCallback callback)
+{
+  RXAlienCallback = callback;
+}
+
 void MAC::calibrateBasedOnLastPacket()
 {
   float frequencyError = (float)this->module.getFrequencyError();
 
-  if (abs(frequencyError) > 500 
-  && this->channels[this->channel] * 1000000 + frequencyError < this->channels[this->channel] * 1000000 * 1.0001 
-  && this->channels[this->channel] * 1000000 + frequencyError > this->channels[this->channel] * 1000000 * 0.9999)
+  if (abs(frequencyError) > 500 && this->channels[this->channel] * 1000000 + frequencyError < this->channels[this->channel] * 1000000 * 1.0001 && this->channels[this->channel] * 1000000 + frequencyError > this->channels[this->channel] * 1000000 * 0.9999)
   {
     this->calibratedFrequency -= frequencyError / 1000000;
     this->module.setFrequency(this->calibratedFrequency);

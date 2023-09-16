@@ -15,6 +15,7 @@
 #define DTP_PACKET_TYPE_NACK_NOTFOUND 3
 #define DTP_PACKET_TYPE_NACK_TIMEOUT 4
 #define DTP_PACKET_TYPE_NACK_REFUSED 5
+#define DTP_NAP_TOLERANCE 1
 
 enum DTPStates
 {
@@ -189,6 +190,7 @@ private:
     uint32_t getTimeOnAirOfNAP();
     uint16_t getRoutingItem(uint16_t id);
     DTPNAPTimeRecordSimple getNearestTimeSlot(uint32_t ideal_min_time, uint32_t ideal_max_time, uint32_t min_start_time, uint32_t max_end_time);
+    bool checkIftransmissionIsColliding(uint32_t startTime, uint32_t endTime);
     bool checkIfCurrentPlanIsColliding();
 
     void parseNeigbours();

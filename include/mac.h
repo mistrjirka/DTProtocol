@@ -80,6 +80,7 @@ public:
   static MAC *getInstance();
   static void ChannelActivity(bool signal);
   void setRXCallback(PacketReceivedCallback callback);
+  void setRXAlienCallback(PacketReceivedCallback callback);
 
   int getNoiseFloorOfChannel(uint8_t channel_num);
   uint8_t getNumberOfChannels();
@@ -163,6 +164,7 @@ private:
 
   // Private member variables for MAC layer
   PacketReceivedCallback RXCallback;
+  PacketReceivedCallback RXAlienCallback;
 
   // Private helper functions as needed
 };
