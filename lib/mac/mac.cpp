@@ -134,21 +134,14 @@ void MAC::handlePacket()
     uint32_t crcCalculated =
         MathExtension.crc32c(0, packet->data, length - sizeof(MACPacket));
     packet->crc32 = crcRecieved;
-    printf("packet target %d sender %d crc %d calculated %d \n", packet->target, packet->sender, crcRecieved, crcCalculated);
-    Serial.println("packet target " + String(packet->target) + " sender " + String(packet->sender) + " is it for me ? " + String(packet->target == this->id ) + " calculated " + String(crcCalculated));
     if ((!packet->target || packet->target == this->id)&& RXCallback != nullptr)
     {
-      Serial.println("calling because it is my packet");
 
       RXCallback(packet, length, crcCalculated);
     }
     else if (packet->target && packet->target != this->id && RXAlienCallback != nullptr)
     {
-          Serial.println("calling because it is not my packet");
-
       RXAlienCallback(packet, length, crcCalculated);
-    }else {
-      Serial.println("not calling");
     }
   }
 }
