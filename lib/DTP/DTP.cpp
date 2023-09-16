@@ -113,6 +113,7 @@ void DTP::sendingDeamon()
     float duration = MathExtension.timeOnAir(sizeOfRequest, 8, 9, 125.0, 7);
     if (checkIftransmissionIsColliding(this->currentTime, (this->currentTime + duration)))
         return;
+    Serial.println("Sending packet " + String(request.size) + " " + String(request.target) + " " + String(request.ack) + " " + String(request.timeout));
 
     DTPPacketUnkown *packet = (DTPPacketUnkown *)request.data;
 
@@ -240,7 +241,6 @@ uint16_t DTP::sendPacket(uint8_t *data, uint8_t size, uint16_t target, uint16_t 
     packet->originalSender = MAC::getInstance()->getId();
     packet->id = packetIdCounter++;
     packet->type = DTP_PACKET_TYPE_DATA_SINGLE;
-    printf("sending packets adding new one");
     memcpy(packet->data, data, size);
 
     this->addPacketToSendingQueue(true, proxyId, (uint8_t *)packet, sizeof(DTPPacketGeneric) + size, timeout);

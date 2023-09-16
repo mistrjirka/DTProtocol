@@ -107,15 +107,15 @@ uint16_t MAC::getId()
 
 void MAC::handlePacket()
 {
-  // Serial.println("packet received");
+  Serial.println("packet received");
   uint16_t length = this->module.getPacketLength(true);
   if (length)
   {
-    // Serial.println(length);
+    Serial.println(length);
     uint8_t *data = (uint8_t *)malloc(sizeof(uint8_t) * length);
     if (data == NULL)
     {
-      // Serial.println("failed to allocate");
+      Serial.println("failed to allocate");
       return;
     }
 
@@ -123,7 +123,7 @@ void MAC::handlePacket()
 
     if (state != RADIOLIB_ERR_NONE)
     {
-      // Serial.print("Error during recieve \n");
+      Serial.print("Error during recieve \n");
       return;
     }
 
@@ -134,14 +134,21 @@ void MAC::handlePacket()
     uint32_t crcCalculated =
         MathExtension.crc32c(0, packet->data, length - sizeof(MACPacket));
     packet->crc32 = crcRecieved;
-
-    if (packet->target == this->id && RXCallback != nullptr)
+    printf("packet target %d sender %d crc %d calculated %d \n", packet->target, packet->sender, crcRecieved, crcCalculated);
+    Serial.println("packet target " + String(packet->target) + " sender " + String(packet->sender) + " is it for me ? " + String(packet->target == this->id ) + " calculated " + String(crcCalculated));
+    if ((!packet->target || packet->target == this->id)&& RXCallback != nullptr)
     {
+      Serial.println("calling because it is my packet");
+
       RXCallback(packet, length, crcCalculated);
     }
     else if (packet->target && packet->target != this->id && RXAlienCallback != nullptr)
     {
+          Serial.println("calling because it is not my packet");
+
       RXAlienCallback(packet, length, crcCalculated);
+    }else {
+      Serial.println("not calling");
     }
   }
 }
