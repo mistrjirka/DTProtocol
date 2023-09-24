@@ -316,7 +316,13 @@ void DTP::redistributePackets()
         }
         else
         {
-
+            DTPPacketACK *response = malloc(sizeof(DTPPacketACK));
+            response->header.finalTarget = this->dataPacketToParse->originalSender;
+            response->header.originalSender = MAC::getInstance()->getId();
+            response->header.id = this->packetIdCounter++;
+            response->header.type = DTP_PACKET_TYPE_NACK_NOTFOUND;
+            response->responseId = this->dataPacketToParse->id;
+            this->addPacketToSendingQueue(false, this->dataPacketToParse->lcmm.mac.sender, response, sizeof(DTPPacketACK), 3000)
             Serial.println("havent found target");
             // possible implementation with flood routing
         }
@@ -757,7 +763,7 @@ void DTP::parseAckPacket()
             {
                 // Due to deletion in loop, iterator became
                 // invalidated. So reset the iterator to next item.
-                waitingPacket.callback(1, waitingPacket.timeout - waitingPacket.timeLeft);
+                waitingPacket.callback(ackPacketToParse->header.type, waitingPacket.timeout - waitingPacket.timeLeft);
                 it = this->waitingForAck.erase(it);
             }
             else
@@ -821,6 +827,11 @@ void DTP::receivePacket(LCMMPacketDataRecieve *packet, uint16_t size)
     case DTP_PACKET_TYPE_ACK:
         Serial.println("ACK packet received");
         printf("ack recieved");
+        DTP::ackPacketWaiting = true;
+        DTP::ackPacketToParse = (DTPPacketACKRecieve *)packet;
+        break;
+    case DTP_PACKET_TYPE_NACK_NOTFOUND:
+        Serial.println("NACK packet received");
         DTP::ackPacketWaiting = true;
         DTP::ackPacketToParse = (DTPPacketACKRecieve *)packet;
         break;
