@@ -7,6 +7,8 @@ DTPPacketACKRecieve *DTP::ackPacketToParse = nullptr;
 bool DTP::ackPacketWaiting = false;
 bool DTP::dataPacketWaiting = false;
 bool DTP::neighborPacketWaiting = false;
+bool DTP::neighbourRevealRequestPacketWaiting = false;
+DTPPacketGenericRecieve *DTP::neighbourRevealRequestPacketToParse = nullptr;
 
 uint16_t DTP::dtpPacketSize = 0;
 uint16_t DTP::dataPacketSize = 0;
@@ -107,19 +109,29 @@ void DTP::sendingDeamon()
     if (this->sendingQueue.size() <= 0)
         return;
 
+    uint32_t currentTime = millis();
+
     DTPSendRequest request = this->sendingQueue[0];
-    uint16_t sizeOfRequest = request.size + LCMM_OVERHEAD;
+    if (request.timeLeft <= 0)
+    {
+        uint16_t sizeOfRequest = request.size + LCMM_OVERHEAD;
 
-    float duration = MathExtension.timeOnAir(sizeOfRequest, 8, 9, 125.0, 7);
-    if (checkIftransmissionIsColliding(this->currentTime, (this->currentTime + duration)))
-        return;
-    Serial.println("Sending packet " + String(request.size) + " " + String(request.target) + " " + String(request.ack) + " " + String(request.timeout));
+        float duration = MathExtension.timeOnAir(sizeOfRequest, 8, 9, 125.0, 7);
+        if (checkIftransmissionIsColliding(this->currentTime, (this->currentTime + duration)))
+            return;
+        Serial.println("Sending packet " + String(request.size) + " " + String(request.target) + " " + String(request.ack) + " " + String(request.timeout));
 
-    DTPPacketUnkown *packet = (DTPPacketUnkown *)request.data;
+        DTPPacketUnkown *packet = (DTPPacketUnkown *)request.data;
 
-    LCMM::getInstance()->sendPacketSingle(request.ack, request.target, request.data, request.size, DTP::receiveAck, request.timeout);
+        LCMM::getInstance()->sendPacketSingle(request.ack, request.target, request.data, request.size, DTP::receiveAck, request.timeout);
 
-    this->sendingQueue.erase(this->sendingQueue.begin());
+        this->sendingQueue.erase(this->sendingQueue.begin());
+    } else {
+        int timeLeftRes = (int)(request.timeLeft) - (currentTime - this->lastTickSendingDeamon);
+        timeLeftRes *= timeLeftRes >= 0;
+        request.timeLeft = timeLeftRes;
+    }
+    lastTickSendingDeamon = currentTime;
 }
 
 void DTP::cleaningDeamon()
@@ -215,7 +227,7 @@ void DTP::setPacketRecievedCallback(PacketReceivedCallback fun)
 
 void DTP::addPacketToSendingQueue(bool needACK, uint16_t target,
                                   unsigned char *data, uint8_t size,
-                                  uint32_t timeout)
+                                  uint32_t timeout, uint16_t timeLeft /* = 0*/)
 {
     DTPSendRequest request;
     request.ack = needACK;
@@ -323,7 +335,7 @@ void DTP::redistributePackets()
             response->header.type = DTP_PACKET_TYPE_NACK_NOTFOUND;
             response->responseId = this->dataPacketToParse->id;
             this->addPacketToSendingQueue(false, this->dataPacketToParse->lcmm.mac.sender, response, sizeof(DTPPacketACK), 3000)
-            Serial.println("havent found target");
+                Serial.println("havent found target");
             // possible implementation with flood routing
         }
 
@@ -742,7 +754,6 @@ void DTP::timeoutDeamon()
             it++;
         }
     }
-
     this->lastTick = currTime;
 }
 

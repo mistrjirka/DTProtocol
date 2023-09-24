@@ -15,6 +15,7 @@
 #define DTP_PACKET_TYPE_NACK_NOTFOUND 3
 #define DTP_PACKET_TYPE_NACK_TIMEOUT 4
 #define DTP_PACKET_TYPE_NACK_REFUSED 5
+#define DTP_PACKET_TYPE_NEIGHBOUR_REVEAL_REQUEST 6
 #define DTP_NAP_TOLERANCE 1
 
 enum DTPStates
@@ -52,6 +53,7 @@ typedef struct __attribute__((packed))
     uint16_t finalTarget;
     uint16_t id;
 } DTPPacketHeader;
+
 
 typedef struct __attribute__((packed))
 {
@@ -123,6 +125,7 @@ typedef struct
     unsigned char *data;
     uint8_t size;
     uint16_t timeout;
+    uint16_t timeLeft;
 } DTPSendRequest;
 
 class DTP
@@ -155,6 +158,8 @@ private:
     static bool neighborPacketWaiting;
     static bool dataPacketWaiting;
     static bool ackPacketWaiting;
+    static bool neighbourRevealRequestPacketWaiting;
+    static DTPPacketGenericRecieve *neighbourRevealRequestPacketToParse;
     static DTPPacketACKRecieve *ackPacketToParse;
     static DTPPacketGenericRecieve *dataPacketToParse;
     static DTPPacketNAPRecieve *neighborPacketToParse;
@@ -167,6 +172,7 @@ private:
     uint32_t lastNAPSsentInterval;
     uint32_t packetIdCounter;
     uint32_t lastTick;
+    uint32_t lastTickSendingDeamon;
     bool NAPPlaned;
     bool NAPSend;
     static bool sending;
@@ -205,12 +211,13 @@ private:
     void timeoutDeamon();
     void sendingDeamon();
     void sendingFront();
+    void sendNeighbourRevealRequest();
     void redistributePackets();
     void addNeighbourIfNotExist(DTPNAPTimeRecord record);
     void savePreviousActiveNeighbors();
     void addPacketToSendingQueue(bool needACK, uint16_t target,
                                 unsigned char *data, uint8_t size,
-                                uint32_t timeout);
+                                uint32_t timeout, uint16_t timeLeft = 0);
 
     static void receivePacket(LCMMPacketDataRecieve *packet, uint16_t size);
     static void receiveAck(uint16_t id, bool success);
