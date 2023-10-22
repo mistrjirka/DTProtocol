@@ -151,6 +151,7 @@ public:
     DTPNAPTimeRecord getMyNAP();
     void setPacketRecievedCallback(PacketReceivedCallback fun);
     uint16_t sendPacket(uint8_t *data, uint8_t size, uint16_t target, uint16_t timeout, DTP::PacketAckCallback callback);
+    uint16_t sendPublicRevealRequest(uint16_t timeout);
     unordered_map<uint16_t, DTPRoutingItemFull> getRoutingTable();
     vector<DTPNAPTimeRecord> neighbors();
 
