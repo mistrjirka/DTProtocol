@@ -32,7 +32,9 @@ DTP::DTP(uint8_t NAPInterval)
     this->sendingQueue = vector<DTPSendRequest>();
 
     this->waitingForAck = vector<DTPPacketWaiting>();
-    randomSeed((uint64_t)((uint64_t)MAC::getInstance()->random()) << 32 | MAC::getInstance()->random());
+
+    randomSeed((uint64_t)((uint64_t)MathExtension.murmur64(MAC::getInstance()->random()) << 32 | MAC::getInstance()->random()));
+    
     Serial.println("DTP initialized " + String(MAC::getInstance()->random()));
 
     LCMM::initialize(DTP::receivePacket, DTP::receiveAck);
