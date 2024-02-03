@@ -32,14 +32,25 @@ void MathExtensionClass::swap(int &a, int &b)
     b = t;
 }
 
-long MathExtensionClass::murmur64(long h) {
-  h ^= h >>> 33;
-  h *= 0xff51afd7ed558ccdL;
-  h ^= h >>> 33;
-  h *= 0xc4ceb9fe1a85ec53L;
-  h ^= h >>> 33;
-  return h;
+uint64_t MathExtensionClass::murmur64(uint64_t input) {
+    const uint64_t m = 0xc6a4a7935bd1e995ull;
+    const int r = 47;
+
+    uint64_t h = 0x9368e53c2f6af274ull ^ (sizeof(uint64_t) * m);
+    
+    input *= m;
+    input ^= input >> r;
+    input *= m;
+    h ^= input;
+    h *= m;
+
+    h ^= h >> r;
+    h *= m;
+    h ^= h >> r;
+
+    return h;
 }
+
 
 int MathExtensionClass::partition(int arr[], int start, int end)
 {

@@ -213,7 +213,7 @@ uint16_t DTP::getRoutingItem(uint16_t id) {
   return 0;
 }
 
-void DTP::sendPublicRevealRequest(uint16_t timeout) {
+uint16_t DTP::sendPublicRevealRequest(uint16_t timeout) {
     DTPPacketGeneric *packet = (DTPPacketGeneric *)malloc(sizeof(DTPPacketGeneric));
     packet->finalTarget = 0;
     packet->originalSender = MAC::getInstance()->getId();
@@ -221,6 +221,7 @@ void DTP::sendPublicRevealRequest(uint16_t timeout) {
     packet->type = DTP_PACKET_TYPE_NEIGHBOUR_REVEAL_REQUEST;
     this->addPacketToSendingQueue(true, 0, (uint8_t *)packet,
                                     sizeof(DTPPacketGeneric), timeout);
+    return packet->id;
 }
 
 void DTP::updateTime() {
@@ -334,15 +335,16 @@ void DTP::redistributePackets() {
              ((LCMMPacketDataRecieve *)this->dataPacketToParse)->data,
              sizeToAllocate);
     } else {
-      DTPPacketACK *response = malloc(sizeof(DTPPacketACK));
+      DTPPacketACK *response = (DTPPacketACK*)malloc(sizeof(DTPPacketACK));
       response->header.finalTarget = this->dataPacketToParse->originalSender;
       response->header.originalSender = MAC::getInstance()->getId();
       response->header.id = this->packetIdCounter++;
       response->header.type = DTP_PACKET_TYPE_NACK_NOTFOUND;
       response->responseId = this->dataPacketToParse->id;
       this->addPacketToSendingQueue(
-              false, this->dataPacketToParse->lcmm.mac.sender, response,
-              sizeof(DTPPacketACK), 3000) Serial.println("havent found target");
+              false, this->dataPacketToParse->lcmm.mac.sender, (unsigned char *)response,
+              sizeof(DTPPacketACK), 3000);
+       Serial.println("havent found target");
       // possible implementation with flood routing
     }
 
