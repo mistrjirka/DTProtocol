@@ -23,6 +23,8 @@ class CrystDatabase
 
     vector<NeighborRecord> getListOfNeighbours();
 
+    CrystDatabase();
+    
     private:
     
     unordered_map<uint16_t, NeighborRecord> neighborMap;
