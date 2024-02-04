@@ -1,5 +1,6 @@
 #ifndef _GEREALSETTINGS_H_
 #define _GEREALSETTINGS_H_
+#define BROADCAST 0
 #define MAX_PACKET_SIZE (255)
 #define MAC_OVERHEAD (4+2+2)
 #define LCMM_OVERHEAD (1+2)

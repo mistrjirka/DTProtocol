@@ -63,7 +63,7 @@ typedef struct __attribute__((packed))
     uint16_t finalTarget;
     uint16_t id;
     unsigned char data[];
-} DTPPacketGenericRecieve;
+} DTPPacketGenericReceive;
 
 typedef struct __attribute__((packed))
 {
@@ -76,14 +76,14 @@ typedef struct __attribute__((packed))
     LCMMDataHeader lcmm;
     uint8_t type;
     NeighborRecord neighbors[];
-} DTPPacketNAPRecieve;
+} DTPPacketNAPReceive;
 
 typedef struct __attribute__((packed))
 {
     LCMMDataHeader lcmm;
     DTPPacketHeader header;
     uint16_t responseId;
-} DTPPacketACKRecieve;
+} DTPPacketACKReceive;
 
 typedef struct __attribute__((packed))
 {
@@ -133,7 +133,7 @@ class DTP
 public:
     // Callback function type definition
     using PacketReceivedCallback =
-        std::function<void(DTPPacketGenericRecieve *packet, uint16_t size)>;
+        std::function<void(DTPPacketGenericReceive *packet, uint16_t size)>;
     using PacketAckCallback =
         std::function<void(uint8_t result, uint16_t ping)>;
     typedef struct
@@ -149,7 +149,7 @@ public:
     void loop();
     DTPStates getState();
     DTPNAPTimeRecord getMyNAP();
-    void setPacketRecievedCallback(PacketReceivedCallback fun);
+    void setPacketReceivedCallback(PacketReceivedCallback fun);
     uint16_t sendPacket(uint8_t *data, uint8_t size, uint16_t target, uint16_t timeout, DTP::PacketAckCallback callback);
     uint16_t sendPublicRevealRequest(uint16_t timeout);
     unordered_map<uint16_t, DTPRoutingItemFull> getRoutingTable();
@@ -160,10 +160,10 @@ private:
     static bool dataPacketWaiting;
     static bool ackPacketWaiting;
     static bool neighbourRevealRequestPacketWaiting;
-    static DTPPacketGenericRecieve *neighbourRevealRequestPacketToParse;
-    static DTPPacketACKRecieve *ackPacketToParse;
-    static DTPPacketGenericRecieve *dataPacketToParse;
-    static DTPPacketNAPRecieve *neighborPacketToParse;
+    static DTPPacketGenericReceive *neighbourRevealRequestPacketToParse;
+    static DTPPacketACKReceive *ackPacketToParse;
+    static DTPPacketGenericReceive *dataPacketToParse;
+    static DTPPacketNAPReceive *neighborPacketToParse;
     static uint16_t dtpPacketSize;
     static uint16_t dataPacketSize;
     uint32_t timeOfInit;
@@ -220,7 +220,7 @@ private:
                                 unsigned char *data, uint8_t size,
                                 uint32_t timeout, uint16_t timeLeft = 0);
 
-    static void receivePacket(LCMMPacketDataRecieve *packet, uint16_t size);
+    static void receivePacket(LCMMPacketDataReceive *packet, uint16_t size);
     static void receiveAck(uint16_t id, bool success);
 };
 

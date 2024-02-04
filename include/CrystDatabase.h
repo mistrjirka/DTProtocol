@@ -17,7 +17,7 @@ public:
 
     unordered_multimap<uint16_t, NeighborRecord> getMap();
 
-    void updateFromCrystPacket(uint16_t from, NeighborRecord *packet, int numOfNeighbours);
+    bool updateFromCrystPacket(uint16_t from, NeighborRecord *packet, int numOfNeighbours);
 
     void buildCache();
 

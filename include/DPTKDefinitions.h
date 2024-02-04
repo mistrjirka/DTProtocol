@@ -32,13 +32,13 @@ typedef struct RoutingRecord {
     uint16_t originalRouter;
     uint8_t distance;
 
-} routingRecrod;
+} RoutingRecord;
 
 typedef struct __attribute__((packed))
 {
     DTPKPacketType type; // 0 = Cryst, 1 = DATA, 2 = ACK, 3 = NACK - target not in database, 4 = NACK - target unresponsive
     unsigned char data[];
-} DTPKPacketUnkown;
+} DTPKPacketUnknown;
 
 
 typedef struct __attribute__((packed))
@@ -73,20 +73,28 @@ typedef struct __attribute__((packed))
     uint16_t finalTarget;
     uint16_t id;
     unsigned char data[];
-} DTPKPacketGenericRecieve;
+} DTPKPacketGenericReceive;
 
 typedef struct __attribute__((packed))
 {
     LCMMDataHeader lcmm;
     DTPKPacketType type;
     NeighborRecord neighbors[];
-} DTPKPacketNAPRecieve;
+} DTPKPacketCrystReceive;
+
+
+typedef struct __attribute__((packed))
+{
+    LCMMDataHeader lcmm;
+    DTPKPacketType type;
+    NeighborRecord neighbors[];
+} DTPKPacketNAPReceive;
 
 typedef struct __attribute__((packed))
 {
     LCMMDataHeader lcmm;
     DTPKPacketHeader header;
     uint16_t responseId;
-} DTPKPacketACKRecieve;
+} DTPKPacketACKReceive;
 
 #endif

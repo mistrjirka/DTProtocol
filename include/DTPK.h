@@ -11,13 +11,17 @@
 #include <queue>
 #include <mathextension.h>
 #include <DPTKDefinitions.h>
-
+#include <CrystDatabase.h>
 
 typedef struct DTPKPacketRequest 
 {
-    DTPKPacketGeneric packet;
+    DTPKPacketGeneric *packet;
+    size_t size;
+    uint16_t target;
     int16_t timeout;
     int16_t timeLeftToSend;
+    bool isAck;
+    DTPK::PacketAckCallback callback;
 };
 
 class DTPK
@@ -25,7 +29,7 @@ class DTPK
     public:
     // Callback function type definition
     using PacketReceivedCallback =
-        std::function<void(DTPKPacketGenericRecieve *packet, uint16_t size)>;
+        std::function<void(DTPKPacketGenericReceive *packet, uint16_t size)>;
     using PacketAckCallback =
         std::function<void(uint8_t result, uint16_t ping)>;
 
@@ -34,6 +38,8 @@ class DTPK
         uint16_t id;
         uint16_t timeLeft;
         uint16_t timeout;
+        bool gotAck;
+        bool success;
         DTPK::PacketAckCallback callback;
     } DTPKPacketWaiting;
 
@@ -42,14 +48,12 @@ class DTPK
     static void initialize(uint8_t KLimit = 20);
     void loop();
 
-    DTPK *DTPK::getInstance();
-
     private:
 
     //Static section
 
     static DTPK *dtpk;
-    static void receivePacket(LCMMPacketDataRecieve *packet, uint16_t size);
+    static void receivePacket(LCMMPacketDataReceive *packet, uint16_t size);
     static void receiveAck(uint16_t id, bool success);
 
     //Dynamic section
@@ -57,15 +61,24 @@ class DTPK
     uint64_t seed;
     uint64_t timeOfInit;
     uint64_t currentTime;
+    uint64_t lastTick;
     uint8_t Klimit;
-    std::vector<DTPKPacketRequest> packetRequests;
-    std::queue<DTPKPacketRequest> packetRecieved;
+    uint16_t packetCounter;
+    vector<DTPKPacketRequest> packetRequests;
+    vector<DTPKPacketWaiting> packetWaiting;
+    queue<pair<DTPKPacketGenericReceive*, size_t>> packetReceived;
+    CrystDatabase crystDatabase;
 
-    DTPKPacketCryst *prepeareCrystPacket();
-    DTPK(uint8_t KLimit);
+    DTPKPacketCryst *prepareCrystPacket(size_t *size);
+
+    void addPacketToSendingQueue(DTPKPacketGeneric *packet, size_t size, uint16_t target, int16_t timeout, int16_t timeLeftToSend, bool isAck = false, PacketAckCallback callback = nullptr);
+    void sendCrystPacket();
+    void receivingDeamon();
+    void sendingDeamon();
+    void timeoutDeamon();
+
     
-
-       
+    DTPK(uint8_t KLimit);
 };
 
 #endif

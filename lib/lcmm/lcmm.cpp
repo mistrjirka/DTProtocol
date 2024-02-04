@@ -4,7 +4,7 @@ uint16_t LCMM::packetId = 1;
 LCMM::ACKWaitingSingle LCMM::ackWaitingSingle;
 bool LCMM::waitingForACKSingle = false;
 bool LCMM::sending = false;
-LCMMPacketDataRecieve *LCMM::afterCallbackSent_packet = nullptr;
+LCMMPacketDataReceive *LCMM::afterCallbackSent_packet = nullptr;
 uint16_t LCMM::afterCallbackSent_size = 0;
 void dummyFunction()
 {
@@ -18,21 +18,21 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
     return;
   }
 
-  uint8_t type = ((LCMMPacketUknownTypeRecieve *)packet)->type;
+  uint8_t type = ((LCMMPacketUknownTypeReceive *)packet)->type;
   //Serial.println("RECIEVIED packet response type: " + String(type));
 
   switch (type)
   {
   case PACKET_TYPE_DATA_NOACK:
-    LCMM::getInstance()->handleDataNoACK((LCMMPacketDataRecieve *)packet, size);
+    LCMM::getInstance()->handleDataNoACK((LCMMPacketDataReceive *)packet, size);
     break;
 
   case PACKET_TYPE_DATA_ACK:
-    LCMM::getInstance()->handleDataACK((LCMMPacketDataRecieve *)packet, size);
+    LCMM::getInstance()->handleDataACK((LCMMPacketDataReceive *)packet, size);
     break;
 
   case PACKET_TYPE_ACK:
-    LCMM::getInstance()->handleACK((LCMMPacketResponseRecieve *)packet, size);
+    LCMM::getInstance()->handleACK((LCMMPacketResponseReceive *)packet, size);
     break;
     // Handle other packet types...
   default:
@@ -53,7 +53,7 @@ void LCMM::clearSendingPacket()
   LCMM::sending = false;
 }
 
-void LCMM::handleDataNoACK(LCMMPacketDataRecieve *packet, uint16_t size)
+void LCMM::handleDataNoACK(LCMMPacketDataReceive *packet, uint16_t size)
 {
   LCMM::getInstance()->dataReceived(packet, size);
 }
@@ -66,7 +66,7 @@ void LCMM::afterCallbackSent(){
   MAC::getInstance()->setTransmitDone(dummyFunction);
 }
 
-void LCMM::handleDataACK(LCMMPacketDataRecieve *packet, uint16_t size)
+void LCMM::handleDataACK(LCMMPacketDataReceive *packet, uint16_t size)
 {
 
   LCMMPacketResponse *response = (LCMMPacketResponse *)malloc(sizeof(LCMMPacketResponse) + 2);
@@ -88,7 +88,7 @@ void LCMM::handleDataACK(LCMMPacketDataRecieve *packet, uint16_t size)
                               
 }
 
-void LCMM::handleACK(LCMMPacketResponseRecieve *packet, uint16_t size)
+void LCMM::handleACK(LCMMPacketResponseReceive *packet, uint16_t size)
 {
   /*//Serial.println("packet type ack received");
   //Serial.println(" exxpected packet ID" + String(ackWaitingSingle.id) + " recieved Packet id: " + String(packet->packetIds[0]) + "  sender" + String(packet->mac.sender));
@@ -100,8 +100,8 @@ void LCMM::handleACK(LCMMPacketResponseRecieve *packet, uint16_t size)
   //Serial.println("ending BIN output");
 */
 
-  int numOfAcknowledgedPackets = (size - sizeof(LCMMPacketResponseRecieve)) / sizeof(uint16_t);
-  //Serial.println("number of acknowledged packets: " + String(numOfAcknowledgedPackets) + "length of header wtf " + String(sizeof(LCMMPacketResponseRecieve)) + " actual size " + String(size));
+  int numOfAcknowledgedPackets = (size - sizeof(LCMMPacketResponseReceive)) / sizeof(uint16_t);
+  //Serial.println("number of acknowledged packets: " + String(numOfAcknowledgedPackets) + "length of header wtf " + String(sizeof(LCMMPacketResponseReceive)) + " actual size " + String(size));
   if (waitingForACKSingle && numOfAcknowledgedPackets == 1 &&
       ackWaitingSingle.id == packet->packetIds[0])
   {
@@ -166,20 +166,20 @@ bool LCMM::timeoutHandler()
   return true;
 }
 
-void LCMM::initialize(DataReceivedCallback dataRecieved,
+void LCMM::initialize(DataReceivedCallback dataReceived,
                       AcknowledgmentCallback transmissionComplete)
 {
   if (lcmm == nullptr)
   {
-    lcmm = new LCMM(dataRecieved, transmissionComplete);
+    lcmm = new LCMM(dataReceived, transmissionComplete);
   }
   MAC::getInstance()->setRXCallback(LCMM::ReceivePacket);
 }
 
-LCMM::LCMM(DataReceivedCallback dataRecieved,
+LCMM::LCMM(DataReceivedCallback dataReceived,
            AcknowledgmentCallback transmissionComplete)
 {
-  this->dataReceived = dataRecieved;
+  this->dataReceived = dataReceived;
   this->transmissionComplete = transmissionComplete;
 }
 

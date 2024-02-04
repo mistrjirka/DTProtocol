@@ -1,14 +1,14 @@
 #include "mathextension.h"
 #include <DTP.h>
 DTP *DTP::dtp = nullptr;
-DTPPacketNAPRecieve *DTP::neighborPacketToParse = nullptr;
-DTPPacketGenericRecieve *DTP::dataPacketToParse = nullptr;
-DTPPacketACKRecieve *DTP::ackPacketToParse = nullptr;
+DTPPacketNAPReceive *DTP::neighborPacketToParse = nullptr;
+DTPPacketGenericReceive *DTP::dataPacketToParse = nullptr;
+DTPPacketACKReceive *DTP::ackPacketToParse = nullptr;
 bool DTP::ackPacketWaiting = false;
 bool DTP::dataPacketWaiting = false;
 bool DTP::neighborPacketWaiting = false;
 bool DTP::neighbourRevealRequestPacketWaiting = false;
-DTPPacketGenericRecieve *DTP::neighbourRevealRequestPacketToParse = nullptr;
+DTPPacketGenericReceive *DTP::neighbourRevealRequestPacketToParse = nullptr;
 
 uint16_t DTP::dtpPacketSize = 0;
 uint16_t DTP::dataPacketSize = 0;
@@ -233,7 +233,7 @@ void DTP::updateTime() {
   this->numOfIntervalsElapsed += timeSwitch;
 }
 
-void DTP::setPacketRecievedCallback(PacketReceivedCallback fun) {
+void DTP::setPacketReceivedCallback(PacketReceivedCallback fun) {
   this->recieveCallback = fun;
 }
 
@@ -332,7 +332,7 @@ void DTP::redistributePackets() {
       }
 
       memcpy(dataToSend,
-             ((LCMMPacketDataRecieve *)this->dataPacketToParse)->data,
+             ((LCMMPacketDataReceive *)this->dataPacketToParse)->data,
              sizeToAllocate);
     } else {
       DTPPacketACK *response = (DTPPacketACK*)malloc(sizeof(DTPPacketACK));
@@ -374,7 +374,7 @@ void DTP::redistributePackets() {
       }
 
       memcpy(dataToSend,
-             ((LCMMPacketDataRecieve *)this->ackPacketToParse)->data,
+             ((LCMMPacketDataReceive *)this->ackPacketToParse)->data,
              sizeToAllocate);
     } else {
 
@@ -416,7 +416,7 @@ void DTP::parseDataPacket() {
 
   dataPacketWaiting = false;
 
-  DTPPacketGenericRecieve *packet = dataPacketToParse;
+  DTPPacketGenericReceive *packet = dataPacketToParse;
 
   if (packet->finalTarget == MAC::getInstance()->getId()) {
     DTPPacketACK *responsePacket = (DTPPacketACK *)malloc(sizeof(DTPPacketACK));
@@ -459,7 +459,7 @@ void DTP::parseNeigbours() {
 
   neighborPacketWaiting = false;
 
-  DTPPacketNAPRecieve *packet = neighborPacketToParse;
+  DTPPacketNAPReceive *packet = neighborPacketToParse;
   uint16_t size = dtpPacketSize;
   uint16_t numOfNeighbors =
       (size - sizeof(DTPPacketNAP)) / sizeof(NeighborRecord);
@@ -763,7 +763,7 @@ void DTP::parseAckPacket() {
       ackPacketToParse->header.finalTarget == MAC::getInstance()->getId()) {
     printf("\n\n parsing ack packet \n\n\n");
     ackPacketWaiting = false;
-    DTPPacketACKRecieve *packet = ackPacketToParse;
+    DTPPacketACKReceive *packet = ackPacketToParse;
     uint16_t id = packet->responseId;
     auto it = this->waitingForAck.begin();
     while (it != this->waitingForAck.end()) {
@@ -801,7 +801,7 @@ void DTP::loop() {
 
 DTPStates DTP::getState() { return this->state; }
 
-void DTP::receivePacket(LCMMPacketDataRecieve *packet, uint16_t size) {
+void DTP::receivePacket(LCMMPacketDataReceive *packet, uint16_t size) {
   /*if(packet->mac.sender == 5){// only for testing purposes
       free(packet);
       return;
@@ -811,31 +811,31 @@ void DTP::receivePacket(LCMMPacketDataRecieve *packet, uint16_t size) {
   DTPPacketUnkown *dtpPacket = (DTPPacketUnkown *)packet->data;
 
   Serial.println(dtpPacket->type);
-  uint16_t dtpSize = size - sizeof(LCMMPacketDataRecieve);
+  uint16_t dtpSize = size - sizeof(LCMMPacketDataReceive);
   printf("Packet received %d\n", dtpPacket->type);
   switch (dtpPacket->type) {
   case DTP_PACKET_TYPE_NAP:
     Serial.println("NAP packet received");
     DTP::neighborPacketWaiting = true;
-    DTP::neighborPacketToParse = (DTPPacketNAPRecieve *)packet;
+    DTP::neighborPacketToParse = (DTPPacketNAPReceive *)packet;
     DTP::dtpPacketSize = dtpSize;
     break;
   case DTP_PACKET_TYPE_DATA_SINGLE:
     Serial.println("DATA packet received");
     DTP::dataPacketWaiting = true;
-    DTP::dataPacketToParse = (DTPPacketGenericRecieve *)packet;
+    DTP::dataPacketToParse = (DTPPacketGenericReceive *)packet;
     DTP::dataPacketSize = dtpSize;
     break;
   case DTP_PACKET_TYPE_ACK:
     Serial.println("ACK packet received");
     printf("ack recieved");
     DTP::ackPacketWaiting = true;
-    DTP::ackPacketToParse = (DTPPacketACKRecieve *)packet;
+    DTP::ackPacketToParse = (DTPPacketACKReceive *)packet;
     break;
   case DTP_PACKET_TYPE_NACK_NOTFOUND:
     Serial.println("NACK packet received");
     DTP::ackPacketWaiting = true;
-    DTP::ackPacketToParse = (DTPPacketACKRecieve *)packet;
+    DTP::ackPacketToParse = (DTPPacketACKReceive *)packet;
     break;
   }
 }
