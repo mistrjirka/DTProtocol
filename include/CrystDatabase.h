@@ -4,31 +4,30 @@
 #include <DPTKDefinitions.h>
 #include <unordered_map>
 
-
 class CrystDatabase
 {
-    public:
-
-    NeighborRecord *getRouting(uint16_t id);
+public:
+    RoutingRecord *getRouting(uint16_t id);
 
     bool removeRouting(uint16_t id);
 
-    bool updateRouting(uint16_t id, NeighborRecord);
+    bool addRouting(uint16_t id, NeighborRecord);
 
-    void changeMap(unordered_map<uint16_t, NeighborRecord>);
+    void changeMap(unordered_multimap<uint16_t, NeighborRecord>);
 
-    unordered_map<uint16_t, NeighborRecord> getMap();
+    unordered_multimap<uint16_t, NeighborRecord> getMap();
 
-    void updateFromCrystPacket(uint16_t from, NeighborRecord* packet, uint16_t size);
+    void updateFromCrystPacket(uint16_t from, NeighborRecord *packet, int numOfNeighbours);
+
+    void buildCache();
 
     vector<NeighborRecord> getListOfNeighbours();
 
     CrystDatabase();
-    
-    private:
-    
-    unordered_map<uint16_t, NeighborRecord> neighborMap;
 
+private:
+    unordered_multimap<uint16_t, NeighborRecord> routeToId;
+    unordered_map<uint16_t, RoutingRecord> idToRouteCache;
 };
 
 #endif

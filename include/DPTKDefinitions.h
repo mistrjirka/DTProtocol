@@ -26,6 +26,14 @@ typedef struct __attribute__((packed))
     uint16_t from;
     uint8_t distance;
 } NeighborRecord;
+
+typedef struct RoutingRecord {
+    uint16_t router;
+    uint16_t originalRouter;
+    uint8_t distance;
+
+} routingRecrod;
+
 typedef struct __attribute__((packed))
 {
     DTPKPacketType type; // 0 = Cryst, 1 = DATA, 2 = ACK, 3 = NACK - target not in database, 4 = NACK - target unresponsive
