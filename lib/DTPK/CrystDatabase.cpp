@@ -11,10 +11,8 @@ RoutingRecord *CrystDatabase::getRouting(uint16_t id)
     auto record = this->idToRouteCache.find(id);
 
     if (record != this->idToRouteCache.end())
-    {
         return &record->second;
-    }
-
+    
     return nullptr; // Replace with actual logic
 }
 
@@ -63,8 +61,7 @@ void CrystDatabase::buildCache()
             if (alreadyInCache != this->idToRouteCache.end())
             {
                 if (alreadyInCache->second.distance <= subRecord->second.distance)
-                    continue;
-                
+                    continue; 
             }
 
             this->idToRouteCache[subRecord->second.id] = RoutingRecord{record->first, record->second.from, subRecord->second.distance};
