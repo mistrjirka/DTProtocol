@@ -13,6 +13,19 @@
 #include <DPTKDefinitions.h>
 #include <CrystDatabase.h>
 
+/**
+ * Axiomatical definition of protocol.
+ * Let node be a device that is capable of sending and receiving packets with these properties:
+ * If node recieves crystalization packet
+ * - It will check if sender is in routing table. If not, it will add sender to the routing table with all of its children and update the routing cache.
+ * - If routing cache changes, it will send crystalization packet to all of its neighbours.
+ * - If node is not in crystalization session, it will start one.
+ * - If node is in crystalization session, it will add sender to the list of nodes in crystalization session.
+ * - If timeout of Klimit is reached, it will end crystalization session and remove all nodes that are not in crystalization session from routing table.
+ * - - If routing table changes, it will send crystalization packet to all of its neighbours.
+ * **/
+
+
 typedef struct DTPKPacketRequest 
 {
     DTPKPacketGeneric *packet;
