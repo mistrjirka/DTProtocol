@@ -30,6 +30,19 @@ bool CrystDatabase::addRouting(uint16_t id, NeighborRecord record)
     return true; 
 }
 
+bool CrystDatabase::addRoutingFromDataPacket(uint16_t from, uint16_t originalSender)
+{
+    /*
+    auto existingRecord = this->routeToId.find(from);
+    if(existingRecord != this->routeToId.end())
+    {
+        
+        for(auto it = (*existingRecord).second->)
+    }
+    */
+    return false;
+}
+
 void CrystDatabase::changeMap(unordered_multimap<uint16_t, NeighborRecord> newmap)
 {
     this->routeToId = newmap;

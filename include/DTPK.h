@@ -64,6 +64,8 @@ class DTPK
     static DTPK *getInstance();
 
     static void initialize(uint8_t KLimit = 20);
+    void setPacketReceivedCallback(PacketReceivedCallback callback);
+    uint16_t sendPacket(uint16_t target, unsigned char *packet, size_t size, int16_t timeout, bool isAck = false, PacketAckCallback callback = nullptr);
     void loop();
 
     private:
@@ -87,12 +89,19 @@ class DTPK
     queue<pair<DTPKPacketGenericReceive*, size_t>> packetReceived;
     CrystDatabase crystDatabase;
     CrystTimeout crystTimeout;
+    PacketReceivedCallback recieveCallback;
+
 
     DTPKPacketCryst *prepareCrystPacket(size_t *size);
 
     void addPacketToSendingQueue(DTPKPacketGeneric *packet, size_t size, uint16_t target, int16_t timeout, int16_t timeLeftToSend, bool isAck = false, PacketAckCallback callback = nullptr);
     void sendCrystPacket();
+    void sendNackPacket(uint16_t target, uint16_t id);
+    void sendAckPacket(uint16_t target, uint16_t id);
+
     void parseCrystPacket(pair<DTPKPacketGenericReceive*, size_t> packet);
+    void parseSingleDataPacket(pair<DTPKPacketGenericReceive*, size_t> packet);
+
     void receivingDeamon();
     void sendingDeamon();
     void timeoutDeamon();

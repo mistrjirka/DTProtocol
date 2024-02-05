@@ -13,6 +13,8 @@ public:
 
     bool addRouting(uint16_t id, NeighborRecord);
 
+    bool addRoutingFromDataPacket(uint16_t from, uint16_t originalSender);
+
     void changeMap(unordered_multimap<uint16_t, NeighborRecord>);
 
     unordered_multimap<uint16_t, NeighborRecord> getMap();
@@ -24,7 +26,7 @@ public:
     bool isInCrystalizationSession();
 
     void startCrystalizationSession();
-    
+
     bool endCrystalizationSession();
 
     vector<NeighborRecord> getListOfNeighbours();

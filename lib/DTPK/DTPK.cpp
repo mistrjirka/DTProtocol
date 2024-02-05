@@ -39,6 +39,11 @@ DTPK::DTPK(uint8_t Klimit) : crystDatabase(MAC::getInstance()->getId())
   this->sendCrystPacket();
 }
 
+void DTPK::setPacketReceivedCallback(DTPK::PacketReceivedCallback callback)
+{
+ this->recieveCallback = callback;
+}
+
 void DTPK::sendingDeamon()
 {
   if (this->packetRequests.size() > 0)
@@ -123,6 +128,26 @@ void DTPK::parseCrystPacket(pair<DTPKPacketGenericReceive*, size_t> packet)
       }
 }
 
+void DTPK::parseSingleDataPacket(pair<DTPKPacketGenericReceive*, size_t> packet)
+{
+  DTPKPacketGenericReceive *dataPacket = (DTPKPacketGenericReceive *)packet.first;
+  
+  if (dataPacket->finalTarget == MAC::getInstance()->getId())
+  {
+    this->recieveCallback(dataPacket, packet.second);
+    this->sendAckPacket(dataPacket->originalSender, dataPacket->id);
+
+  }else if(this->crystDatabase.getRouting(dataPacket->finalTarget) != nullptr)
+  {
+    
+    this->addPacketToSendingQueue((DTPKPacketGeneric *)dataPacket, packet.second, dataPacket->finalTarget, 5000, 0);
+  }else
+  {
+    this->sendNackPacket(dataPacket->originalSender, dataPacket->id);
+  }
+}
+
+
 void DTPK::receivingDeamon()
 {
   if (this->packetReceived.size() > 0)
@@ -136,6 +161,7 @@ void DTPK::receivingDeamon()
       this->parseCrystPacket(packet);
       break;
     case DATA_SINGLE:
+      this->parseSingleDataPacket(packet);
       break;
     case ACK:
       break;
@@ -222,6 +248,49 @@ void DTPK::sendCrystPacket()
   size_t size = 0;
   DTPKPacketCryst *packet = this->prepareCrystPacket(&size);
   this->addPacketToSendingQueue((DTPKPacketGeneric *)packet, size, BROADCAST, 5000, random(200, this->Klimit * 1000));
+}
+
+void DTPK::sendNackPacket(uint16_t target, uint16_t id)
+{
+  RoutingRecord *routing = this->crystDatabase.getRouting(target);
+  if(routing == nullptr){
+    return;
+  }
+
+  DTPKPacketHeader *packet = (DTPKPacketHeader *)malloc(sizeof(DTPKPacketHeader));
+  packet->type = NACK_NOTFOUND;
+  packet->originalSender = MAC::getInstance()->getId();
+  packet->finalTarget = target;
+  packet->id = id;
+  this->addPacketToSendingQueue((DTPKPacketGeneric *)packet, sizeof(DTPKPacketHeader), routing->router, 5000, 0);
+}
+void DTPK::sendAckPacket(uint16_t target, uint16_t id)
+{
+  DTPKPacketHeader *packet = (DTPKPacketHeader *)malloc(sizeof(DTPKPacketHeader));
+  packet->type = ACK;
+  packet->originalSender = MAC::getInstance()->getId();
+  packet->finalTarget = target;
+  packet->id = id;
+  this->addPacketToSendingQueue((DTPKPacketGeneric *)packet, sizeof(DTPKPacketHeader), target, 5000, 0);
+}
+
+uint16_t DTPK::sendPacket(uint16_t target, unsigned char *packet, size_t size, int16_t timeout, bool isAck = false, PacketAckCallback callback = nullptr)
+{
+  RoutingRecord *routing = this->crystDatabase.getRouting(target);
+  if(routing == nullptr){
+    callback(0, 0);
+    return 0;
+  }
+
+  DTPKPacketGeneric *dtpkPacket = (DTPKPacketGeneric *)malloc(sizeof(DTPKPacketGeneric) + size);
+  dtpkPacket->originalSender = MAC::getInstance()->getId();
+  dtpkPacket->id = this->packetCounter++;
+  dtpkPacket->type = DATA_SINGLE;
+  dtpkPacket->finalTarget = target;
+  memcpy(dtpkPacket->data, packet, size);
+
+  this->addPacketToSendingQueue(dtpkPacket, sizeof(DTPKPacketGeneric) + size, routing->router, timeout, 0, isAck, callback);
+  
 }
 
 void DTPK::receivePacket(LCMMPacketDataReceive *packet, uint16_t size)
