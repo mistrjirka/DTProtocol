@@ -26,7 +26,7 @@ DTPK::DTPK(uint8_t Klimit) : crystDatabase(MAC::getInstance()->getId())
   this->currentTime = timeOfInit;
   this->lastTick = 0;
   this->crystTimeout.remaining = 0;
-  this->seed = MathExtension.murmur64(MAC::getInstance()->random()
+  this->seed = MathExtension.murmur64((uint64_t) MAC::getInstance()->random()
                                           << 32 |
                                       MAC::getInstance()->random());
 
@@ -280,7 +280,7 @@ void DTPK::sendAckPacket(uint16_t target, uint16_t id)
   this->addPacketToSendingQueue((DTPKPacketGeneric *)packet, sizeof(DTPKPacketHeader), target, 5000, 0);
 }
 
-uint16_t DTPK::sendPacket(uint16_t target, unsigned char *packet, size_t size, int16_t timeout, bool isAck = false, PacketAckCallback callback = nullptr)
+uint16_t DTPK::sendPacket(uint16_t target, unsigned char *packet, size_t size, int16_t timeout, bool isAck, PacketAckCallback callback)
 {
   RoutingRecord *routing = this->crystDatabase.getRouting(target);
   if(routing == nullptr){
@@ -296,7 +296,7 @@ uint16_t DTPK::sendPacket(uint16_t target, unsigned char *packet, size_t size, i
   memcpy(dtpkPacket->data, packet, size);
 
   this->addPacketToSendingQueue(dtpkPacket, sizeof(DTPKPacketGeneric) + size, routing->router, timeout, 0, isAck, callback);
-  
+  return dtpkPacket->id;
 }
 
 void DTPK::receivePacket(LCMMPacketDataReceive *packet, uint16_t size)

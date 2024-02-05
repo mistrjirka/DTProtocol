@@ -27,21 +27,12 @@
  * **/
 
 
-typedef struct DTPKPacketRequest 
-{
-    DTPKPacketGeneric *packet;
-    size_t size;
-    uint16_t target;
-    int16_t timeout;
-    int16_t timeLeftToSend;
-    bool isAck;
-    DTPK::PacketAckCallback callback;
-};
 
-typedef struct CrystTimeout 
+
+typedef struct CrystTimeout
 {
     int remaining;
-};
+} CrystTimeout;
 
 class DTPK
 {
@@ -51,7 +42,16 @@ class DTPK
         std::function<void(DTPKPacketGenericReceive *packet, uint16_t size)>;
     using PacketAckCallback =
         std::function<void(uint8_t result, uint16_t ping)>;
-
+    typedef struct DTPKPacketRequest
+    {
+        DTPKPacketGeneric *packet;
+        size_t size;
+        uint16_t target;
+        int16_t timeout;
+        int16_t timeLeftToSend;
+        bool isAck;
+        DTPK::PacketAckCallback callback;
+    } DTPKPacketRequest;
     typedef struct
     {
         uint16_t id;
