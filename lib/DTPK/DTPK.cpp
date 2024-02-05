@@ -79,7 +79,7 @@ void DTPK::sendingDeamon()
           this->packetWaiting.push_back(waiting);
         }
         
-        free(this->packetRequests[i].packet);
+        //free(this->packetRequests[i].packet);
         this->packetRequests[i].packet = nullptr;
 
         this->packetRequests.erase(this->packetRequests.begin() + i);
@@ -161,8 +161,10 @@ void DTPK::receivingDeamon()
   {
     pair<DTPKPacketUnknownReceive*, size_t> packet = this->packetReceived.front();
     this->packetReceived.pop();
+    DTPKPacketUnknownReceive *dtpkPacket = packet.first;
 
-    printf("parsing packet target: %d type: %u size: %u\n", packet.first->lcmm.mac.sender, packet.first->type, packet.second);
+    printf("parsing packet sender: %hu type: %hhu id: %hu size: %u target: %hu lcmm type%hhu\n", 
+    (unsigned int)dtpkPacket->lcmm.mac.sender, dtpkPacket->type, dtpkPacket->id, packet.second, dtpkPacket->lcmm.mac.target, dtpkPacket->lcmm.type);
 
     switch (packet.first->type)
     {
@@ -253,10 +255,10 @@ DTPKPacketCryst *DTPK::prepareCrystPacket(size_t *size)
   printf("size: %lu acctual size %lu additional size %lu\n", *size, sizeof(DTPKPacketCryst), sizeof(NeighborRecord) * numOfNeighbours);
   DTPKPacketCryst *packet = (DTPKPacketCryst *)malloc(*size);
 
-  for (int i = 0; i < numOfNeighbours; i++)
+  /*for (int i = 0; i < numOfNeighbours; i++)
   {
     packet->neighbors[i] = neighbors[i];
-  }
+  }*/
 
   packet->type = CRYST;
   packet->id = this->packetCounter++;
