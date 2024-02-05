@@ -212,6 +212,7 @@ MAC::MAC(
   this->coding_rate = default_coding_rate;
   // Serial.println(String(default_power) + " " + String(default_spreading_factor) + " " + String(default_coding_rate) + " " + String(DEFAULT_SYNC_WORD) + " " + String(DEFAULT_PREAMBLE_LENGTH));
   //  Initialize the LoRa module with the specified settings
+  printf(("initializing frequency" + String(channels[channel])).c_str());
   check(this->module.setFrequency(channels[channel]));
   // Serial.println("frequency" + String(channels[channel]));
   check(this->module.setOutputPower(default_power));

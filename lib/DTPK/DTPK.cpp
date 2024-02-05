@@ -29,6 +29,7 @@ DTPK::DTPK(uint8_t Klimit) : crystDatabase(MAC::getInstance()->getId())
   this->seed = MathExtension.murmur64((uint64_t) MAC::getInstance()->random()
                                           << 32 |
                                       MAC::getInstance()->random());
+  printf("Seed: %d\n", this->seed);
 
   randomSeed(this->seed);
 
@@ -52,7 +53,7 @@ void DTPK::sendingDeamon()
     {
       if (this->packetRequests[i].timeLeftToSend <= 0)
       {
-
+        printf("sending packet\n");
         LCMM::getInstance()->sendPacketSingle(
             this->packetRequests[i].isAck,
             this->packetRequests[i].target,
@@ -81,6 +82,7 @@ void DTPK::sendingDeamon()
       }
       else
       {
+        printf("time left to send: %d\n", this->packetRequests[i].timeLeftToSend);
         this->packetRequests[i].timeLeftToSend -= currentTime - lastTick;
       }
     }
@@ -230,6 +232,7 @@ void DTPK::addPacketToSendingQueue(DTPKPacketGeneric *packet,
   request.isAck = isAck;
   request.callback = callback;
 
+  printf("adding packet to sending queue packet \n");
   this->packetRequests.push_back(request);
 }
 
@@ -251,6 +254,8 @@ DTPKPacketCryst *DTPK::prepareCrystPacket(size_t *size)
 
 void DTPK::sendCrystPacket()
 {
+  printf("Sending Cryst packet\n");
+
   size_t size = 0;
   DTPKPacketCryst *packet = this->prepareCrystPacket(&size);
   this->addPacketToSendingQueue((DTPKPacketGeneric *)packet, size, BROADCAST, 5000, random(200, this->Klimit * 1000));
