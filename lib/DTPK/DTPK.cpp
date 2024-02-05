@@ -20,6 +20,8 @@ DTPK *DTPK::getInstance()
 
 DTPK::DTPK(uint8_t Klimit) : crystDatabase(MAC::getInstance()->getId())
 {
+  Serial.println(F("Initializing library DTPK..."));
+
   this->Klimit = Klimit;
   this->packetCounter = 0;
   this->timeOfInit = millis();
@@ -48,10 +50,12 @@ void DTPK::sendingDeamon()
 {
   if (this->packetRequests.size() > 0)
   {
-    for (int i = 0; i < this->packetRequests.size(); i++)
+    for (unsigned int i = 0; i < this->packetRequests.size(); i++)
     {
       if (this->packetRequests[i].timeLeftToSend <= 0)
       {
+        Serial.println(F("sending packet"));
+
 
         LCMM::getInstance()->sendPacketSingle(
             this->packetRequests[i].isAck,
@@ -81,6 +85,7 @@ void DTPK::sendingDeamon()
       }
       else
       {
+        Serial.println("time left to send: " + String(this->packetRequests[i].timeLeftToSend) + " id: " + String(this->packetRequests[i].packet->id));
         this->packetRequests[i].timeLeftToSend -= currentTime - lastTick;
       }
     }
@@ -91,7 +96,7 @@ void DTPK::timeoutDeamon()
 {
   if (this->packetWaiting.size() > 0)
   {
-    for (int i = 0; i < this->packetWaiting.size(); i++)
+    for (unsigned int i = 0; i < this->packetWaiting.size(); i++)
     {
       if(packetWaiting[i].gotAck == true){
         this->packetWaiting[i].callback(1, this->packetWaiting[i].timeout - this->packetWaiting[i].timeLeft);
@@ -312,7 +317,7 @@ void DTPK::receivePacket(LCMMPacketDataReceive *packet, uint16_t size)
 
 void DTPK::receiveAck(uint16_t id, bool success)
 {
-  for(int i = 0; i < DTPK::getInstance()->packetWaiting.size(); i++){
+  for(unsigned int i = 0; i < DTPK::getInstance()->packetWaiting.size(); i++){
     if(DTPK::getInstance()->packetWaiting[i].id == id){
       DTPK::getInstance()->packetWaiting[i].gotAck = true;
       DTPK::getInstance()->packetWaiting[i].success = success;
