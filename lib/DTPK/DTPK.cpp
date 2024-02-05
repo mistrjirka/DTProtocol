@@ -173,6 +173,12 @@ void DTPK::receivingDeamon()
   }
 }
 
+vector<NeighborRecord> DTPK::getNeighbours()
+{
+  return this->crystDatabase.getListOfNeighbours();
+}
+
+
 void DTPK::crystTimeoutDeamon()
 {
   if(this->crystDatabase.isInCrystalizationSession())

@@ -86,13 +86,6 @@ typedef struct __attribute__((packed))
 typedef struct __attribute__((packed))
 {
     LCMMDataHeader lcmm;
-    DTPKPacketType type;
-    NeighborRecord neighbors[];
-} DTPKPacketNAPReceive;
-
-typedef struct __attribute__((packed))
-{
-    LCMMDataHeader lcmm;
     DTPKPacketHeader header;
     uint16_t responseId;
 } DTPKPacketACKReceive;

@@ -1,7 +1,7 @@
 #ifndef CRYST_DATABASE_H
 #define CRYST_DATABASE_H
 
-#include <DPTKDefinitions.h>
+#include <DTPKDefinitions.h>
 #include <unordered_map>
 
 class CrystDatabase

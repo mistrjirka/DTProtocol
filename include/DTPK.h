@@ -10,8 +10,9 @@
 #include <algorithm>
 #include <queue>
 #include <mathextension.h>
-#include <DPTKDefinitions.h>
+#include <DTPKDefinitions.h>
 #include <CrystDatabase.h>
+
 
 /**
  * Axiomatical definition of protocol.
@@ -67,6 +68,7 @@ class DTPK
     void setPacketReceivedCallback(PacketReceivedCallback callback);
     uint16_t sendPacket(uint16_t target, unsigned char *packet, size_t size, int16_t timeout, bool isAck = false, PacketAckCallback callback = nullptr);
     void loop();
+    vector<NeighborRecord> getNeighbours();
 
     private:
 
