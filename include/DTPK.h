@@ -24,6 +24,11 @@ typedef struct DTPKPacketRequest
     DTPK::PacketAckCallback callback;
 };
 
+typedef struct CrystTimeout 
+{
+    int remaining;
+};
+
 class DTPK
 {
     public:
@@ -68,14 +73,17 @@ class DTPK
     vector<DTPKPacketWaiting> packetWaiting;
     queue<pair<DTPKPacketGenericReceive*, size_t>> packetReceived;
     CrystDatabase crystDatabase;
+    CrystTimeout crystTimeout;
 
     DTPKPacketCryst *prepareCrystPacket(size_t *size);
 
     void addPacketToSendingQueue(DTPKPacketGeneric *packet, size_t size, uint16_t target, int16_t timeout, int16_t timeLeftToSend, bool isAck = false, PacketAckCallback callback = nullptr);
     void sendCrystPacket();
+    void parseCrystPacket(pair<DTPKPacketGenericReceive*, size_t> packet);
     void receivingDeamon();
     void sendingDeamon();
     void timeoutDeamon();
+    void crystTimeoutDeamon();
 
     
     DTPK(uint8_t KLimit);

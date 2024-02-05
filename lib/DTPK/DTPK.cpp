@@ -18,13 +18,14 @@ DTPK *DTPK::getInstance()
   return dtpk;
 }
 
-DTPK::DTPK(uint8_t Klimit)
+DTPK::DTPK(uint8_t Klimit) : crystDatabase(MAC::getInstance()->getId())
 {
   this->Klimit = Klimit;
   this->packetCounter = 0;
   this->timeOfInit = millis();
   this->currentTime = timeOfInit;
   this->lastTick = 0;
+  this->crystTimeout.remaining = 0;
   this->seed = MathExtension.murmur64(MAC::getInstance()->random()
                                           << 32 |
                                       MAC::getInstance()->random());
@@ -105,6 +106,23 @@ void DTPK::timeoutDeamon()
   }
 }
 
+void DTPK::parseCrystPacket(pair<DTPKPacketGenericReceive*, size_t> packet)
+{
+  
+      DTPKPacketCrystReceive *crystPacket = (DTPKPacketCrystReceive *)packet.first;
+      size_t numberOfNeighbours = (packet.second - sizeof(DTPKPacketCrystReceive))/sizeof(NeighborRecord);
+      if(!this->crystDatabase.isInCrystalizationSession()){
+        this->crystDatabase.startCrystalizationSession();
+      }
+      this->crystTimeout.remaining = this->Klimit*1000;
+
+      bool shouldSendCrystPacket = this->crystDatabase.updateFromCrystPacket(crystPacket->lcmm.mac.sender, crystPacket->neighbors, numberOfNeighbours);
+      
+      if(shouldSendCrystPacket){
+        this->sendCrystPacket();
+      }
+}
+
 void DTPK::receivingDeamon()
 {
   if (this->packetReceived.size() > 0)
@@ -115,15 +133,7 @@ void DTPK::receivingDeamon()
     switch (packet.first->type)
     {
     case CRYST:
-      DTPKPacketCrystReceive *crystPacket = (DTPKPacketCrystReceive *)packet.first;
-      size_t numberOfNeighbours = (packet.second - sizeof(DTPKPacketCrystReceive))/sizeof(NeighborRecord);
-      
-      bool shouldSendCrystPacket = this->crystDatabase.updateFromCrystPacket(crystPacket->lcmm.mac.sender, crystPacket->neighbors, numberOfNeighbours);
-      
-      if(shouldSendCrystPacket){
-        this->sendCrystPacket();
-      }
-
+      this->parseCrystPacket(packet);
       break;
     case DATA_SINGLE:
       break;
@@ -137,9 +147,33 @@ void DTPK::receivingDeamon()
   }
 }
 
+void DTPK::crystTimeoutDeamon()
+{
+  if(this->crystDatabase.isInCrystalizationSession())
+  {
+    if(this->crystTimeout.remaining <= 0)
+    {
+      bool updated = this->crystDatabase.endCrystalizationSession();
+      if(updated)
+      {
+        this->sendCrystPacket();
+      }
+    }
+    else
+    {
+      this->crystTimeout.remaining -= currentTime - lastTick;
+    }
+  }
+}
+
 void DTPK::loop()
 {
   currentTime = millis();
+
+  this->receivingDeamon();
+  this->sendingDeamon();
+  this->timeoutDeamon();
+  this->crystTimeoutDeamon();
 
   LCMM::getInstance()->loop();
 

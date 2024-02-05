@@ -21,11 +21,20 @@ public:
 
     void buildCache();
 
+    bool isInCrystalizationSession();
+
+    void startCrystalizationSession();
+    
+    bool endCrystalizationSession();
+
     vector<NeighborRecord> getListOfNeighbours();
 
-    CrystDatabase();
+    CrystDatabase(uint16_t id);
 
 private:
+    uint16_t myId;
+    bool crystalizationSession;
+    vector<uint16_t> crystalizationSessionIds; // ids of nodes that are in crystalization session. In the end everything that is not in the crystalization session will be deleted
     unordered_multimap<uint16_t, NeighborRecord> routeToId;
     unordered_map<uint16_t, RoutingRecord> idToRouteCache;
 };
