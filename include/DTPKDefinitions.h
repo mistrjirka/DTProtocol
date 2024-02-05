@@ -37,6 +37,7 @@ typedef struct RoutingRecord {
 typedef struct __attribute__((packed))
 {
     DTPKPacketType type; // 0 = Cryst, 1 = DATA, 2 = ACK, 3 = NACK - target not in database, 4 = NACK - target unresponsive
+    uint16_t id;
     unsigned char data[];
 } DTPKPacketUnknown;
 
@@ -44,23 +45,24 @@ typedef struct __attribute__((packed))
 typedef struct __attribute__((packed))
 {
     DTPKPacketType type; // 0 = Cryst, 1 = DATA, 2 = ACK, 3 = NACK - target not in database, 4 = NACK - target unresponsive
+    uint16_t id;
     uint16_t originalSender;
     uint16_t finalTarget;
-    uint16_t id;
     unsigned char data[];
 } DTPKPacketGeneric;
 
 typedef struct __attribute__((packed))
 {
     DTPKPacketType type; // 0 = Cryst, 1 = DATA, 2 = ACK, 3 = NACK - target not in database, 4 = NACK - target unresponsive
+    uint16_t id;
     uint16_t originalSender;
     uint16_t finalTarget;
-    uint16_t id;
 } DTPKPacketHeader;
 
 typedef struct __attribute__((packed))
 {
     DTPKPacketType type;
+    uint16_t id;
     NeighborRecord neighbors[];
 } DTPKPacketCryst;
 
@@ -69,9 +71,9 @@ typedef struct __attribute__((packed))
 {
     LCMMDataHeader lcmm;
     DTPKPacketType type; // 0 = Cryst, 1 = DATA, 2 = ACK, 3 = NACK - target not in database, 4 = NACK - target unresponsive
+    uint16_t id;
     uint16_t originalSender;
     uint16_t finalTarget;
-    uint16_t id;
     unsigned char data[];
 } DTPKPacketGenericReceive;
 
@@ -79,9 +81,18 @@ typedef struct __attribute__((packed))
 {
     LCMMDataHeader lcmm;
     DTPKPacketType type;
+    uint16_t id;
     NeighborRecord neighbors[];
 } DTPKPacketCrystReceive;
 
+
+typedef struct __attribute__((packed))
+{
+    LCMMDataHeader lcmm;
+    DTPKPacketType type; // 0 = Cryst, 1 = DATA, 2 = ACK, 3 = NACK - target not in database, 4 = NACK - target unresponsive
+    uint16_t id;
+    unsigned char data[];
+} DTPKPacketUnknownReceive;
 
 typedef struct __attribute__((packed))
 {

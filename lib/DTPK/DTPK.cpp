@@ -86,7 +86,7 @@ void DTPK::sendingDeamon()
       }
       else
       {
-        Serial.println("time left to send: " + String(this->packetRequests[i].timeLeftToSend) + " id: " + String(this->packetRequests[i].packet->id));
+        Serial.println("time left to send: " + String(this->packetRequests[i].timeLeftToSend));
         printf("time left to send: %d\n", this->packetRequests[i].timeLeftToSend);
         this->packetRequests[i].timeLeftToSend -= currentTime - lastTick;
       }
@@ -118,9 +118,9 @@ void DTPK::timeoutDeamon()
   }
 }
 
-void DTPK::parseCrystPacket(pair<DTPKPacketGenericReceive*, size_t> packet)
+void DTPK::parseCrystPacket(pair<DTPKPacketUnknownReceive*, size_t> packet)
 {
-  
+      printf("parsing packet\n");
       DTPKPacketCrystReceive *crystPacket = (DTPKPacketCrystReceive *)packet.first;
       size_t numberOfNeighbours = (packet.second - sizeof(DTPKPacketCrystReceive))/sizeof(NeighborRecord);
       if(!this->crystDatabase.isInCrystalizationSession()){
@@ -135,7 +135,7 @@ void DTPK::parseCrystPacket(pair<DTPKPacketGenericReceive*, size_t> packet)
       }
 }
 
-void DTPK::parseSingleDataPacket(pair<DTPKPacketGenericReceive*, size_t> packet)
+void DTPK::parseSingleDataPacket(pair<DTPKPacketUnknownReceive*, size_t> packet)
 {
   DTPKPacketGenericReceive *dataPacket = (DTPKPacketGenericReceive *)packet.first;
   
@@ -147,7 +147,7 @@ void DTPK::parseSingleDataPacket(pair<DTPKPacketGenericReceive*, size_t> packet)
   }else if(this->crystDatabase.getRouting(dataPacket->finalTarget) != nullptr)
   {
     
-    this->addPacketToSendingQueue((DTPKPacketGeneric *)dataPacket, packet.second, dataPacket->finalTarget, 5000, 0);
+    this->addPacketToSendingQueue((DTPKPacketUnknown *)dataPacket, packet.second, dataPacket->finalTarget, 5000, 0);
   }else
   {
     this->sendNackPacket(dataPacket->originalSender, dataPacket->id);
@@ -159,12 +159,15 @@ void DTPK::receivingDeamon()
 {
   if (this->packetReceived.size() > 0)
   {
-    pair<DTPKPacketGenericReceive*, size_t> packet = this->packetReceived.front();
+    pair<DTPKPacketUnknownReceive*, size_t> packet = this->packetReceived.front();
     this->packetReceived.pop();
+
+    printf("parsing packet target: %d type: %u size: %u\n", packet.first->lcmm.mac.sender, packet.first->type, packet.second);
 
     switch (packet.first->type)
     {
     case CRYST:
+      printf("cryst packet\n ");
       this->parseCrystPacket(packet);
       break;
     case DATA_SINGLE:
@@ -220,7 +223,7 @@ void DTPK::loop()
 
 }
 
-void DTPK::addPacketToSendingQueue(DTPKPacketGeneric *packet,
+void DTPK::addPacketToSendingQueue(DTPKPacketUnknown *packet,
                                    size_t size,
                                    uint16_t target,
                                    int16_t timeout,
@@ -245,7 +248,9 @@ DTPKPacketCryst *DTPK::prepareCrystPacket(size_t *size)
 {
   vector<NeighborRecord> neighbors = this->crystDatabase.getListOfNeighbours();
   int numOfNeighbours = neighbors.size();
+  printf("num of neighbours: %d\n", numOfNeighbours);
   *size = sizeof(DTPKPacketCryst) + sizeof(NeighborRecord) * numOfNeighbours;
+  printf("size: %lu acctual size %lu additional size %lu\n", *size, sizeof(DTPKPacketCryst), sizeof(NeighborRecord) * numOfNeighbours);
   DTPKPacketCryst *packet = (DTPKPacketCryst *)malloc(*size);
 
   for (int i = 0; i < numOfNeighbours; i++)
@@ -254,6 +259,7 @@ DTPKPacketCryst *DTPK::prepareCrystPacket(size_t *size)
   }
 
   packet->type = CRYST;
+  packet->id = this->packetCounter++;
   return packet;
 }
 
@@ -263,7 +269,9 @@ void DTPK::sendCrystPacket()
 
   size_t size = 0;
   DTPKPacketCryst *packet = this->prepareCrystPacket(&size);
-  this->addPacketToSendingQueue((DTPKPacketGeneric *)packet, size, BROADCAST, 5000, random(200, this->Klimit * 1000));
+  printf("size: %lu\n", size);
+  
+  this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, size, BROADCAST, 5000, random(200, this->Klimit * 1000));
 }
 
 void DTPK::sendNackPacket(uint16_t target, uint16_t id)
@@ -278,7 +286,7 @@ void DTPK::sendNackPacket(uint16_t target, uint16_t id)
   packet->originalSender = MAC::getInstance()->getId();
   packet->finalTarget = target;
   packet->id = id;
-  this->addPacketToSendingQueue((DTPKPacketGeneric *)packet, sizeof(DTPKPacketHeader), routing->router, 5000, 0);
+  this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, sizeof(DTPKPacketHeader), routing->router, 5000, 0);
 }
 void DTPK::sendAckPacket(uint16_t target, uint16_t id)
 {
@@ -287,7 +295,7 @@ void DTPK::sendAckPacket(uint16_t target, uint16_t id)
   packet->originalSender = MAC::getInstance()->getId();
   packet->finalTarget = target;
   packet->id = id;
-  this->addPacketToSendingQueue((DTPKPacketGeneric *)packet, sizeof(DTPKPacketHeader), target, 5000, 0);
+  this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, sizeof(DTPKPacketHeader), target, 5000, 0);
 }
 
 uint16_t DTPK::sendPacket(uint16_t target, unsigned char *packet, size_t size, int16_t timeout, bool isAck, PacketAckCallback callback)
@@ -305,7 +313,7 @@ uint16_t DTPK::sendPacket(uint16_t target, unsigned char *packet, size_t size, i
   dtpkPacket->finalTarget = target;
   memcpy(dtpkPacket->data, packet, size);
 
-  this->addPacketToSendingQueue(dtpkPacket, sizeof(DTPKPacketGeneric) + size, routing->router, timeout, 0, isAck, callback);
+  this->addPacketToSendingQueue((DTPKPacketUnknown*)dtpkPacket, sizeof(DTPKPacketGeneric) + size, routing->router, timeout, 0, isAck, callback);
   return dtpkPacket->id;
 }
 
@@ -316,7 +324,8 @@ void DTPK::receivePacket(LCMMPacketDataReceive *packet, uint16_t size)
       return;
   }*/
 
-  DTPKPacketGenericReceive *dtpkPacket = (DTPKPacketGenericReceive *)packet->data;
+  DTPKPacketUnknownReceive *dtpkPacket = (DTPKPacketUnknownReceive *)packet->data;
+  //printf("received packet target: %d sende: %d type: %u size: %u\n",dtpkPacket->finalTarget, dtpkPacket->lcmm.mac.sender, dtpkPacket->type, size);
   DTPK::getInstance()->packetReceived.push(make_pair(dtpkPacket, size));
 }
 

@@ -44,7 +44,7 @@ class DTPK
         std::function<void(uint8_t result, uint16_t ping)>;
     typedef struct DTPKPacketRequest
     {
-        DTPKPacketGeneric *packet;
+        DTPKPacketUnknown *packet;
         size_t size;
         uint16_t target;
         int16_t timeout;
@@ -88,7 +88,7 @@ class DTPK
     uint16_t packetCounter;
     vector<DTPKPacketRequest> packetRequests;
     vector<DTPKPacketWaiting> packetWaiting;
-    queue<pair<DTPKPacketGenericReceive*, size_t>> packetReceived;
+    queue<pair<DTPKPacketUnknownReceive*, size_t>> packetReceived;
     CrystDatabase crystDatabase;
     CrystTimeout crystTimeout;
     PacketReceivedCallback recieveCallback;
@@ -96,13 +96,13 @@ class DTPK
 
     DTPKPacketCryst *prepareCrystPacket(size_t *size);
 
-    void addPacketToSendingQueue(DTPKPacketGeneric *packet, size_t size, uint16_t target, int16_t timeout, int16_t timeLeftToSend, bool isAck = false, PacketAckCallback callback = nullptr);
+    void addPacketToSendingQueue(DTPKPacketUnknown *packet, size_t size, uint16_t target, int16_t timeout, int16_t timeLeftToSend, bool isAck = false, PacketAckCallback callback = nullptr);
     void sendCrystPacket();
     void sendNackPacket(uint16_t target, uint16_t id);
     void sendAckPacket(uint16_t target, uint16_t id);
 
-    void parseCrystPacket(pair<DTPKPacketGenericReceive*, size_t> packet);
-    void parseSingleDataPacket(pair<DTPKPacketGenericReceive*, size_t> packet);
+    void parseCrystPacket(pair<DTPKPacketUnknownReceive*, size_t> packet);
+    void parseSingleDataPacket(pair<DTPKPacketUnknownReceive*, size_t> packet);
 
     void receivingDeamon();
     void sendingDeamon();
