@@ -163,8 +163,8 @@ void DTPK::receivingDeamon()
     this->packetReceived.pop();
     DTPKPacketUnknownReceive *dtpkPacket = packet.first;
 
-    printf("parsing packet sender: %hu type: %hhu id: %hu size: %u target: %hu lcmm type%hhu\n", 
-    (unsigned int)dtpkPacket->lcmm.mac.sender, dtpkPacket->type, dtpkPacket->id, packet.second, dtpkPacket->lcmm.mac.target, dtpkPacket->lcmm.type);
+    printf("parsing packet sender: %hu type: %hhu id: %hu size: %u target: %hu lcmm type%hhu lcmm id: %hu\n", 
+    (unsigned int)dtpkPacket->lcmm.mac.sender, dtpkPacket->type, dtpkPacket->id, packet.second, dtpkPacket->lcmm.mac.target, dtpkPacket->lcmm.type, dtpkPacket->lcmm.id);
 
     switch (packet.first->type)
     {
@@ -325,9 +325,9 @@ void DTPK::receivePacket(LCMMPacketDataReceive *packet, uint16_t size)
       free(packet);
       return;
   }*/
-
-  DTPKPacketUnknownReceive *dtpkPacket = (DTPKPacketUnknownReceive *)packet->data;
-  //printf("received packet target: %d sende: %d type: %u size: %u\n",dtpkPacket->finalTarget, dtpkPacket->lcmm.mac.sender, dtpkPacket->type, size);
+  printf("original packet id: %hu\n",packet->id);
+  DTPKPacketUnknownReceive *dtpkPacket = (DTPKPacketUnknownReceive *)packet;
+  printf("received packet id: %hu\n",dtpkPacket->lcmm.id);
   DTPK::getInstance()->packetReceived.push(make_pair(dtpkPacket, size));
 }
 
