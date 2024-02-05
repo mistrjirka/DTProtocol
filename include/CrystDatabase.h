@@ -1,6 +1,16 @@
 #ifndef CRYST_DATABASE_H
 #define CRYST_DATABASE_H
-
+#include <stdint.h>
+#include <functional>
+#include <mac.h>
+#include <lcmm.h>
+#include "generalsettings.h"
+#include <vector>
+#include <unordered_map>
+#include <algorithm>
+#include <queue>
+#include <mathextension.h>
+#include <DTPKDefinitions.h>
 #include <DTPKDefinitions.h>
 #include <unordered_map>
 
