@@ -349,9 +349,7 @@ void DTPK::receivePacket(LCMMPacketDataReceive *packet, uint16_t size)
       free(packet);
       return;
   }*/
-  printf("original packet id: %hu\n", packet->id);
   DTPKPacketUnknownReceive *dtpkPacket = (DTPKPacketUnknownReceive *)packet;
-  printf("received packet id: %hu\n", dtpkPacket->lcmm.id);
   DTPK::getInstance()->_packetReceived.push(make_pair(dtpkPacket, size));
 }
 

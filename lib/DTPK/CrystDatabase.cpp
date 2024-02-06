@@ -125,9 +125,14 @@ bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbo
             for (int i = 0; i < numOfNeighbours && !change; i++)
             {
                 bool found = false;
+                bool foundMe = false;
                 for (auto it = range.first; it != range.second && !change; ++it)
                 {
-                    if (neighbours[i].id == it->second.id && neighbours[i].id != this->myId)
+                    if(neighbours[i].id == this->myId)
+                    {
+                        foundMe = true;
+                    }
+                    else if (neighbours[i].id == it->second.id)
                     {
                         printf("neighbour found\n");
                         if (neighbours[i].from != it->second.from || neighbours[i].distance != it->second.distance)
@@ -141,18 +146,22 @@ bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbo
                         break;
                     }
                 }
-                if (!found)
+                if (!found && !(numOfCurrentNeighbours == 1 && numOfNeighbours == 1 && foundMe)){
+                    printf("neighbour not found\n");
                     change = true;
+                }
             }
         
     }
 
     if (!change)
     {
+        printf("nothing changed\n");
         return false;
     }
     else
     {
+        printf("something changed\n");
         this->routeToId.erase(from);
     }
 
