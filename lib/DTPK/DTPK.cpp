@@ -211,6 +211,7 @@ void DTPK::crystDeamon()
     }
     else
     {
+      printf("cryst timeout remaining: %d\n", this->_crystTimeout.remaining);
       this->_crystTimeout.remaining -= _currentTime - _lastTick;
     }
   }
