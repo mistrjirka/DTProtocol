@@ -89,12 +89,6 @@ void CrystDatabase::buildCache()
 
     for (auto record = this->routeToId.begin(); record != this->routeToId.end(); record++)
     {
-        RoutingRecord provider;
-        provider.router = record->first;
-        provider.distance = 1;
-
-        this->idToRouteCache[record->first] = provider;
-
         for (auto subRecord = this->routeToId.begin(); subRecord != this->routeToId.end(); subRecord++)
         {
 
@@ -117,13 +111,10 @@ bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbo
     bool change = false;
     auto range = this->routeToId.equal_range(from);
     int numOfCurrentNeighbours = std::distance(range.first, range.second);
+    printf("numOfCurrentNeighbours: %d\n", numOfCurrentNeighbours);
     unordered_multimap<uint16_t, NeighborRecord>::iterator record = this->routeToId.find(from);
     crystalizationSessionIds.push_back(from);
-    if (numOfNeighbours != numOfCurrentNeighbours)
-    {
-        change = true;
-    }
-    else if (record == this->routeToId.end())
+    if (numOfNeighbours != numOfCurrentNeighbours || record == this->routeToId.end())
     {
         change = true;
     }
@@ -158,6 +149,13 @@ bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbo
     {
         this->routeToId.erase(from);
     }
+
+    NeighborRecord senderRecord;
+    senderRecord.id = from;
+    senderRecord.from = this->myId;
+    senderRecord.distance = 1;
+    this->routeToId.emplace(from, senderRecord);
+
 
     for (int i = 0; i < numOfNeighbours; i++)
     {
