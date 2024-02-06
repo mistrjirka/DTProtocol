@@ -32,6 +32,7 @@
 typedef struct CrystTimeout
 {
     int remaining;
+    bool sendingPacket;
 } CrystTimeout;
 
 class DTPK
@@ -80,18 +81,18 @@ class DTPK
 
     //Dynamic section
 
-    uint64_t seed;
-    uint64_t timeOfInit;
-    uint64_t currentTime;
+    uint64_t _seed;
+    uint64_t _timeOfInit;
+    uint64_t _currentTime;
     uint64_t lastTick;
-    uint8_t Klimit;
-    uint16_t packetCounter;
-    vector<DTPKPacketRequest> packetRequests;
-    vector<DTPKPacketWaiting> packetWaiting;
-    queue<pair<DTPKPacketUnknownReceive*, size_t>> packetReceived;
-    CrystDatabase crystDatabase;
-    CrystTimeout crystTimeout;
-    PacketReceivedCallback recieveCallback;
+    uint8_t _Klimit;
+    uint16_t _packetCounter;
+    vector<DTPKPacketRequest> _packetRequests;
+    vector<DTPKPacketWaiting> _packetWaiting;
+    queue<pair<DTPKPacketUnknownReceive*, size_t>> _packetReceived;
+    CrystDatabase _crystDatabase;
+    CrystTimeout _crystTimeout;
+    PacketReceivedCallback _recieveCallback;
 
 
     DTPKPacketCryst *prepareCrystPacket(size_t *size);

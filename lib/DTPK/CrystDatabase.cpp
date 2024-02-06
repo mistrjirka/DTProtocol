@@ -123,7 +123,7 @@ bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbo
         // checks if all neighbours are the same
         if (numOfCurrentNeighbours == 0)
         {
-            change = true;
+            change = false;
             printf("no neighbours\n");
         }
         else
@@ -135,8 +135,11 @@ bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbo
                 {
                     if (neighbours[i].id == it->second.id)
                     {
+                        printf("neighbour found\n");
                         if (neighbours[i].from != it->second.from || neighbours[i].distance != it->second.distance)
                         {
+                            printf("neighbour not the same\n");
+                            printf("from %d %d\n", neighbours[i].from, it->second.from);
                             change = true;
                             break;
                         }
