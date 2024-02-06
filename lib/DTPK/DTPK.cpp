@@ -201,18 +201,17 @@ void DTPK::crystDeamon()
 {
   if (this->_crystTimeout.sendingPacket)
   {
-    if (this->_crystTimeout.remaining <= 0)
+    if (this->_crystTimeout.remainingTimeToSend <= 0)
     {
       this->_crystTimeout.sendingPacket = false;
-      this->_crystTimeout.remaining = 0;
+      this->_crystTimeout.remainingTimeToSend = 0;
       size_t size = 0;
       DTPKPacketCryst *packet = this->prepareCrystPacket(&size);
       this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, size, BROADCAST, 5000, 0);
     }
     else
     {
-      printf("cryst timeout remaining: %d\n", this->_crystTimeout.remaining);
-      this->_crystTimeout.remaining -= _currentTime - _lastTick;
+      this->_crystTimeout.remainingTimeToSend -= _currentTime - _lastTick;
     }
   }
   if (this->_crystDatabase.isInCrystalizationSession())
@@ -221,6 +220,7 @@ void DTPK::crystDeamon()
     {
 
       bool updated = this->_crystDatabase.endCrystalizationSession();
+      printf("timeout updated %d", updated);
       if (updated)
       {
         this->sendCrystPacket();
@@ -228,6 +228,7 @@ void DTPK::crystDeamon()
     }
     else
     {
+        printf("cryst timeout remaining: %d\n", this->_crystTimeout.remainingTimeToSend);
       this->_crystTimeout.remaining -= _currentTime - _lastTick;
     }
   }
@@ -295,7 +296,7 @@ void DTPK::sendCrystPacket()
   }
   printf("sending cryst packet\n");
   this->_crystTimeout.sendingPacket = true;
-  this->_crystTimeout.remaining = random(200, this->_Klimit * 1000);
+  this->_crystTimeout.remainingTimeToSend = random(200, this->_Klimit * 1000);
 }
 
 void DTPK::sendNackPacket(uint16_t target, uint16_t id)
