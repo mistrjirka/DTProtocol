@@ -20,14 +20,14 @@ RoutingRecord *CrystDatabase::getRouting(uint16_t id)
 bool CrystDatabase::removeRouting(uint16_t id)
 {
     this->idToRouteCache.erase(id);
-    return true; 
+    return true;
 }
 
 bool CrystDatabase::addRouting(uint16_t id, NeighborRecord record)
 {
     this->routeToId.emplace(id, record);
     this->buildCache();
-    return true; 
+    return true;
 }
 
 bool CrystDatabase::addRoutingFromDataPacket(uint16_t from, uint16_t originalSender)
@@ -36,7 +36,7 @@ bool CrystDatabase::addRoutingFromDataPacket(uint16_t from, uint16_t originalSen
     auto existingRecord = this->routeToId.find(from);
     if(existingRecord != this->routeToId.end())
     {
-        
+
         for(auto it = (*existingRecord).second->)
     }
     */
@@ -52,13 +52,13 @@ void CrystDatabase::changeMap(unordered_multimap<uint16_t, NeighborRecord> newma
 unordered_multimap<uint16_t, NeighborRecord> CrystDatabase::getMap()
 {
     // Implementation of getMap method
-    return this->routeToId; 
+    return this->routeToId;
 }
 
 bool CrystDatabase::isInCrystalizationSession()
 {
-    return this->crystalizationSession; 
-}   
+    return this->crystalizationSession;
+}
 
 void CrystDatabase::startCrystalizationSession()
 {
@@ -80,7 +80,7 @@ bool CrystDatabase::endCrystalizationSession()
     this->crystalizationSession = false;
     this->crystalizationSessionIds.clear();
     buildCache();
-    return change; 
+    return change;
 }
 
 void CrystDatabase::buildCache()
@@ -116,36 +116,46 @@ bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbo
     crystalizationSessionIds.push_back(from);
     if (numOfNeighbours != numOfCurrentNeighbours || record == this->routeToId.end())
     {
+        printf("not the same number of neighbours %d %d\n", numOfNeighbours, numOfCurrentNeighbours);
         change = true;
     }
     else
     {
-        //checks if all neighbours are the same
-        for (int i = 0; i < numOfNeighbours && !change; i++)
+        // checks if all neighbours are the same
+        if (numOfCurrentNeighbours == 0)
         {
-            bool found = false;
-            for (auto it = range.first; it != range.second && !change; ++it)
+            change = true;
+            printf("no neighbours\n");
+        }
+        else
+        {
+            for (int i = 0; i < numOfNeighbours && !change; i++)
             {
-                if (neighbours[i].id == it->second.id)
+                bool found = false;
+                for (auto it = range.first; it != range.second && !change; ++it)
                 {
-                    if (neighbours[i].from != it->second.from || neighbours[i].distance != it->second.distance)
+                    if (neighbours[i].id == it->second.id)
                     {
-                        change = true;
+                        if (neighbours[i].from != it->second.from || neighbours[i].distance != it->second.distance)
+                        {
+                            change = true;
+                            break;
+                        }
+                        found = true;
                         break;
                     }
-                    found = true;
-                    break;
                 }
+                if (!found)
+                    change = true;
             }
-            if(!found)
-                change = true;
         }
     }
 
-    if(!change){
+    if (!change)
+    {
         return false;
     }
-    else 
+    else
     {
         this->routeToId.erase(from);
     }
@@ -156,17 +166,15 @@ bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbo
     senderRecord.distance = 1;
     this->routeToId.emplace(from, senderRecord);
 
-
     for (int i = 0; i < numOfNeighbours; i++)
     {
         if (neighbours[i].id == this->myId || neighbours[i].from == this->myId)
         {
             continue;
         }
-        
 
         change = true;
-        
+
         NeighborRecord neighbour = neighbours[i];
         neighbour.distance++;
         routeToId.emplace(from, neighbour);
