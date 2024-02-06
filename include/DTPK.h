@@ -33,6 +33,7 @@ typedef struct CrystTimeout
 {
     int remaining;
     bool sendingPacket;
+    int remainingTimeToSend;
 } CrystTimeout;
 
 class DTPK
@@ -84,7 +85,7 @@ class DTPK
     uint64_t _seed;
     uint64_t _timeOfInit;
     uint64_t _currentTime;
-    uint64_t lastTick;
+    uint64_t _lastTick;
     uint8_t _Klimit;
     uint16_t _packetCounter;
     vector<DTPKPacketRequest> _packetRequests;
@@ -108,7 +109,7 @@ class DTPK
     void receivingDeamon();
     void sendingDeamon();
     void timeoutDeamon();
-    void crystTimeoutDeamon();
+    void crystDeamon();
 
     
     DTPK(uint8_t KLimit);
