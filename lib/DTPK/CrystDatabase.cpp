@@ -127,7 +127,7 @@ bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbo
                 bool found = false;
                 for (auto it = range.first; it != range.second && !change; ++it)
                 {
-                    if (neighbours[i].id == it->second.id)
+                    if (neighbours[i].id == it->second.id && neighbours[i].id != this->myId)
                     {
                         printf("neighbour found\n");
                         if (neighbours[i].from != it->second.from || neighbours[i].distance != it->second.distance)
