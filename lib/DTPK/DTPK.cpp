@@ -255,10 +255,10 @@ DTPKPacketCryst *DTPK::prepareCrystPacket(size_t *size)
   printf("size: %lu acctual size %lu additional size %lu\n", *size, sizeof(DTPKPacketCryst), sizeof(NeighborRecord) * numOfNeighbours);
   DTPKPacketCryst *packet = (DTPKPacketCryst *)malloc(*size);
 
-  /*for (int i = 0; i < numOfNeighbours; i++)
+  for (int i = 0; i < numOfNeighbours; i++)
   {
     packet->neighbors[i] = neighbors[i];
-  }*/
+  }
 
   packet->type = CRYST;
   packet->id = this->packetCounter++;
