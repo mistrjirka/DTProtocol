@@ -114,7 +114,7 @@ bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbo
     unordered_multimap<uint16_t, NeighborRecord>::iterator record = this->routeToId.find(from);
     crystalizationSessionIds.push_back(from);
   
-    if (numOfNeighbours == 0 || numOfCurrentNeighbours-1 != numOfNeighbours || record == this->routeToId.end())
+    if (numOfNeighbours == 0 || numOfCurrentNeighbours != numOfNeighbours || record == this->routeToId.end())
     {
         printf("not the same number of neighbours %d %d\n", numOfNeighbours, numOfCurrentNeighbours);
         change = true;
