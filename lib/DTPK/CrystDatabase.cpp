@@ -111,10 +111,9 @@ bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbo
     bool change = false;
     auto range = this->routeToId.equal_range(from);
     int numOfCurrentNeighbours = std::distance(range.first, range.second) - 1;
-    printf("numOfCurrentNeighbours: %d\n", numOfCurrentNeighbours);
     unordered_multimap<uint16_t, NeighborRecord>::iterator record = this->routeToId.find(from);
     crystalizationSessionIds.push_back(from);
-    if (numOfNeighbours != numOfCurrentNeighbours || record == this->routeToId.end())
+    if (record == this->routeToId.end())
     {
         printf("not the same number of neighbours %d %d\n", numOfNeighbours, numOfCurrentNeighbours);
         change = true;
