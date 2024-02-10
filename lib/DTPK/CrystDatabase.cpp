@@ -167,6 +167,7 @@ bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbo
 
     if (compareNeighbours(incomingNeighbours, originalNeighbours))
     {
+        printf("nothing changed\n");
         return false;
     }
 
