@@ -149,21 +149,56 @@ void DTPK::parseSingleDataPacket(pair<DTPKPacketUnknownReceive *, size_t> packet
 {
   DTPKPacketGenericReceive *dataPacket = (DTPKPacketGenericReceive *)packet.first;
 
-  if (dataPacket->finalTarget == MAC::getInstance()->getId())
-  {
-    Serial.println("received packet");
-    if(this->_recieveCallback)
-      this->_recieveCallback(dataPacket, packet.second);
-    this->sendAckPacket(dataPacket->originalSender, dataPacket->id);
+  Serial.println("received packet");
+  if(this->_recieveCallback)
+    this->_recieveCallback(dataPacket, packet.second);
+  this->sendAckPacket(dataPacket->originalSender, dataPacket->id);
+}
+
+bool DTPK::isPacketForMe(DTPKPacketUnknownReceive *packet, size_t size)
+{
+  if (packet->lcmm.mac.target == BROADCAST){
+    printf("packet is for broadcast\n");
+    return true;
   }
-  else if (this->_crystDatabase.getRouting(dataPacket->finalTarget) != nullptr)
-  {
-    this->addPacketToSendingQueue((DTPKPacketUnknown *)dataPacket, packet.second, dataPacket->finalTarget, 5000, 0);
+
+  if (size < sizeof(DTPKPacketGenericReceive)){
+    printf("packet is too small\n");
+    return false;
   }
-  else
-  {
-    this->sendNackPacket(dataPacket->originalSender, dataPacket->id);
+
+  DTPKPacketGenericReceive *genericPacket = (DTPKPacketGenericReceive *)packet;
+
+  if (genericPacket->finalTarget == MAC::getInstance()->getId()){
+    printf("packet is for me\n");
+    return true;
   }
+
+  // if the packet is not for me, check if it is for a neighbour
+  RoutingRecord *routing = this->_crystDatabase.getRouting(genericPacket->finalTarget);
+
+  if (routing == nullptr)
+  {
+    printf("routing is null\n");
+    this->sendNackPacket(genericPacket->originalSender, genericPacket->id);
+    return false;
+  }
+
+  printf("packet is for neighbour %d\n", routing->router);
+  Serial.println("packet is for neighbour " + String(routing->router));
+
+  size_t sizeOfPacketToSend = size - sizeof(LCMMDataHeader);
+  printf("original size %d packet size to send %d size of data part%d\n", size, sizeOfPacketToSend, sizeOfPacketToSend - sizeof(DTPKPacketUnknown));
+  Serial.println("original size " + String(size) + " packet size to send " + String(sizeOfPacketToSend) + " size of data part" + String(sizeOfPacketToSend - sizeof(DTPKPacketUnknown)));
+
+  DTPKPacketUnknown *dataPacket = (DTPKPacketUnknown *)malloc(sizeOfPacketToSend);
+  dataPacket->type = packet->type;
+  dataPacket->id = packet->id;
+  memcpy(dataPacket->data, packet->data, sizeOfPacketToSend - sizeof(DTPKPacketUnknown));
+
+  this->addPacketToSendingQueue(dataPacket, size, routing->router, 5000, 0);
+
+  return false;
 }
 
 void DTPK::receivingDeamon()
@@ -176,6 +211,12 @@ void DTPK::receivingDeamon()
 
     printf("parsing packet sender: %hu type: %hhu id: %hu size: %u target: %hu lcmm type%hhu lcmm id: %hu\n",
            (unsigned int)dtpkPacket->lcmm.mac.sender, dtpkPacket->type, dtpkPacket->id, packet.second, dtpkPacket->lcmm.mac.target, dtpkPacket->lcmm.type, dtpkPacket->lcmm.id);
+
+    if (!this->isPacketForMe(dtpkPacket, packet.second))
+    {
+      free(dtpkPacket);
+      return;
+    }
 
     switch (packet.first->type)
     {

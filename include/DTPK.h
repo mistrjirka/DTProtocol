@@ -97,6 +97,7 @@ class DTPK
 
 
     DTPKPacketCryst *prepareCrystPacket(size_t *size);
+    bool isPacketForMe(DTPKPacketUnknownReceive *packet, size_t size);
 
     void addPacketToSendingQueue(DTPKPacketUnknown *packet, size_t size, uint16_t target, int16_t timeout, int16_t timeLeftToSend, bool isAck = false, PacketAckCallback callback = nullptr);
     void sendCrystPacket();
