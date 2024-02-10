@@ -76,6 +76,7 @@ void DTPK::sendingDeamon()
           waiting.success = false;
           waiting.callback = this->_packetRequests[i].callback;
           this->_packetWaiting.push_back(waiting);
+          printf("pusing to waiting\n");
         }
 
         if (this->_packetRequests[i].packet->type = CRYST)
@@ -106,6 +107,7 @@ void DTPK::timeoutDeamon()
     {
       if (_packetWaiting[i].gotAck == true)
       {
+        printf("sending callback");
         this->_packetWaiting[i].callback(1, this->_packetWaiting[i].timeout - this->_packetWaiting[i].timeLeft);
         this->_packetWaiting.erase(this->_packetWaiting.begin() + i);
       }
@@ -148,12 +150,13 @@ void DTPK::parseSingleDataPacket(pair<DTPKPacketUnknownReceive *, size_t> packet
 
   if (dataPacket->finalTarget == MAC::getInstance()->getId())
   {
-    this->_recieveCallback(dataPacket, packet.second);
+    Serial.println("received packet");
+    if(this->_recieveCallback)
+      this->_recieveCallback(dataPacket, packet.second);
     this->sendAckPacket(dataPacket->originalSender, dataPacket->id);
   }
   else if (this->_crystDatabase.getRouting(dataPacket->finalTarget) != nullptr)
   {
-
     this->addPacketToSendingQueue((DTPKPacketUnknown *)dataPacket, packet.second, dataPacket->finalTarget, 5000, 0);
   }
   else
@@ -321,6 +324,7 @@ void DTPK::sendAckPacket(uint16_t target, uint16_t id)
   packet->originalSender = MAC::getInstance()->getId();
   packet->finalTarget = target;
   packet->id = id;
+  Serial.println("sending ack");
   this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, sizeof(DTPKPacketHeader), target, 5000, 0);
 }
 
