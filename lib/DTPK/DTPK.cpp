@@ -107,6 +107,7 @@ void DTPK::timeoutDeamon()
     {
       if (_packetWaiting[i].gotAck == true)
       {
+        printf("calling success\n");
         printf("sending callback");
         this->_packetWaiting[i].callback(1, this->_packetWaiting[i].timeout - this->_packetWaiting[i].timeLeft);
         this->_packetWaiting.erase(this->_packetWaiting.begin() + i);
@@ -186,8 +187,26 @@ void DTPK::receivingDeamon()
       this->parseSingleDataPacket(packet);
       break;
     case ACK:
+      printf("received ack\n");
+      for (unsigned int i = 0; i < this->_packetWaiting.size(); i++)
+      {
+        if (this->_packetWaiting[i].id == packet.first->id)
+        {
+          this->_packetWaiting[i].gotAck = true;
+          this->_packetWaiting[i].success = true;
+        }
+      }
       break;
     case NACK_NOTFOUND:
+      printf("received nack\n");
+      for (unsigned int i = 0; i < this->_packetWaiting.size(); i++)
+      {
+        if (this->_packetWaiting[i].id == packet.first->id)
+        {
+          this->_packetWaiting[i].gotAck = true;
+          this->_packetWaiting[i].success = true;
+        }
+      }
       break;
     default:
       break;
@@ -231,7 +250,6 @@ void DTPK::crystDeamon()
     }
     else
     {
-        printf("cryst timeout remaining: %d\n", this->_crystTimeout.remainingTimeToSend);
       this->_crystTimeout.remaining -= _currentTime - _lastTick;
     }
   }
@@ -360,13 +378,4 @@ void DTPK::receivePacket(LCMMPacketDataReceive *packet, uint16_t size)
 
 void DTPK::receiveAck(uint16_t id, bool success)
 {
-  for (unsigned int i = 0; i < DTPK::getInstance()->_packetWaiting.size(); i++)
-  {
-    if (DTPK::getInstance()->_packetWaiting[i].id == id)
-    {
-      DTPK::getInstance()->_packetWaiting[i].gotAck = true;
-      DTPK::getInstance()->_packetWaiting[i].success = success;
-      return;
-    }
-  }
 }
