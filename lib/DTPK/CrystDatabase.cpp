@@ -105,85 +105,80 @@ void CrystDatabase::buildCache()
     }
 }
 
+vector<NeighborRecord> CrystDatabase::getNeighboursFromPacket(uint16_t from, NeighborRecord *packet, int numOfNeighbours)
+{
+    vector<NeighborRecord> neighbours;
+    NeighborRecord senderRecord;
+    senderRecord.id = from;
+    senderRecord.from = this->myId;
+    senderRecord.distance = 1;
+
+    neighbours.push_back(senderRecord);
+
+    for (int i = 0; i < numOfNeighbours; i++)
+    {
+        if (packet[i].id == this->myId || packet[i].from == this->myId)
+        {
+            continue;
+        }
+        packet[i].distance++;
+        neighbours.push_back(packet[i]);
+    }
+    return neighbours;
+}
+
+bool CrystDatabase::compareNeighbours(std::vector<NeighborRecord> a, std::vector<NeighborRecord> b)
+{
+    if (a.size() != b.size())
+    {
+        return false;
+    }
+
+    std::sort(a.begin(), a.end(), [](const NeighborRecord &lhs, const NeighborRecord &rhs)
+              { return lhs.id < rhs.id; });
+    std::sort(b.begin(), b.end(), [](const NeighborRecord &lhs, const NeighborRecord &rhs)
+              { return lhs.id < rhs.id; });
+
+    for (size_t i = 0; i < a.size(); i++)
+    {
+        if (a[i].id != b[i].id || a[i].from != b[i].from || a[i].distance != b[i].distance)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 // possible to change mulimap to unordered_map inside unordered_map so it would not be O(n^2)
 bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbours, int numOfNeighbours)
 {
     bool change = false;
     auto range = this->routeToId.equal_range(from);
-    int numOfCurrentNeighbours = std::distance(range.first, range.second);
     unordered_multimap<uint16_t, NeighborRecord>::iterator record = this->routeToId.find(from);
     crystalizationSessionIds.push_back(from);
-  
-    if (numOfNeighbours == 0 || record == this->routeToId.end())
+
+    vector<NeighborRecord> incomingNeighbours = getNeighboursFromPacket(from, neighbours, numOfNeighbours);
+    std::vector<NeighborRecord> originalNeighbours;
+    for (auto it = range.first; it != range.second; ++it)
     {
-        printf("not the same number of neighbours %d %d\n", numOfNeighbours, numOfCurrentNeighbours);
-        change = true;
-    }
-    else
-    {
-        
-            for (int i = 0; i < numOfNeighbours && !change; i++)
-            {
-                bool found = false;
-                bool foundMe = false;
-                for (auto it = range.first; it != range.second && !change; ++it)
-                {
-                    if(neighbours[i].id == this->myId)
-                    {
-                        foundMe = true;
-                    }
-                    else if (neighbours[i].id == it->second.id)
-                    {
-                        printf("neighbour found\n");
-                        if (neighbours[i].from != it->second.from || neighbours[i].distance != it->second.distance)
-                        {
-                            printf("neighbour not the same\n");
-                            printf("from %d %d\n", neighbours[i].from, it->second.from);
-                            change = true;
-                            break;
-                        }
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found && !(numOfCurrentNeighbours == 1 && numOfNeighbours == 1 && foundMe)){
-                    printf("neighbour not found\n");
-                    change = true;
-                }
-            }
-        
+        originalNeighbours.push_back(it->second);
     }
 
-    if (!change)
+    if (compareNeighbours(incomingNeighbours, originalNeighbours))
     {
-        printf("nothing changed\n");
         return false;
     }
-    else
+
+    printf("something changed\n");
+
+    this->routeToId.erase(from);
+
+    for (auto incomingNeighboursIterator = incomingNeighbours.begin(); incomingNeighboursIterator != incomingNeighbours.end(); incomingNeighboursIterator++)
     {
-        printf("something changed\n");
-        this->routeToId.erase(from);
+        this->routeToId.emplace(from, *incomingNeighboursIterator);
     }
 
-    NeighborRecord senderRecord;
-    senderRecord.id = from;
-    senderRecord.from = this->myId;
-    senderRecord.distance = 1;
-    this->routeToId.emplace(from, senderRecord);
-
-    for (int i = 0; i < numOfNeighbours; i++)
-    {
-        if (neighbours[i].id == this->myId || neighbours[i].from == this->myId)
-        {
-            continue;
-        }
-
-        change = true;
-
-        NeighborRecord neighbour = neighbours[i];
-        neighbour.distance++;
-        routeToId.emplace(from, neighbour);
-    }
     this->buildCache();
 
     return true;

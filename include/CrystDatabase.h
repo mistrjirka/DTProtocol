@@ -49,6 +49,9 @@ private:
     vector<uint16_t> crystalizationSessionIds; // ids of nodes that are in crystalization session. In the end everything that is not in the crystalization session will be deleted
     unordered_multimap<uint16_t, NeighborRecord> routeToId;
     unordered_map<uint16_t, RoutingRecord> idToRouteCache;
+
+    vector<NeighborRecord> getNeighboursFromPacket(uint16_t from, NeighborRecord *packet, int numOfNeighbours);
+    bool compareNeighbours(vector<NeighborRecord> a, vector<NeighborRecord> b); 
 };
 
 #endif
