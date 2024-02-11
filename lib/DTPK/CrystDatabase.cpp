@@ -103,7 +103,7 @@ void CrystDatabase::buildCache()
                     continue;
             }
 
-            this->idToRouteCache[subRecord->second.id] = RoutingRecord{record->first, subRecord->second.from, subRecord->second.distance};
+            this->idToRouteCache[subRecord->second.id] = RoutingRecord{record->first, subRecord->second.id, subRecord->second.distance};
         }
     }
 }
@@ -124,11 +124,13 @@ vector<NeighborRecord> CrystDatabase::getNeighboursFromPacket(uint16_t from, Nei
         {
             continue;
         }
+        Serial.println("previous distance: " + String(packet[i].distance) + " new distance: " + String(packet[i].distance) + " packet distance + 1" + String(packet[i].distance + 1));
         NeighborRecord record;
         record.id = packet[i].id;
         record.from = from;
         record.distance = packet[i].distance + 1;
-        neighbours.push_back(packet[i]);
+        Serial.println("adding neighbour to list: " + String(record.id) + " from: " + String(record.from) + " distance: " + String(record.distance));
+        neighbours.push_back(record);
     }
     return neighbours;
 }
