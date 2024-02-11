@@ -73,6 +73,7 @@ bool CrystDatabase::endCrystalizationSession()
     {
         if (std::find(this->crystalizationSessionIds.begin(), this->crystalizationSessionIds.end(), record->first) == this->crystalizationSessionIds.end())
         {
+            printf("deleteing from crystalization session\n");
             change = true;
             this->routeToId.erase(record);
         }

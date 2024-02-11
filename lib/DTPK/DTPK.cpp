@@ -149,9 +149,15 @@ void DTPK::parseSingleDataPacket(pair<DTPKPacketUnknownReceive *, size_t> packet
 {
   DTPKPacketGenericReceive *dataPacket = (DTPKPacketGenericReceive *)packet.first;
 
+  if(dataPacket->finalTarget == MAC::getInstance()->getId() && dataPacket->originalSender == MAC::getInstance()->getId())
+  {
+    printf("loopback packet\n");
+    return;
+  }
   Serial.println("received packet");
   if(this->_recieveCallback)
     this->_recieveCallback(dataPacket, packet.second);
+
   this->sendAckPacket(dataPacket->originalSender, dataPacket->id);
 }
 
@@ -281,6 +287,7 @@ void DTPK::crystDeamon()
   {
     if (this->_crystTimeout.remaining <= 0)
     {
+      printf("ending crystalization session\n");
 
       bool updated = this->_crystDatabase.endCrystalizationSession();
       printf("timeout updated %d", updated);
