@@ -71,8 +71,10 @@ bool CrystDatabase::endCrystalizationSession()
     bool change = false;
     for (auto record = this->routeToId.begin(); record != this->routeToId.end(); record++)
     {
+        printf("checking record %d\n", record->first);
         if (std::find(this->crystalizationSessionIds.begin(), this->crystalizationSessionIds.end(), record->first) == this->crystalizationSessionIds.end())
         {
+            printf("erasing record %d\n", record->first);
             change = true;
             this->routeToId.erase(record);
         }

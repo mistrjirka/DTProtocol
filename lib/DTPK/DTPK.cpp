@@ -402,6 +402,7 @@ uint16_t DTPK::sendPacket(uint16_t target, unsigned char *packet, size_t size, i
   dtpkPacket->type = DATA_SINGLE;
   dtpkPacket->finalTarget = target;
   memcpy(dtpkPacket->data, packet, size);
+  printf("sending packet to: %d through: %d\n", target, routing->router);
 
   this->addPacketToSendingQueue((DTPKPacketUnknown *)dtpkPacket, sizeof(DTPKPacketGeneric) + size, routing->router, timeout, 0, isAck, callback);
   return dtpkPacket->id;
