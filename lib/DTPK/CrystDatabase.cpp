@@ -103,7 +103,7 @@ void CrystDatabase::buildCache()
                     continue;
             }
 
-            this->idToRouteCache[subRecord->second.id] = RoutingRecord{record->first, record->second.from, subRecord->second.distance};
+            this->idToRouteCache[subRecord->second.id] = RoutingRecord{record->first, subRecord->second.from, subRecord->second.distance};
         }
     }
 }

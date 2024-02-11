@@ -101,8 +101,8 @@ class DTPK
 
     void addPacketToSendingQueue(DTPKPacketUnknown *packet, size_t size, uint16_t target, int16_t timeout, int16_t timeLeftToSend, bool isAck = false, PacketAckCallback callback = nullptr);
     void sendCrystPacket();
-    void sendNackPacket(uint16_t target, uint16_t id);
-    void sendAckPacket(uint16_t target, uint16_t id);
+    void sendNackPacket(uint16_t target, uint16_t from, uint16_t id);
+    void sendAckPacket(uint16_t target, uint16_t from, uint16_t id);
 
     void parseCrystPacket(pair<DTPKPacketUnknownReceive*, size_t> packet);
     void parseSingleDataPacket(pair<DTPKPacketUnknownReceive*, size_t> packet);

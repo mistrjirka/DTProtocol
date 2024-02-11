@@ -158,7 +158,7 @@ void DTPK::parseSingleDataPacket(pair<DTPKPacketUnknownReceive *, size_t> packet
   if(this->_recieveCallback)
     this->_recieveCallback(dataPacket, packet.second);
 
-  this->sendAckPacket(dataPacket->originalSender, dataPacket->id);
+  this->sendAckPacket(dataPacket->originalSender, dataPacket->lcmm.mac.sender, dataPacket->id);
 }
 
 bool DTPK::isPacketForMe(DTPKPacketUnknownReceive *packet, size_t size)
@@ -186,7 +186,7 @@ bool DTPK::isPacketForMe(DTPKPacketUnknownReceive *packet, size_t size)
   if (routing == nullptr)
   {
     printf("routing is null\n");
-    this->sendNackPacket(genericPacket->originalSender, genericPacket->id);
+    this->sendNackPacket(genericPacket->originalSender, packet->lcmm.mac.sender, genericPacket->id);
     return false;
   }
 
@@ -368,30 +368,41 @@ void DTPK::sendCrystPacket()
   this->_crystTimeout.remainingTimeToSend = random(200, this->_Klimit * 1000);
 }
 
-void DTPK::sendNackPacket(uint16_t target, uint16_t id)
+void DTPK::sendNackPacket(uint16_t target, uint16_t from, uint16_t id)
 {
-  RoutingRecord *routing = this->_crystDatabase.getRouting(target);
-  if (routing == nullptr)
-  {
-    return;
-  }
+  uint16_t whereToSend = from;
 
+  RoutingRecord *routing = this->_crystDatabase.getRouting(target);
+  if(routing != nullptr)
+  {
+    whereToSend = routing->router;
+  }
+  
   DTPKPacketHeader *packet = (DTPKPacketHeader *)malloc(sizeof(DTPKPacketHeader));
   packet->type = NACK_NOTFOUND;
   packet->originalSender = MAC::getInstance()->getId();
   packet->finalTarget = target;
   packet->id = id;
-  this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, sizeof(DTPKPacketHeader), routing->router, 5000, 0);
+  this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, sizeof(DTPKPacketHeader), whereToSend, 5000, 0);
 }
-void DTPK::sendAckPacket(uint16_t target, uint16_t id)
+void DTPK::sendAckPacket(uint16_t target, uint16_t from, uint16_t id)
 {
   DTPKPacketHeader *packet = (DTPKPacketHeader *)malloc(sizeof(DTPKPacketHeader));
   packet->type = ACK;
   packet->originalSender = MAC::getInstance()->getId();
   packet->finalTarget = target;
   packet->id = id;
+
+  uint16_t whereToSend = from;
+
+  RoutingRecord *routing = this->_crystDatabase.getRouting(target);
+  if(routing != nullptr)
+  {
+    whereToSend = routing->router;
+  }
+
   Serial.println("sending ack");
-  this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, sizeof(DTPKPacketHeader), target, 5000, 0);
+  this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, sizeof(DTPKPacketHeader), whereToSend, 5000, 0);
 }
 
 uint16_t DTPK::sendPacket(uint16_t target, unsigned char *packet, size_t size, int16_t timeout, bool isAck, PacketAckCallback callback)
