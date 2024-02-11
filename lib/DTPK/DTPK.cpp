@@ -55,7 +55,7 @@ void DTPK::sendingDeamon()
     {
       if (this->_packetRequests[i].timeLeftToSend <= 0)
       {
-        Serial.println(F("sending packet"));
+        Serial.println("sending packet to " + String(this->_packetRequests[i].target) + " size: " + String(this->_packetRequests[i].size) + " type: " + String(this->_packetRequests[i].packet->type) + " id: " + String(this->_packetRequests[i].packet->id) + " isAck: " + String(this->_packetRequests[i].isAck) + " timeout: " + String(this->_packetRequests[i].timeout));
 
         printf("sending packet\n");
         LCMM::getInstance()->sendPacketSingle(
@@ -109,12 +109,14 @@ void DTPK::timeoutDeamon()
       {
         printf("calling success\n");
         printf("sending callback");
-        this->_packetWaiting[i].callback(1, this->_packetWaiting[i].timeout - this->_packetWaiting[i].timeLeft);
+        if(this->_packetWaiting[i].callback)
+          this->_packetWaiting[i].callback(1, this->_packetWaiting[i].timeout - this->_packetWaiting[i].timeLeft);
         this->_packetWaiting.erase(this->_packetWaiting.begin() + i);
       }
       else if (this->_packetWaiting[i].timeLeft <= 0)
       {
-        this->_packetWaiting[i].callback(0, 0);
+        if(this->_packetWaiting[i].callback)
+          this->_packetWaiting[i].callback(0, 0);
         this->_packetWaiting.erase(this->_packetWaiting.begin() + i);
       }
       else
@@ -383,7 +385,7 @@ void DTPK::sendNackPacket(uint16_t target, uint16_t from, uint16_t id)
   packet->originalSender = MAC::getInstance()->getId();
   packet->finalTarget = target;
   packet->id = id;
-  this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, sizeof(DTPKPacketHeader), whereToSend, 5000, 0);
+  this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, sizeof(DTPKPacketHeader), whereToSend, 5000, true);
 }
 void DTPK::sendAckPacket(uint16_t target, uint16_t from, uint16_t id)
 {
@@ -398,11 +400,14 @@ void DTPK::sendAckPacket(uint16_t target, uint16_t from, uint16_t id)
   RoutingRecord *routing = this->_crystDatabase.getRouting(target);
   if(routing != nullptr)
   {
+    Serial.println("routing is not null");
     whereToSend = routing->router;
   }
 
   Serial.println("sending ack");
-  this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, sizeof(DTPKPacketHeader), whereToSend, 5000, 0);
+
+  Serial.println("sending ack to " + String(target) + " through " + String(whereToSend));
+  this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, sizeof(DTPKPacketHeader), whereToSend, 5000, 0, true);
 }
 
 uint16_t DTPK::sendPacket(uint16_t target, unsigned char *packet, size_t size, int16_t timeout, bool isAck, PacketAckCallback callback)
