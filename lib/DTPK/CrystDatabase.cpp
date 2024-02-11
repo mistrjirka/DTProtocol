@@ -113,7 +113,7 @@ vector<NeighborRecord> CrystDatabase::getNeighboursFromPacket(uint16_t from, Nei
     vector<NeighborRecord> neighbours;
     NeighborRecord senderRecord;
     senderRecord.id = from;
-    senderRecord.from = this->myId;
+    senderRecord.from = from;
     senderRecord.distance = 1;
 
     neighbours.push_back(senderRecord);
