@@ -171,6 +171,12 @@ bool CrystDatabase::compareNeighbours(std::vector<NeighborRecord> a, std::vector
 
 bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbours, int numOfNeighbours)
 {
+    bool needToSend = false;
+
+    if(!amIInNeighbours(neighbours, numOfNeighbours)){
+        needToSend = true;
+    }
+
     auto range = this->routeToId.equal_range(from);
     unordered_multimap<uint16_t, NeighborRecord>::iterator record = this->routeToId.find(from);
     crystalizationSessionIds.push_back(from);
@@ -182,10 +188,10 @@ bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbo
         originalNeighbours.push_back(it->second);
     }
 
-    if (amIInNeighbours(neighbours, numOfNeighbours) && compareNeighbours(incomingNeighbours, originalNeighbours))
+    if (compareNeighbours(incomingNeighbours, originalNeighbours))
     {
         printf("nothing changed\n");
-        return false;
+        return needToSend;
     }
 
     printf("something changed\n");
@@ -200,7 +206,7 @@ bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbo
 
     this->buildCache();
 
-    return true;
+    return needToSend;
 }
 
 std::vector<NeighborRecord> CrystDatabase::getListOfNeighbours()
