@@ -52,6 +52,7 @@ private:
 
     vector<NeighborRecord> getNeighboursFromPacket(uint16_t from, NeighborRecord *packet, int numOfNeighbours);
     bool compareNeighbours(vector<NeighborRecord> a, vector<NeighborRecord> b); 
+    bool amIInNeighbours(NeighborRecord *packet, int numOfNeighbours);
 };
 
 #endif

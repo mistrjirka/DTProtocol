@@ -106,6 +106,18 @@ void CrystDatabase::buildCache()
         this->idToRouteCache[record->second.id] = RoutingRecord{record->first, record->second.from, record->second.distance};
     }
 }
+bool CrystDatabase::amIInNeighbours(NeighborRecord *packet, int numOfNeighbours)
+{
+    for (int i = 0; i < numOfNeighbours; i++)
+    {
+        if (packet[i].id == this->myId)
+        {
+            return true;
+        }
+    }
+    return false;
+
+}
 
 vector<NeighborRecord> CrystDatabase::getNeighboursFromPacket(uint16_t from, NeighborRecord *packet, int numOfNeighbours)
 {
@@ -170,7 +182,7 @@ bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbo
         originalNeighbours.push_back(it->second);
     }
 
-    if (compareNeighbours(incomingNeighbours, originalNeighbours))
+    if (amIInNeighbours(neighbours, numOfNeighbours) && compareNeighbours(incomingNeighbours, originalNeighbours))
     {
         printf("nothing changed\n");
         return false;
