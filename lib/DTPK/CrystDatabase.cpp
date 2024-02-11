@@ -75,6 +75,7 @@ bool CrystDatabase::endCrystalizationSession()
         if (std::find(this->crystalizationSessionIds.begin(), this->crystalizationSessionIds.end(), record->first) == this->crystalizationSessionIds.end())
         {
             printf("erasing record %d\n", record->first);
+            printf("deleteing from crystalization session\n");
             change = true;
             this->routeToId.erase(record);
         }
@@ -155,7 +156,6 @@ bool CrystDatabase::compareNeighbours(std::vector<NeighborRecord> a, std::vector
 // possible to change mulimap to unordered_map inside unordered_map so it would not be O(n^2)
 bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbours, int numOfNeighbours)
 {
-    bool change = false;
     auto range = this->routeToId.equal_range(from);
     unordered_multimap<uint16_t, NeighborRecord>::iterator record = this->routeToId.find(from);
     crystalizationSessionIds.push_back(from);
@@ -169,6 +169,7 @@ bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbo
 
     if (compareNeighbours(incomingNeighbours, originalNeighbours))
     {
+        printf("nothing changed\n");
         return false;
     }
 
