@@ -92,19 +92,18 @@ void CrystDatabase::buildCache()
 
     for (auto record = this->routeToId.begin(); record != this->routeToId.end(); record++)
     {
-        for (auto subRecord = this->routeToId.begin(); subRecord != this->routeToId.end(); subRecord++)
+
+        auto alreadyInCache = this->idToRouteCache.find(record->second.id);
+
+        if (alreadyInCache != this->idToRouteCache.end())
         {
-
-            auto alreadyInCache = this->idToRouteCache.find(subRecord->second.id);
-
-            if (alreadyInCache != this->idToRouteCache.end())
-            {
-                if (alreadyInCache->second.distance <= subRecord->second.distance)
-                    continue;
-            }
-
-            this->idToRouteCache[subRecord->second.id] = RoutingRecord{record->first, subRecord->second.id, subRecord->second.distance};
+            if (alreadyInCache->second.distance <= record->second.distance)
+                continue;
         }
+
+        Serial.println("adding to cache: " + String(record->first) + " to: " + String(record->second.id) + " distance: " + String(record->second.distance));
+
+        this->idToRouteCache[record->second.id] = RoutingRecord{record->first, record->second.from, record->second.distance};
     }
 }
 
