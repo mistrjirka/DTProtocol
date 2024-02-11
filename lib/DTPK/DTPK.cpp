@@ -191,7 +191,7 @@ bool DTPK::isPacketForMe(DTPKPacketUnknownReceive *packet, size_t size)
   }
 
   printf("packet is for neighbour %d\n", routing->router);
-  Serial.println("packet is for neighbour " + String(routing->router));
+  Serial.println("packet is for neighbour " + String(genericPacket->finalTarget) + "Through" + String(routing->router));
 
   size_t sizeOfPacketToSend = size - sizeof(LCMMDataHeader);
   printf("original size %d packet size to send %d size of data part%d\n", size, sizeOfPacketToSend, sizeOfPacketToSend - sizeof(DTPKPacketUnknown));

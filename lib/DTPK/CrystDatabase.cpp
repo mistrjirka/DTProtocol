@@ -113,7 +113,7 @@ vector<NeighborRecord> CrystDatabase::getNeighboursFromPacket(uint16_t from, Nei
     vector<NeighborRecord> neighbours;
     NeighborRecord senderRecord;
     senderRecord.id = from;
-    senderRecord.from = from;
+    senderRecord.from = this->myId;
     senderRecord.distance = 1;
 
     neighbours.push_back(senderRecord);
@@ -124,7 +124,10 @@ vector<NeighborRecord> CrystDatabase::getNeighboursFromPacket(uint16_t from, Nei
         {
             continue;
         }
-        packet[i].distance++;
+        NeighborRecord record;
+        record.id = packet[i].id;
+        record.from = from;
+        record.distance = packet[i].distance + 1;
         neighbours.push_back(packet[i]);
     }
     return neighbours;
@@ -153,7 +156,6 @@ bool CrystDatabase::compareNeighbours(std::vector<NeighborRecord> a, std::vector
     return true;
 }
 
-// possible to change mulimap to unordered_map inside unordered_map so it would not be O(n^2)
 bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbours, int numOfNeighbours)
 {
     auto range = this->routeToId.equal_range(from);
@@ -179,6 +181,7 @@ bool CrystDatabase::updateFromCrystPacket(uint16_t from, NeighborRecord *neighbo
 
     for (auto incomingNeighboursIterator = incomingNeighbours.begin(); incomingNeighboursIterator != incomingNeighbours.end(); incomingNeighboursIterator++)
     {
+        Serial.println(" adding neighbour to routeToId router:" + String(from) + " to: " + String(incomingNeighboursIterator->id));
         this->routeToId.emplace(from, *incomingNeighboursIterator);
     }
 
@@ -196,7 +199,7 @@ std::vector<NeighborRecord> CrystDatabase::getListOfNeighbours()
     {
         NeighborRecord neighbour;
         neighbour.id = record->first;
-        neighbour.from = record->second.originalRouter;
+        neighbour.from = record->second.router;
         neighbour.distance = record->second.distance;
         neighbors.push_back(neighbour);
     }
