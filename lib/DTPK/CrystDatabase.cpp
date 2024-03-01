@@ -101,7 +101,7 @@ void CrystDatabase::buildCache()
                 continue;
         }
 
-        Serial.println("adding to cache: " + String(record->first) + " to: " + String(record->second.id) + " distance: " + String(record->second.distance));
+        Serial.println("adding to cache: " + String(record->first) + " to: " + String(record->second.id) + " distance: " + String(record->second.distance) + "original router being: " + String(record->second.from));
 
         this->idToRouteCache[record->second.id] = RoutingRecord{record->first, record->second.from, record->second.distance};
     }

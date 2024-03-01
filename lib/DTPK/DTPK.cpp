@@ -193,7 +193,7 @@ bool DTPK::isPacketForMe(DTPKPacketUnknownReceive *packet, size_t size)
   }
 
   printf("packet is for neighbour %d\n", routing->router);
-  Serial.println("packet is for neighbour " + String(genericPacket->finalTarget) + "Through" + String(routing->router));
+  Serial.println("packet is for neighbour " + String(genericPacket->finalTarget) + " Through " + String(routing->router) );
 
   size_t sizeOfPacketToSend = size - sizeof(LCMMDataHeader);
   printf("original size %d packet size to send %d size of data part%d\n", size, sizeOfPacketToSend, sizeOfPacketToSend - sizeof(DTPKPacketUnknown));
@@ -377,7 +377,7 @@ void DTPK::sendNackPacket(uint16_t target, uint16_t from, uint16_t id)
   RoutingRecord *routing = this->_crystDatabase.getRouting(target);
   if(routing != nullptr)
   {
-    whereToSend = routing->router;
+    //uncoment for faster routing whereToSend = routing->router;
   }
   
   DTPKPacketHeader *packet = (DTPKPacketHeader *)malloc(sizeof(DTPKPacketHeader));
@@ -401,12 +401,12 @@ void DTPK::sendAckPacket(uint16_t target, uint16_t from, uint16_t id)
   if(routing != nullptr)
   {
     Serial.println("routing is not null");
-    whereToSend = routing->router;
+    //uncoment for faster routing whereToSend = routing->router;
   }
 
   Serial.println("sending ack");
 
-  Serial.println("sending ack to " + String(target) + " through " + String(whereToSend));
+  Serial.println("sending ack to " + String(target) + " through " + String(whereToSend) + " originaly from "+ String(routing->originalRouter));
   this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, sizeof(DTPKPacketHeader), whereToSend, 5000, 0, true);
 }
 
