@@ -204,6 +204,7 @@ MAC::MAC(
   this->packetTransmitting = false;
   this->readyToReceive = false;
   this->id = id;
+  printf("id %d \n", id);
   this->channel = default_channel;
   this->spreading_factor = default_spreading_factor;
   this->bandwidth = default_bandwidth;
@@ -212,18 +213,24 @@ MAC::MAC(
   this->coding_rate = default_coding_rate;
   // Serial.println(String(default_power) + " " + String(default_spreading_factor) + " " + String(default_coding_rate) + " " + String(DEFAULT_SYNC_WORD) + " " + String(DEFAULT_PREAMBLE_LENGTH));
   //  Initialize the LoRa module with the specified settings
-  printf(("initializing frequency" + String(channels[channel])).c_str());
+  printf(("initializing frequency" + String(channels[channel]) +  "\n").c_str() );
   check(this->module.setFrequency(channels[channel]));
+  printf("frequency %d \n", channels[channel]);
   // Serial.println("frequency" + String(channels[channel]));
   check(this->module.setOutputPower(default_power));
+  printf("power %d \n", default_power);
   check(this->module.setBandwidth(default_bandwidth));
-
+  printf("bandwidth %f \n", default_bandwidth);
   check(this->module.setSpreadingFactor(default_spreading_factor));
+  printf("spreading factor %d \n", default_spreading_factor);
   check(this->module.setCodingRate(default_coding_rate));
+  printf("coding rate %d \n", default_coding_rate);
   check(this->module.setSyncWord(DEFAULT_SYNC_WORD));
+  printf("sync word %d \n", DEFAULT_SYNC_WORD);
   check(this->module.setPreambleLength(DEFAULT_PREAMBLE_LENGTH));
-
+  printf("preamble length %d \n", DEFAULT_PREAMBLE_LENGTH);
   this->module.setDio1Action(setFlag);
+  Serial.println("dio1 action set");
 
   // Serial.print("Calibration->");
   LORANoiseCalibrateAllChannels(true);
@@ -355,6 +362,7 @@ void MAC::setRXAlienCallback(PacketReceivedCallback callback)
 void MAC::calibrateBasedOnLastPacket()
 {
   float frequencyError = (float)this->module.getFrequencyError();
+  printf("frequency error %f \n", frequencyError);
 
   if (abs(frequencyError) > 500 && this->channels[this->channel] * 1000000 + frequencyError < this->channels[this->channel] * 1000000 * 1.0001 && this->channels[this->channel] * 1000000 + frequencyError > this->channels[this->channel] * 1000000 * 0.9999)
   {
