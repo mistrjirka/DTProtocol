@@ -87,7 +87,7 @@ public:
 
 
 
-  static void initialize(SX1262 loramodule, int id,
+  static void initialize(SX1262 &loramodule, int id,
              int default_channel = DEFAULT_CHANNEL,
              int default_spreading_factor = DEFAULT_SPREADING_FACTOR,
              float default_bandwidth = DEFAULT_SPREADING_FACTOR,
@@ -106,7 +106,7 @@ public:
   void setMode(State state, bool force = true);
   State getMode();
   uint16_t getId();
-  SX1262 module;
+  SX1262 &module;
   void setTransmitDone(TransmitDone callback);
 
 
@@ -134,7 +134,7 @@ private:
   TransmitDone transmitDone;
   // Private constructor
 
-  MAC(SX1262 loramodule, int id,
+  MAC(SX1262 &loramodule, int id,
       int default_channel = DEFAULT_CHANNEL,
       int default_spreading_factor = DEFAULT_SPREADING_FACTOR,
       float default_bandwidth = DEFAULT_BANDWIDTH, int squelch = DEFAULT_SQUELCH,

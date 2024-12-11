@@ -189,7 +189,7 @@ bool check(int statuscode)
 }
 
 MAC::MAC(
-    SX1262 loramodule,
+    SX1262& loramodule,
     int id,
     int default_channel /* = DEFAULT_CHANNEL*/,
     int default_spreading_factor /* = DEFAULT_SPREADING_FACTOR*/,
@@ -215,7 +215,7 @@ MAC::MAC(
   //  Initialize the LoRa module with the specified settings
   printf(("initializing frequency" + String(channels[channel]) +  "\n").c_str() );
   check(this->module.setFrequency(channels[channel]));
-  printf("frequency %d \n", channels[channel]);
+  printf(("frequency \n" + String(channels[channel])).c_str());
   // Serial.println("frequency" + String(channels[channel]));
   check(this->module.setOutputPower(default_power));
   printf("power %d \n", default_power);
@@ -239,7 +239,7 @@ MAC::MAC(
 }
 
 void MAC::initialize(
-    SX1262 loramodule,
+    SX1262& loramodule,
     int id, int default_channel /* = DEFAULT_CHANNEL*/,
     int default_spreading_factor /* = DEFAULT_SPREADING_FACTOR*/,
     float default_bandwidth /* = DEFAULT_SPREADING_FACTOR*/,

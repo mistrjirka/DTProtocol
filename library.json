@@ -30,7 +30,8 @@
         "flags": [],
         "srcFilter": [
             "+<src/>",
-            "+<lib/>"
+            "+<lib/>",
+            "+<lib/bluetooth/>"
         ]
     }
 }
