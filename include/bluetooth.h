@@ -80,7 +80,9 @@ public:
         return deviceConnected;
     }
 
-    
+    void setDeviceName(const char* name) {
+        deviceName = name;
+    }
 
 private:
     friend class WatchServerCallbacks;  // Add this line to grant access
@@ -93,6 +95,7 @@ private:
     bool deviceConnected;
     bool oldDeviceConnected;
     DTPK::PacketReceivedCallback dtpkCallback;
+    const char* deviceName = "LoraWatch"; // Default name
 
     Bluetooth();  // Private constructor
     void handleConnection(bool connected);

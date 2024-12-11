@@ -68,7 +68,7 @@ Bluetooth::Bluetooth() {
 }
 
 void Bluetooth::setup() {
-    BLEDevice::init("LoraWatch");
+    BLEDevice::init(deviceName);
     pServer = BLEDevice::createServer();
     pServer->setCallbacks(new WatchServerCallbacks());
 
