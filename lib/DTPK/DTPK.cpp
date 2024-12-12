@@ -40,6 +40,8 @@ DTPK::DTPK(uint8_t Klimit) : _crystDatabase(MAC::getInstance()->getId())
   MAC::getInstance()->setMode(RECEIVING, true);
 
   this->sendCrystPacket();
+  this->_waitingForAck = false;
+  this->_currentlySendingId = 0;
 }
 
 void DTPK::setPacketReceivedCallback(DTPK::PacketReceivedCallback callback)
@@ -53,6 +55,9 @@ void DTPK::sendingDeamon()
   {
     for (unsigned int i = 0; i < this->_packetRequests.size(); i++)
     {
+      if (this->_waitingForAck) {
+        return; // Don't send new packets while waiting for ACK
+      }
      // Serial.println("Sending?: " + String(LCMM::getInstance()->isSending()));
       //Serial.println("time left to send: " + String(this->_packetRequests[i].timeLeftToSend) + " id: " + String(this->_packetRequests[i].packet->id));
       if (this->_packetRequests[i].timeLeftToSend <= 0 && LCMM::getInstance()->isSending() == false)
@@ -79,6 +84,8 @@ void DTPK::sendingDeamon()
           waiting.callback = this->_packetRequests[i].callback;
           this->_packetWaiting.push_back(waiting);
           printf("pusing to waiting\n");
+          this->_waitingForAck = true;
+          this->_currentlySendingId = this->_packetRequests[i].packet->id;
         }
 
         if (this->_packetRequests[i].packet->type = CRYST)
@@ -244,11 +251,17 @@ void DTPK::receivingDeamon()
       this->parseSingleDataPacket(packet);
       break;
     case ACK:
-      printf("received ack\n");
+      Serial.println("received ack for packet " + String(packet.first->id));
+      // Check if this is the ACK we're waiting for
+      if (this->_waitingForAck && this->_currentlySendingId == packet.first->id) {
+        this->_waitingForAck = false;
+        this->_currentlySendingId = 0;
+      }
       for (unsigned int i = 0; i < this->_packetWaiting.size(); i++)
       {
         if (this->_packetWaiting[i].id == packet.first->id)
         {
+          Serial.println("received ack found");
           this->_packetWaiting[i].gotAck = true;
           this->_packetWaiting[i].success = true;
         }
@@ -451,4 +464,10 @@ void DTPK::receivePacket(LCMMPacketDataReceive *packet, uint16_t size)
 
 void DTPK::receiveAck(uint16_t id, bool success)
 {
+  DTPK* instance = DTPK::getInstance();
+  if (instance->_waitingForAck && instance->_currentlySendingId == id)
+  {
+    instance->_waitingForAck = false;
+    instance->_currentlySendingId = 0;
+  }
 }

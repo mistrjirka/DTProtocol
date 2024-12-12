@@ -28,7 +28,6 @@
 
 
 
-
 typedef struct CrystTimeout
 {
     int remaining;
@@ -88,13 +87,15 @@ class DTPK
     uint64_t _lastTick;
     uint8_t _Klimit;
     uint16_t _packetCounter;
+    
     vector<DTPKPacketRequest> _packetRequests;
     vector<DTPKPacketWaiting> _packetWaiting;
     queue<pair<DTPKPacketUnknownReceive*, size_t>> _packetReceived;
     CrystDatabase _crystDatabase;
     CrystTimeout _crystTimeout;
     PacketReceivedCallback _recieveCallback;
-
+    bool _waitingForAck;
+    uint16_t _currentlySendingId;
 
     DTPKPacketCryst *prepareCrystPacket(size_t *size);
     bool isPacketForMe(DTPKPacketUnknownReceive *packet, size_t size);
