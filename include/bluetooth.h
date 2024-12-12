@@ -67,7 +67,7 @@ public:
     void updateNeighborsList();
     void sendMessage(const char* message);
     void sendOutboundMessage(uint16_t recipientId, uint16_t messageId, const char* message);
-    void sendInboundMessage(uint16_t senderId, const char* message);
+    void sendInboundMessage(uint16_t senderId, const char* message, size_t messageLen);
     void sendAckMessage(uint16_t originalMessageId, bool success, uint16_t ping);
     void sendNeighborsUpdate();
     

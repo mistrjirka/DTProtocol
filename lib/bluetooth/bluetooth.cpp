@@ -6,7 +6,7 @@ Bluetooth* Bluetooth::instance = nullptr;
 void dtpkPacketReceived(DTPKPacketGenericReceive* packet, uint16_t size) {
     // Forward received packet to BLE client
     if (Bluetooth::getInstance()->deviceIsConnected()) {
-        Bluetooth::getInstance()->sendInboundMessage(packet->originalSender, (const char*)packet->data);
+        Bluetooth::getInstance()->sendInboundMessage(packet->originalSender, (const char*)packet->data, packet->size - sizeof(DTPKPacketGenericReceive));
     }
 }
 
@@ -151,10 +151,9 @@ void Bluetooth::sendAckMessage(uint16_t originalMessageId, bool success, uint16_
     pMsgCharacteristic->notify();
 }
 
-void Bluetooth::sendInboundMessage(uint16_t senderId, const char* message) {
+void Bluetooth::sendInboundMessage(uint16_t senderId, const char* message, size_t messageLen) {
     if (!deviceConnected) return;
     
-    size_t messageLen = strlen(message);
     size_t totalSize = sizeof(BLEInboundMessage) + messageLen;
     uint8_t* buffer = (uint8_t*)malloc(totalSize);
     
