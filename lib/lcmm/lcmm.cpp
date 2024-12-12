@@ -19,7 +19,7 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
   }
 
   uint8_t type = ((LCMMPacketUknownTypeReceive *)packet)->type;
-  //Serial.println("RECIEVIED packet response type: " + String(type));
+  Serial.println("RECIEVIED packet response type: " + String(type));
 
   switch (type)
   {
@@ -91,7 +91,7 @@ void LCMM::handleDataACK(LCMMPacketDataReceive *packet, uint16_t size)
 void LCMM::handleACK(LCMMPacketResponseReceive *packet, uint16_t size)
 {
   /*//Serial.println("packet type ack received");
-  //Serial.println(" exxpected packet ID" + String(ackWaitingSingle.id) + " recieved Packet id: " + String(packet->packetIds[0]) + "  sender" + String(packet->mac.sender));
+  Serial.println(" exxpected packet ID" + String(ackWaitingSingle.id) + " recieved Packet id: " + String(packet->packetIds[0]) + "  sender" + String(packet->mac.sender));
   //Serial.println("starting BIN output");
   for (int i = 0; i < size; i++)
   {
@@ -109,18 +109,19 @@ void LCMM::handleACK(LCMMPacketResponseReceive *packet, uint16_t size)
     currentPing = millis() - packetSendStart;
 
     ackWaitingSingle.callback(ackWaitingSingle.id, true);
+    
 
     this->clearSendingPacket();
   }
   else
   {
-    //Serial.println("unexpected ack");
+    Serial.println("unexpected ack");
   }
 }
 
 bool LCMM::isSending()
 {
-  return LCMM::sending;
+  return LCMM::sending || LCMM::waitingForACKSingle;
 }
 
 LCMM *LCMM::getInstance()

@@ -49,16 +49,16 @@ class DTPK
         DTPKPacketUnknown *packet;
         size_t size;
         uint16_t target;
-        int16_t timeout;
-        int16_t timeLeftToSend;
+        int32_t timeout;
+        int32_t timeLeftToSend;
         bool isAck;
         DTPK::PacketAckCallback callback;
     } DTPKPacketRequest;
     typedef struct
     {
         uint16_t id;
-        uint16_t timeLeft;
-        uint16_t timeout;
+        uint32_t timeLeft;
+        uint32_t timeout;
         bool gotAck;
         bool success;
         DTPK::PacketAckCallback callback;

@@ -53,6 +53,7 @@ void DTPK::sendingDeamon()
   {
     for (unsigned int i = 0; i < this->_packetRequests.size(); i++)
     {
+     // Serial.println("Sending?: " + String(LCMM::getInstance()->isSending()));
       //Serial.println("time left to send: " + String(this->_packetRequests[i].timeLeftToSend) + " id: " + String(this->_packetRequests[i].packet->id));
       if (this->_packetRequests[i].timeLeftToSend <= 0 && LCMM::getInstance()->isSending() == false)
       {
@@ -92,8 +93,8 @@ void DTPK::sendingDeamon()
       }
       else
       {
-        Serial.println("time left to send: " + String(this->_packetRequests[i].timeLeftToSend));
-        printf("time left to send: %d\n", this->_packetRequests[i].timeLeftToSend);
+       // Serial.println("time left to send: " + String(this->_packetRequests[i].timeLeftToSend) + " id: " + String(this->_packetRequests[i].packet->id) + " type: " + String(this->_packetRequests[i].packet->type) + " isSending: " + String(LCMM::getInstance()->isSending()));
+        //printf("time left to send: %d\n", this->_packetRequests[i].timeLeftToSend);
         this->_packetRequests[i].timeLeftToSend -= _currentTime - _lastTick;
       }
     }
@@ -120,8 +121,9 @@ void DTPK::timeoutDeamon()
           this->_packetWaiting[i].callback(0, 0);
         this->_packetWaiting.erase(this->_packetWaiting.begin() + i);\
         //find packet request and remove it FROM THE sending queue
-        this->_packetRequests.erase(std::remove_if(this->_packetRequests.begin(), this->_packetRequests.end(), [this](DTPKPacketRequest &request) {
-          return request.packet->id == this->_packetWaiting[i].id;
+        uint16_t id = this->_packetWaiting[i].id;
+        this->_packetRequests.erase(std::remove_if(this->_packetRequests.begin(), this->_packetRequests.end(), [id](DTPKPacketRequest &request) {
+          return request.packet->id == id;
         }), this->_packetRequests.end());
         
       }
@@ -391,7 +393,7 @@ void DTPK::sendNackPacket(uint16_t target, uint16_t from, uint16_t id)
   packet->originalSender = MAC::getInstance()->getId();
   packet->finalTarget = target;
   packet->id = id;
-  this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, sizeof(DTPKPacketHeader), whereToSend, 5000, true);
+  this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, sizeof(DTPKPacketHeader), whereToSend, 5000,0, true);
 }
 void DTPK::sendAckPacket(uint16_t target, uint16_t from, uint16_t id)
 {
@@ -431,7 +433,7 @@ uint16_t DTPK::sendPacket(uint16_t target, unsigned char *packet, size_t size, i
   dtpkPacket->type = DATA_SINGLE;
   dtpkPacket->finalTarget = target;
   memcpy(dtpkPacket->data, packet, size);
-  printf("sending packet to: %d through: %d\n", target, routing->router);
+  //printf("sending packet to: %d through: %d\n", target, routing->router);
 
   this->addPacketToSendingQueue((DTPKPacketUnknown *)dtpkPacket, sizeof(DTPKPacketGeneric) + size, routing->router, timeout, 0, isAck, callback);
   return dtpkPacket->id;
