@@ -118,6 +118,11 @@ void LCMM::handleACK(LCMMPacketResponseReceive *packet, uint16_t size)
   }
 }
 
+bool LCMM::isSending()
+{
+  return LCMM::sending;
+}
+
 LCMM *LCMM::getInstance()
 {
   if (lcmm == nullptr)

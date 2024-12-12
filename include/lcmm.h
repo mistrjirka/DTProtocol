@@ -138,6 +138,8 @@ public:
                             uint32_t timeout = 3000, uint8_t attempts = 3);
 
   void loop();
+
+  bool isSending();
   // Other member functions as needed
 
 private:

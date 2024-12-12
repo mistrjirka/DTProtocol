@@ -53,7 +53,8 @@ void DTPK::sendingDeamon()
   {
     for (unsigned int i = 0; i < this->_packetRequests.size(); i++)
     {
-      if (this->_packetRequests[i].timeLeftToSend <= 0)
+      //Serial.println("time left to send: " + String(this->_packetRequests[i].timeLeftToSend) + " id: " + String(this->_packetRequests[i].packet->id));
+      if (this->_packetRequests[i].timeLeftToSend <= 0 && LCMM::getInstance()->isSending() == false)
       {
         Serial.println("sending packet to " + String(this->_packetRequests[i].target) + " size: " + String(this->_packetRequests[i].size) + " type: " + String(this->_packetRequests[i].packet->type) + " id: " + String(this->_packetRequests[i].packet->id) + " isAck: " + String(this->_packetRequests[i].isAck) + " timeout: " + String(this->_packetRequests[i].timeout));
 
@@ -117,7 +118,12 @@ void DTPK::timeoutDeamon()
       {
         if(this->_packetWaiting[i].callback)
           this->_packetWaiting[i].callback(0, 0);
-        this->_packetWaiting.erase(this->_packetWaiting.begin() + i);
+        this->_packetWaiting.erase(this->_packetWaiting.begin() + i);\
+        //find packet request and remove it FROM THE sending queue
+        this->_packetRequests.erase(std::remove_if(this->_packetRequests.begin(), this->_packetRequests.end(), [this](DTPKPacketRequest &request) {
+          return request.packet->id == this->_packetWaiting[i].id;
+        }), this->_packetRequests.end());
+        
       }
       else
       {
