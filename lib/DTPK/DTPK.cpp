@@ -502,5 +502,5 @@ void DTPK::receivePacket(LCMMPacketDataReceive *packet, uint16_t size)
 
 void DTPK::receiveAck(uint16_t id, bool success)
 {
-  printf("received ack for packet %d\n", id);
+  printf("received LCMM ack for packet %d\n", id);
 }
