@@ -77,7 +77,7 @@ void DTPK::sendingDeamon()
             (unsigned char *)this->_packetRequests[i].packet,
             this->_packetRequests[i].size,
             DTPK::receiveAck,
-            this->_packetRequests[i].timeout);
+            this->_packetRequests[i].timeout/(3+0.1), 3);
 
         if (this->_packetRequests[i].dtpkAck)  // Use dtpkAck for DTPK layer acknowledgment
         {
@@ -134,7 +134,7 @@ void DTPK::timeoutDeamon()
       {
         if(this->_packetWaiting[i].callback)
           this->_packetWaiting[i].callback(0, 0);
-        this->_packetWaiting.erase(this->_packetWaiting.begin() + i);\
+        this->_packetWaiting.erase(this->_packetWaiting.begin() + i);
         //find packet request and remove it FROM THE sending queue
         uint16_t id = this->_packetWaiting[i].id;
 
