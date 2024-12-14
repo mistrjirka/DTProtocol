@@ -137,6 +137,12 @@ void DTPK::timeoutDeamon()
         this->_packetWaiting.erase(this->_packetWaiting.begin() + i);\
         //find packet request and remove it FROM THE sending queue
         uint16_t id = this->_packetWaiting[i].id;
+
+        if(this->_currentlySendingId == id)
+        {
+          this->_waitingForAck = false;
+          this->_currentlySendingId = 0;
+        }
         this->_packetRequests.erase(std::remove_if(this->_packetRequests.begin(), this->_packetRequests.end(), [id](DTPKPacketRequest &request) {
           return request.packet->id == id;
         }), this->_packetRequests.end());
@@ -377,7 +383,13 @@ void DTPK::addPacketToSendingQueue(DTPKPacketUnknown *packet,
   request.callback = callback;
 
   printf("adding packet to sending queue packet \n");
-  this->_packetRequests.push_back(request);
+  
+  // If this is an ACK packet (type == ACK), insert at the beginning of the queue
+  if (packet->type == ACK || packet->type == NACK_NOTFOUND) {
+    this->_packetRequests.insert(this->_packetRequests.begin(), request);
+  } else {
+    this->_packetRequests.push_back(request);
+  }
 }
 
 void DTPK::sendPacketToTarget(DTPKPacketUnknown* packet, size_t size, uint16_t target, int16_t timeout, bool dtpkAck) {

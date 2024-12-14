@@ -72,6 +72,11 @@ class DTPK
     void loop();
     vector<NeighborRecord> getNeighbours();
 
+    // Add a new method to check if a packet is an acknowledgment
+    static bool isAckPacket(DTPKPacketType type) {
+        return type == ACK || type == NACK_NOTFOUND;
+    }
+
     private:
 
     //Static section
