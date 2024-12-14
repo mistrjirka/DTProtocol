@@ -34,7 +34,7 @@ class MsgCharacteristicCallbacks: public BLECharacteristicCallbacks {
                         msg->recipientId,
                         (unsigned char*)msg->data, 
                         value.length() - sizeof(BLEOutboundMessage), 
-                        30000, 
+                        10000, 
                         true,
                         [messageId = msg->header.messageId](uint8_t result, uint16_t ping) {
                             Bluetooth::getInstance()->sendAckMessage(messageId, result != 0, ping);
