@@ -1,6 +1,9 @@
 #ifndef BLUETOOTH_H
 #define BLUETOOTH_H
 
+// Check if BLE libraries are available
+#if __has_include(<BLEDevice.h>) && __has_include(<BLEServer.h>) && __has_include(<BLEUtils.h>)
+
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -60,8 +63,14 @@ public:
     static Bluetooth* getInstance();
     static void initialize();
     
-    void setup();
-    void loop();
+    void setup() {
+        setupBLE();
+    }
+    
+    void loop() {
+        loopBLE();
+    }
+    
     void startAdvertising();
     void stopAdvertising();
     void updateNeighborsList();
@@ -103,4 +112,5 @@ private:
     void periodicNeighborUpdate();
 };
 
-#endif
+#endif // BLE libraries check
+#endif // BLUETOOTH_H
