@@ -1,10 +1,8 @@
-#if __has_include(<BLEDevice.h>) && __has_include(<BLEServer.h>) && __has_include(<BLEUtils.h>)
 
 #include "bluetooth.h"
 
 #if BLE_AVAILABLE
 Bluetooth* Bluetooth::instance = nullptr;
-
 
 // DTPK callback handler
 void dtpkPacketReceived(DTPKPacketGenericReceive* packet, uint16_t size) {
@@ -199,33 +197,4 @@ void Bluetooth::sendNeighborsUpdate() {
     pMsgCharacteristic->notify();
     free(buffer);
 }
-
-// ... Rest of the methods from watch_setup.cpp can be copied here, 
-// just remove the 'static' keyword and add 'Bluetooth::' prefix ...
-
-#else
-
-// Minimal implementation when BLE is not available
-Bluetooth* Bluetooth::getInstance() {
-    if (!instance) {
-        instance = new Bluetooth();
-    }
-    return instance;
-}
-
-void Bluetooth::initialize() {
-    getInstance();
-}
-
-Bluetooth::Bluetooth() {
-    // Empty constructor
-}
-
-// Add empty implementations for other required methods
-void Bluetooth::sendInboundMessage(uint16_t senderId, const char* message, size_t messageLen) {}
-void Bluetooth::sendAckMessage(uint16_t originalMessageId, bool success, uint16_t ping) {}
-void Bluetooth::sendNeighborsUpdate() {}
-
-#endif
-
 #endif
