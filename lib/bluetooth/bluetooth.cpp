@@ -116,6 +116,8 @@ void Bluetooth::handleConnection(bool connected) {
 
 void Bluetooth::loop() {
     // Handle BLE connection state
+    DTPK::getInstance()->loop();
+
     if (!deviceConnected && oldDeviceConnected) {
         delay(500);
         startAdvertising();

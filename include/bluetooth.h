@@ -87,7 +87,7 @@ public:
 private:
     friend class WatchServerCallbacks;  // Add this line to grant access
     friend class MsgCharacteristicCallbacks; // Also add this for consistency
-
+    int32_t disconnectionTime;
     static Bluetooth* instance;
     BLEServer* pServer;
     BLECharacteristic* pMsgCharacteristic;

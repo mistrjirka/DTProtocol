@@ -51,29 +51,35 @@ void DTPK::setPacketReceivedCallback(DTPK::PacketReceivedCallback callback)
 
 void DTPK::sendingDeamon()
 {
+  //printf("sending deamon\n");
+
   if (this->_packetRequests.size() > 0)
   {
     for (unsigned int i = 0; i < this->_packetRequests.size(); i++)
     {
-      if (this->_waitingForAck) {
-        return; // Don't send new packets while waiting for ACK
-      }
+      
      // Serial.println("Sending?: " + String(LCMM::getInstance()->isSending()));
       //Serial.println("time left to send: " + String(this->_packetRequests[i].timeLeftToSend) + " id: " + String(this->_packetRequests[i].packet->id));
-      if (this->_packetRequests[i].timeLeftToSend <= 0 && LCMM::getInstance()->isSending() == false)
+      if (this->_packetRequests[i].timeLeftToSend <= 0 && !LCMM::getInstance()->isSending() && !this->_waitingForAck)
       {
-        Serial.println("sending packet to " + String(this->_packetRequests[i].target) + " size: " + String(this->_packetRequests[i].size) + " type: " + String(this->_packetRequests[i].packet->type) + " id: " + String(this->_packetRequests[i].packet->id) + " isAck: " + String(this->_packetRequests[i].isAck) + " timeout: " + String(this->_packetRequests[i].timeout));
+        Serial.println("sending packet to " + String(this->_packetRequests[i].target) + 
+                      " size: " + String(this->_packetRequests[i].size) + 
+                      " type: " + String(this->_packetRequests[i].packet->type) + 
+                      " id: " + String(this->_packetRequests[i].packet->id) + 
+                      " lcmmAck: " + String(this->_packetRequests[i].lcmmAck) +
+                      " dtpkAck: " + String(this->_packetRequests[i].dtpkAck) + 
+                      " timeout: " + String(this->_packetRequests[i].timeout));
 
         printf("sending packet\n");
         LCMM::getInstance()->sendPacketSingle(
-            this->_packetRequests[i].isAck,
+            this->_packetRequests[i].lcmmAck,  // Use lcmmAck instead of isAck
             this->_packetRequests[i].target,
             (unsigned char *)this->_packetRequests[i].packet,
             this->_packetRequests[i].size,
             DTPK::receiveAck,
             this->_packetRequests[i].timeout);
 
-        if (this->_packetRequests[i].isAck)
+        if (this->_packetRequests[i].dtpkAck)  // Use dtpkAck for DTPK layer acknowledgment
         {
           DTPKPacketWaiting waiting;
           waiting.id = this->_packetRequests[i].packet->id;
@@ -83,9 +89,11 @@ void DTPK::sendingDeamon()
           waiting.success = false;
           waiting.callback = this->_packetRequests[i].callback;
           this->_packetWaiting.push_back(waiting);
-          printf("pusing to waiting\n");
+          printf("pushing to waiting\n");
           this->_waitingForAck = true;
           this->_currentlySendingId = this->_packetRequests[i].packet->id;
+          printf("waiting for ack packet with id %d\n", this->_currentlySendingId);
+          printf("waiting for ack %d\n", this->_waitingForAck);
         }
 
         if (this->_packetRequests[i].packet->type = CRYST)
@@ -100,8 +108,8 @@ void DTPK::sendingDeamon()
       }
       else
       {
-       // Serial.println("time left to send: " + String(this->_packetRequests[i].timeLeftToSend) + " id: " + String(this->_packetRequests[i].packet->id) + " type: " + String(this->_packetRequests[i].packet->type) + " isSending: " + String(LCMM::getInstance()->isSending()));
-        //printf("time left to send: %d\n", this->_packetRequests[i].timeLeftToSend);
+        Serial.println("time left to send: " + String(this->_packetRequests[i].timeLeftToSend) + " id: " + String(this->_packetRequests[i].packet->id) + " type: " + String(this->_packetRequests[i].packet->type) + " isSending: " + String(LCMM::getInstance()->isSending() + "DTPK waiting for ack: " + String(this->_waitingForAck)));
+        printf("time left to send: %d id: %d\n type: %d isSending: %d DTPK waiting for ack: %d waiting for ack id %d\n", this->_packetRequests[i].timeLeftToSend, this->_packetRequests[i].packet->id, this->_packetRequests[i].packet->type, LCMM::getInstance()->isSending(), this->_waitingForAck, this->_currentlySendingId);
         this->_packetRequests[i].timeLeftToSend -= _currentTime - _lastTick;
       }
     }
@@ -256,6 +264,10 @@ void DTPK::receivingDeamon()
       if (this->_waitingForAck && this->_currentlySendingId == packet.first->id) {
         this->_waitingForAck = false;
         this->_currentlySendingId = 0;
+        printf("received ack found for packet %d\n", packet.first->id);
+      }else{
+        Serial.println("received ack not found for packet " + String(packet.first->id) + " waiting for ack " + String(this->_waitingForAck) + " currently sending id " + String(this->_currentlySendingId));
+        printf("received ack not found for packet %d waiting for ack %d currently sending id %d\n", packet.first->id, this->_waitingForAck, this->_currentlySendingId);
       }
       for (unsigned int i = 0; i < this->_packetWaiting.size(); i++)
       {
@@ -269,6 +281,11 @@ void DTPK::receivingDeamon()
       break;
     case NACK_NOTFOUND:
       printf("received nack\n");
+
+      if (this->_waitingForAck && this->_currentlySendingId == packet.first->id) {
+        this->_waitingForAck = false;
+        this->_currentlySendingId = 0;
+      }
       for (unsigned int i = 0; i < this->_packetWaiting.size(); i++)
       {
         if (this->_packetWaiting[i].id == packet.first->id)
@@ -345,7 +362,8 @@ void DTPK::addPacketToSendingQueue(DTPKPacketUnknown *packet,
                                    uint16_t target,
                                    int16_t timeout,
                                    int16_t timeLeftToSend,
-                                   bool isAck,
+                                   bool lcmmAck,
+                                   bool dtpkAck,
                                    PacketAckCallback callback)
 {
   DTPKPacketRequest request;
@@ -354,11 +372,19 @@ void DTPK::addPacketToSendingQueue(DTPKPacketUnknown *packet,
   request.timeout = timeout;
   request.target = target;
   request.timeLeftToSend = timeLeftToSend;
-  request.isAck = isAck;
+  request.lcmmAck = lcmmAck;
+  request.dtpkAck = dtpkAck;
   request.callback = callback;
 
   printf("adding packet to sending queue packet \n");
   this->_packetRequests.push_back(request);
+}
+
+void DTPK::sendPacketToTarget(DTPKPacketUnknown* packet, size_t size, uint16_t target, int16_t timeout, bool dtpkAck) {
+    // Always use LCMM ACK for DTPK packets to ensure reliable delivery
+    bool lcmmAck = true;
+
+    this->addPacketToSendingQueue(packet, size, target, timeout, 0, lcmmAck, dtpkAck);
 }
 
 DTPKPacketCryst *DTPK::prepareCrystPacket(size_t *size)
@@ -406,7 +432,7 @@ void DTPK::sendNackPacket(uint16_t target, uint16_t from, uint16_t id)
   packet->originalSender = MAC::getInstance()->getId();
   packet->finalTarget = target;
   packet->id = id;
-  this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, sizeof(DTPKPacketHeader), whereToSend, 5000,0, true);
+  this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, sizeof(DTPKPacketHeader), whereToSend, 5000,0, true, false);
 }
 void DTPK::sendAckPacket(uint16_t target, uint16_t from, uint16_t id)
 {
@@ -428,10 +454,10 @@ void DTPK::sendAckPacket(uint16_t target, uint16_t from, uint16_t id)
   Serial.println("sending ack");
 
   Serial.println("sending ack to " + String(target) + " through " + String(whereToSend) + " originaly from "+ String(routing->originalRouter));
-  this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, sizeof(DTPKPacketHeader), whereToSend, 5000, 0, true);
+  this->addPacketToSendingQueue((DTPKPacketUnknown *)packet, sizeof(DTPKPacketHeader), whereToSend, 5000, 0, true, false);
 }
 
-uint16_t DTPK::sendPacket(uint16_t target, unsigned char *packet, size_t size, int16_t timeout, bool isAck, PacketAckCallback callback)
+uint16_t DTPK::sendPacket(uint16_t target, unsigned char *packet, size_t size, int16_t timeout, bool dtpkAck, PacketAckCallback callback)
 {
   RoutingRecord *routing = this->_crystDatabase.getRouting(target);
   if (routing == nullptr)
@@ -448,7 +474,7 @@ uint16_t DTPK::sendPacket(uint16_t target, unsigned char *packet, size_t size, i
   memcpy(dtpkPacket->data, packet, size);
   //printf("sending packet to: %d through: %d\n", target, routing->router);
 
-  this->addPacketToSendingQueue((DTPKPacketUnknown *)dtpkPacket, sizeof(DTPKPacketGeneric) + size, routing->router, timeout, 0, isAck, callback);
+  this->addPacketToSendingQueue((DTPKPacketUnknown *)dtpkPacket, sizeof(DTPKPacketGeneric) + size, routing->router, timeout, 0, true, dtpkAck, callback);
   return dtpkPacket->id;
 }
 
@@ -464,10 +490,5 @@ void DTPK::receivePacket(LCMMPacketDataReceive *packet, uint16_t size)
 
 void DTPK::receiveAck(uint16_t id, bool success)
 {
-  DTPK* instance = DTPK::getInstance();
-  if (instance->_waitingForAck && instance->_currentlySendingId == id)
-  {
-    instance->_waitingForAck = false;
-    instance->_currentlySendingId = 0;
-  }
+  printf("received ack for packet %d\n", id);
 }
