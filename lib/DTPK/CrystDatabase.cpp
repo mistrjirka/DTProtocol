@@ -69,17 +69,28 @@ void CrystDatabase::startCrystalizationSession()
 bool CrystDatabase::endCrystalizationSession()
 {
     bool change = false;
-    for (auto record = this->routeToId.begin(); record != this->routeToId.end(); record++)
+    std::vector<uint16_t> toDelete;
+    
+    // First pass: identify elements to delete
+    for (const auto& record : this->routeToId)
     {
-        printf("checking record %d\n", record->first);
-        if (std::find(this->crystalizationSessionIds.begin(), this->crystalizationSessionIds.end(), record->first) == this->crystalizationSessionIds.end())
+        printf("checking record %d\n", record.first);
+        if (std::find(this->crystalizationSessionIds.begin(), 
+                      this->crystalizationSessionIds.end(), 
+                      record.first) == this->crystalizationSessionIds.end())
         {
-            printf("erasing record %d\n", record->first);
-            printf("deleteing from crystalization session\n");
+            printf("marking record %d for deletion\n", record.first);
             change = true;
-            this->routeToId.erase(record);
+            toDelete.push_back(record.first);
         }
     }
+
+    // Second pass: delete the marked elements
+    for (const auto& id : toDelete)
+    {
+        this->routeToId.erase(id);
+    }
+
     this->crystalizationSession = false;
     this->crystalizationSessionIds.clear();
     buildCache();

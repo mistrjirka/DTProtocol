@@ -96,7 +96,7 @@ void DTPK::sendingDeamon()
           printf("waiting for ack %d\n", this->_waitingForAck);
         }
 
-        if (this->_packetRequests[i].packet->type = CRYST)
+        if (this->_packetRequests[i].packet->type == CRYST) // Using == instead of =
         {
           this->_crystTimeout.sendingPacket = false;
         }
@@ -120,6 +120,9 @@ void DTPK::timeoutDeamon()
 {
   if (this->_packetWaiting.size() > 0)
   {
+    vector<int> toDelete;
+    
+    // First pass: identify elements to delete
     for (unsigned int i = 0; i < this->_packetWaiting.size(); i++)
     {
       if (_packetWaiting[i].gotAck == true)
@@ -128,30 +131,40 @@ void DTPK::timeoutDeamon()
         printf("sending callback");
         if(this->_packetWaiting[i].callback)
           this->_packetWaiting[i].callback(1, this->_packetWaiting[i].timeout - this->_packetWaiting[i].timeLeft);
-        this->_packetWaiting.erase(this->_packetWaiting.begin() + i);
+        toDelete.push_back(i);
       }
       else if (this->_packetWaiting[i].timeLeft <= 0)
       {
         if(this->_packetWaiting[i].callback)
           this->_packetWaiting[i].callback(0, 0);
-        this->_packetWaiting.erase(this->_packetWaiting.begin() + i);
-        //find packet request and remove it FROM THE sending queue
+        
         uint16_t id = this->_packetWaiting[i].id;
-
         if(this->_currentlySendingId == id)
         {
           this->_waitingForAck = false;
           this->_currentlySendingId = 0;
         }
-        this->_packetRequests.erase(std::remove_if(this->_packetRequests.begin(), this->_packetRequests.end(), [id](DTPKPacketRequest &request) {
-          return request.packet->id == id;
-        }), this->_packetRequests.end());
         
+        this->_packetRequests.erase(
+          std::remove_if(this->_packetRequests.begin(), 
+                        this->_packetRequests.end(), 
+                        [id](DTPKPacketRequest &request) {
+                          return request.packet->id == id;
+                        }), 
+          this->_packetRequests.end());
+        
+        toDelete.push_back(i);
       }
       else
       {
         this->_packetWaiting[i].timeLeft -= _currentTime - _lastTick;
       }
+    }
+    
+    // Second pass: delete elements in reverse order
+    for (int i = toDelete.size() - 1; i >= 0; i--)
+    {
+      this->_packetWaiting.erase(this->_packetWaiting.begin() + toDelete[i]);
     }
   }
 }
