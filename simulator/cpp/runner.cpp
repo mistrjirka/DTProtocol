@@ -68,11 +68,16 @@ int main() {
 
         try {
             if (command == "INIT") {
-                unsigned id = 0, k_limit = 20, origin_sequence = 1;
+                unsigned id = 0, k_limit = 20, origin_sequence = 0;
                 uint64_t seed = 1;
                 in >> id >> k_limit >> seed;
                 if (!(in >> origin_sequence)) {
-                    origin_sequence = 1;
+                    // CppNetwork changes the deterministic firmware seed on each
+                    // simulated reboot. Deriving the 16-bit routing incarnation
+                    // from that seed gives the host model persistent, monotonic
+                    // generations without coupling environment state to DTPK.
+                    origin_sequence = static_cast<unsigned>(seed & 0xffffu);
+                    if (origin_sequence == 0) origin_sequence = 1;
                     in.clear();
                 }
                 node_id = static_cast<uint16_t>(id);
