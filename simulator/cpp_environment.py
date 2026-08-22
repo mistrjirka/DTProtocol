@@ -1,14 +1,15 @@
 """Compatibility layer for the old MovingCppNetwork import.
 
-Motion, failure epochs, RF timing and range checks now live in the shared
-`environment.EnvironmentKernel` used by both Python and C++ protocol backends.
+Motion, failure epochs, RF timing and range checks live in the shared
+EnvironmentKernel. CppSimNetwork additionally gives every rebooted firmware
+process its own Arduino millis() epoch.
 """
 
-from cpp_backend import CppNetwork
+from cpp_sim_adapter import CppSimNetwork
 from environment import RfMetrics as CppRfMetrics, Waypoint
 
 
-class MovingCppNetwork(CppNetwork):
+class MovingCppNetwork(CppSimNetwork):
     pass
 
 
