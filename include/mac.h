@@ -42,13 +42,8 @@ enum State
 
 enum class MACRegion : uint8_t
 {
-  // 433.05-434.79 MHz, 10% duty-cycle fallback.
   EU433,
-  // 868.0-868.6 MHz, conventional 868.1/868.3/868.5 channels, 1% fallback.
   EU868,
-  // Czech/EU g6 high-duty profile: the whole 869.4-869.65 MHz band may be one
-  // high-speed-data channel. 869.525 MHz/BW125 fits inside it; fallback duty is
-  // 10%. Kept explicit so applications choose the regulatory trade-off.
   EU869_HIGH_DUTY,
 };
 
@@ -87,7 +82,6 @@ public:
 
   static MAC *getInstance();
 
-  // Backward-compatible initializer. v2 treats it as the EU433 profile.
   static void initialize(
       SX1262 &loramodule,
       int id,
@@ -118,10 +112,17 @@ public:
   MACRegion getRegion() const { return region; }
   uint8_t getFallbackDutyCyclePercent() const { return dutyCyclePercent; }
 
-  // Time until MAC policy permits another send. This is deliberately
-  // non-blocking: callers can keep servicing routing/RX while duty cycle or
-  // randomized carrier-sense backoff is active.
   uint32_t getTransmitWaitMs() const;
+
+  // Neighbor liveness must tolerate the longest legal silence a peer can incur
+  // after transmitting a full-size frame. `maxHelloGapMs` is the largest normal
+  // HELLO period including jitter. Any packet refreshes liveness, so one such
+  // duty off-time plus the next HELLO gap is a conservative bound even while
+  // chunked CRYST/data traffic is active.
+  uint32_t recommendedNeighborExpiryMs(
+      uint32_t baseMs,
+      uint32_t maxHelloGapMs,
+      uint32_t schedulerMarginMs = 1000) const;
 
   void handlePacket();
   uint8_t sendData(uint16_t target, unsigned char *data,
@@ -152,8 +153,6 @@ private:
   int maxConductedPowerDbm;
   uint8_t dutyCyclePercent;
 
-  // Largest current profile has 13 channels. Keep fixed storage to avoid heap
-  // allocation in radio calibration.
   int noiseFloor[13];
   uint16_t id;
   int channel;
