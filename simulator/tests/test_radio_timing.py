@@ -145,10 +145,14 @@ def test_rx_done_to_lcmm_callback_includes_busy_poll_floor():
     )
 
 
-def test_rx_rearm_distinguishes_tx_done_from_rx_callback_return():
+def test_tx_rearm_and_continuous_rx_refresh_are_distinct_paths():
     assert rx_rearm_ms() == pytest.approx(0.398, abs=1e-12)
-    assert rx_rearm_after_read_ms() == pytest.approx(0.320, abs=1e-12)
-    assert rx_rearm_ms() > rx_rearm_after_read_ms() > SX1262_STBY_RC_TO_RX_MS
+    # After an RX callback the SX1262 never left Rx Continuous mode. The
+    # production startReceive() call is a redundant refresh; no documented
+    # STBY_RC->RX transition applies, so only SPI + BUSY-poll floor is asserted.
+    assert rx_rearm_after_read_ms() == pytest.approx(0.238, abs=1e-12)
+    assert rx_rearm_ms() > rx_rearm_after_read_ms() > 0.0
+    assert rx_rearm_after_read_ms() > spi_wire_time_ms(RX_REARM_AFTER_READ_SPI_BYTES)
 
 
 def test_optional_cad_includes_spi_and_busy_poll_floor_around_correlation():
