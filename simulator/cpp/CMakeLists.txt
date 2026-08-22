@@ -24,8 +24,8 @@ target_include_directories(dtprotocol_host_node BEFORE PRIVATE
 )
 
 target_compile_options(dtprotocol_host_node PRIVATE
-    -include ${CMAKE_CURRENT_SOURCE_DIR}/host/mac.h
-    -include ${REPO_ROOT}/include/mathextension.h
+    -include${CMAKE_CURRENT_SOURCE_DIR}/host/mac.h
+    -include${REPO_ROOT}/include/mathextension.h
     -Wall -Wextra -Wno-unused-parameter
 )
 target_compile_definitions(dtprotocol_host_node PRIVATE HOST_SIM=1)
