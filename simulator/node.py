@@ -71,6 +71,23 @@ class Node:
         self.crashed = False
         self.crashed_reason = None
 
+    def _effective_hello_period_ms(self) -> float:
+        period = float(self.profile.hello_period_ms or 1)
+        # The conservative 1% fallback cannot physically sustain a 10 s HELLO
+        # at SF9/BW125 once HELLO/CRYST airtime is included. Keep correctness
+        # identical; only slow the maintenance clock for low-duty operation.
+        duty = float(getattr(self.sim, "duty_cycle_percent", 0.0))
+        if 0.0 < duty <= 1.0:
+            period = max(period, 60_000.0)
+        return period
+
+    def _effective_neighbor_expiry_ms(self) -> float:
+        expiry = float(self.profile.neighbor_expiry_ms or 1)
+        duty = float(getattr(self.sim, "duty_cycle_percent", 0.0))
+        if 0.0 < duty <= 1.0:
+            expiry = max(expiry, 3.0 * self._effective_hello_period_ms())
+        return expiry
+
     def start(self) -> None:
         self.up = True
         self.crashed = False
@@ -96,7 +113,7 @@ class Node:
                 gen,
             )
         if self.profile.hello_period_ms:
-            first = self.sim.rng.uniform(100, self.profile.hello_period_ms)
+            first = self.sim.rng.uniform(100, self._effective_hello_period_ms())
             self.sim.schedule(first, self._periodic_hello, gen)
         if self.profile.origin_seq_period_ms:
             self.sim.schedule(
@@ -106,7 +123,7 @@ class Node:
             )
         if self.profile.neighbor_expiry_ms:
             self.sim.schedule(
-                self.profile.neighbor_expiry_ms / 3,
+                self._effective_neighbor_expiry_ms() / 3,
                 self._expiry_tick,
                 gen,
             )
@@ -135,17 +152,28 @@ class Node:
     def _periodic_hello(self, gen: int) -> None:
         if gen != self.generation or not self.up or self.crashed:
             return
-        packet = Packet(
-            "HELLO",
-            self.next_packet_id(),
-            wire_dtpk_size=DTPK_HELLO_SIZE,
-            sender_sequence=self.origin_sequence,
-            route_version=self.route_version,
-        )
-        self.sim.metrics.hello_tx += 1
-        self.enqueue(TxRequest(packet, None, lcmm_ack=False))
 
-        period = float(self.profile.hello_period_ms or 1)
+        # HELLO is replaceable maintenance state. Do not build a backlog while
+        # regulation says the node cannot transmit, and do not queue it behind a
+        # CRYST snapshot that already carries stronger routing-state identity.
+        if (
+            self.sim.transmit_wait_ms(self.id) <= 1e-9
+            and not any(
+                queued.packet.kind in ("HELLO", "CRYST")
+                for queued in self.txq
+            )
+        ):
+            packet = Packet(
+                "HELLO",
+                self.next_packet_id(),
+                wire_dtpk_size=DTPK_HELLO_SIZE,
+                sender_sequence=self.origin_sequence,
+                route_version=self.route_version,
+            )
+            self.sim.metrics.hello_tx += 1
+            self.enqueue(TxRequest(packet, None, lcmm_ack=False))
+
+        period = self._effective_hello_period_ms()
         jitter = max(0.0, min(0.95, self.profile.hello_jitter_fraction))
         if jitter:
             period *= self.sim.rng.uniform(1.0 - jitter, 1.0 + jitter)
@@ -165,8 +193,7 @@ class Node:
     def _expiry_tick(self, gen: int) -> None:
         if gen != self.generation or not self.up or self.crashed:
             return
-        expiry = self.profile.neighbor_expiry_ms
-        assert expiry is not None
+        expiry = self._effective_neighbor_expiry_ms()
         stale = [
             neighbor
             for neighbor, last in self.last_heard.items()
@@ -294,6 +321,21 @@ class Node:
     # TX queue / reliability
     # ------------------------------------------------------------------
     def enqueue(self, req: TxRequest) -> None:
+        # HELLO and CRYST are replaceable full-state control. Under duty/backoff
+        # pressure, retaining old snapshots only delays the newest route state.
+        if req.packet.kind == "HELLO":
+            if any(
+                queued.packet.kind in ("HELLO", "CRYST")
+                for queued in self.txq
+            ):
+                return
+        elif req.packet.kind == "CRYST":
+            self.txq = deque(
+                queued
+                for queued in self.txq
+                if queued.packet.kind not in ("HELLO", "CRYST")
+            )
+
         if req.priority or req.packet.kind in ("ACK", "NACK"):
             self.txq.appendleft(req)
         else:
