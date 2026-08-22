@@ -58,7 +58,9 @@ struct HostSerial {
 extern HostSerial Serial;
 
 uint32_t millis();
+uint64_t micros();
 void delay(uint32_t ms);
+void delayMicroseconds(uint32_t us);
 void randomSeed(uint64_t seed);
 long random(long min_value, long max_value);
 long random(long max_value);
