@@ -1,12 +1,46 @@
 # DTProtocol simulator
 
-Discrete-event simulator for the current DTPK crystallization/routing algorithm.
+Discrete-event simulator for the current DTPK crystallization/routing algorithm and proposed replacements.
 
 The goal is to separate three questions:
 
 1. **Is the current C++ implementation correct?**
 2. **If implementation bugs are removed, is the crystallization algorithm itself correct?**
-3. **What additions are required for robust convergence under loss, delay, partitions and reconnects?**
+3. **What additions are required for robust convergence under loss, delay, partitions, movement and reconnects?**
+
+## One environment, two protocol adapters
+
+The simulator now has a single protocol-independent physical core in `environment.py`.
+
+It owns:
+
+- event time and deterministic same-time priority;
+- topology and link state;
+- independent node/link failure epochs;
+- piecewise-linear continuous node motion;
+- whole-airtime range validation;
+- LoRa airtime;
+- RF loss RNG;
+- latency/jitter;
+- later, shared collision/LBT/channel occupancy modelling.
+
+Two protocol implementations attach to that same environment:
+
+- **Python theoretical adapter** — `Simulator` + `Node`, used for rapidly trying protocol rules and finding counterexamples;
+- **real C++ adapter** — `CppNetwork` + one `dtprotocol_host_node` subprocess per simulated device, executing the real `DTPK.cpp`, `CrystDatabase.cpp` and `lcmm.cpp`.
+
+The environment RNG is separate from protocol RNG. Environmental failures are scheduled with higher priority than RF/protocol callbacks, so a failure can occur during any packet/ACK airtime and does not depend on the current firmware state.
+
+`scenario.py` defines backend-independent, JSON-serializable scenarios. The same object can be replayed as:
+
+```python
+scenario = Scenario.line(3, seed=42)
+
+python_net = scenario.build("python", profile=Profile.intended())
+cpp_net = scenario.build("cpp")
+```
+
+This is the preferred way to do differential testing. Topology, trajectories, failures and application demand are identical; only the node protocol implementation changes.
 
 ## Profiles
 
@@ -25,15 +59,32 @@ python dtpsim.py monte-carlo --profile current --mc-scenario static-line --nodes
 
 Add `--trace` to a single scenario for a replayable event trace.
 
+## Real C++ backend
+
+Build it with:
+
+```bash
+cmake -S simulator/cpp -B simulator/cpp/build
+cmake --build simulator/cpp/build
+python -m pytest simulator/tests/test_cpp_backend.py simulator/tests/test_cpp_environment.py -q -rxX
+```
+
+Each emulated device is a separate process because the production stack uses process-global singletons. Python acts as the RF environment. This gives every node independent globals, heap, clock/reboot lifetime and firmware state while keeping failures/mobility external.
+
+Sanitizers are also exercised in CI. On the reference implementation that job is currently informational because known memory-lifetime bugs are expected; it should be a hard gate for `protocol-v2`.
+
 ## What is modeled
 
-- CRYST full-vector advertisements and the current split-horizon rule.
-- Crystallization quiet-period sessions and session garbage collection.
-- Route selection by minimum hop count.
-- Data forwarding, end-to-end DTPK ACK/NACK, and per-hop LCMM-style retries.
-- Packet loss, ACK loss, latency/jitter, link partitions/healing, node restart hooks.
-- LoRa airtime approximation and the 255-byte packet ceiling.
-- Important current implementation defects as profile switches.
+- CRYST full-vector advertisements and the current split-horizon rule;
+- crystallization quiet-period sessions and session garbage collection;
+- route selection by minimum hop count;
+- data forwarding, end-to-end DTPK ACK/NACK, and per-hop LCMM-style retries;
+- packet/ACK loss, latency/jitter, partitions/healing, node failures/reboots;
+- continuous moving-node geometry over the complete RF airtime;
+- LoRa airtime approximation and the 255-byte packet ceiling;
+- important current implementation defects as Python profile switches.
+
+Shared-channel collision/hidden-terminal/CAD/LBT modelling is the next major physical-layer addition.
 
 ## Correctness properties checked by `audit()`
 
@@ -45,22 +96,9 @@ For a stable physical graph:
 - following next-hop pointers reaches the destination rather than a loop;
 - path stretch can be measured when non-shortest routing is intentionally allowed later.
 
-These checks are useful for randomized counterexample search. A later step should add an explicit-state model checker (small `n`, all packet reorderings/failures) or a TLA+/PlusCal model for actual safety/liveness arguments.
-
-## Planned C++-in-the-loop backend
-
-The simulator deliberately separates the event/radio network from node protocol behavior. A second backend can compile the real DTProtocol C++ against a shim implementing:
-
-- Arduino `millis()/delay()/random()` from simulated time;
-- a fake RadioLib SX1262;
-- fake interrupts / TX-complete callbacks;
-- radio delivery through the same Python topology/event engine.
-
-That permits the same scenario and random seed to be run against the Python model and the actual C++ implementation.
+Simulation is useful for finding counterexamples but is not a proof. Small-state exhaustive/model-checking work or a TLA+/PlusCal model is still desirable for actual safety/liveness arguments.
 
 ## Protocol-level validation strategy
-
-Simulation is not a proof. The simulator is intended to discover counterexamples and quantify behavior. The conceptual protocol should be judged against explicit properties:
 
 ### Safety
 
@@ -75,12 +113,12 @@ Assuming the physical topology stops changing and packet loss is bounded:
 
 - every reachable node is eventually learned;
 - every unreachable node is eventually removed;
-- the routing state eventually stops changing (or reaches a bounded periodic refresh state);
+- routing state eventually stabilizes (apart from bounded repair refreshes);
 - after partition healing, routes eventually become usable again.
 
 ### Optimality
 
-After convergence, selected hop count should equal graph shortest-path distance (unless a richer radio-quality metric is intentionally introduced).
+After convergence, selected hop count should equal graph shortest-path distance unless a richer link metric is deliberately introduced.
 
 ### Crucial distinction
 
