@@ -31,6 +31,9 @@ class NodeSpec:
     node_id: int
     position: Tuple[float, float] = (0.0, 0.0)
     k_limit: int = 20
+    # Local optimization hint only. In the Python v2 backend this currently
+    # shortens that node's HELLO period; it is not a route-safety input.
+    mobile_hint: bool = False
 
 
 @dataclass(frozen=True)
@@ -115,13 +118,21 @@ class Scenario:
 
         for node in self.nodes:
             if backend == "cpp":
+                # The same field is serialized for both backends. The real C++
+                # adapter will consume it once the corresponding DTPK initializer
+                # option is wired; until then C++ behavior remains the safe base
+                # protocol rather than emulating a different routing rule.
                 network.add_node(
                     node.node_id,
                     k_limit=node.k_limit,
                     position=node.position,
                 )
             else:
-                network.add_node(node.node_id, position=node.position)
+                network.add_node(
+                    node.node_id,
+                    position=node.position,
+                    mobile_hint=node.mobile_hint,
+                )
 
         for link in self.links:
             network.add_link(
@@ -193,7 +204,9 @@ class Scenario:
         radio_contention: bool = False,
         radio_profile: RadioProfileName = "unconstrained",
         strict_duty_cycle: bool = False,
+        mobile_nodes: Tuple[int, ...] = (),
     ) -> "Scenario":
+        mobile = set(mobile_nodes)
         scenario = Scenario(
             seed=seed,
             radio_contention=radio_contention,
@@ -201,7 +214,11 @@ class Scenario:
             strict_duty_cycle=strict_duty_cycle,
         )
         scenario.nodes = [
-            NodeSpec(i, (float(i - 1) * spacing, 0.0))
+            NodeSpec(
+                i,
+                (float(i - 1) * spacing, 0.0),
+                mobile_hint=i in mobile,
+            )
             for i in range(1, n + 1)
         ]
         scenario.links = [
