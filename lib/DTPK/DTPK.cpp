@@ -98,8 +98,7 @@ bool DTPK::hasSeenData(uint16_t originalSender, uint16_t sourceSequence,
 {
     for (const PacketIdentity &entry : _recentData)
     {
-        if (entry.valid &&
-            entry.originalSender == originalSender &&
+        if (entry.originalSender == originalSender &&
             entry.sourceSequence == sourceSequence &&
             entry.id == id)
             return true;
@@ -116,7 +115,6 @@ void DTPK::rememberData(uint16_t originalSender, uint16_t sourceSequence,
     entry.originalSender = originalSender;
     entry.sourceSequence = sourceSequence;
     entry.id = id;
-    entry.valid = true;
     _recentDataNext = (_recentDataNext + 1) % RECENT_DATA_CACHE_SIZE;
 }
 
@@ -125,8 +123,7 @@ bool DTPK::hasSeenSeqRequest(uint16_t originalSender, uint16_t id,
 {
     for (const SeqRequestIdentity &entry : _recentSeqRequests)
     {
-        if (entry.valid &&
-            entry.originalSender == originalSender &&
+        if (entry.originalSender == originalSender &&
             entry.id == id &&
             entry.destination == destination &&
             entry.requestedSequence == requestedSequence)
@@ -145,7 +142,6 @@ void DTPK::rememberSeqRequest(uint16_t originalSender, uint16_t id,
     entry.id = id;
     entry.destination = destination;
     entry.requestedSequence = requestedSequence;
-    entry.valid = true;
     _recentSeqRequestNext =
         (_recentSeqRequestNext + 1) % RECENT_SEQ_REQ_CACHE_SIZE;
 }

@@ -98,19 +98,19 @@ private:
 
     struct PacketIdentity
     {
+        // Node id 0 is BROADCAST and cannot originate application DATA, so it
+        // is also the empty-entry marker.
         uint16_t originalSender = 0;
         uint16_t sourceSequence = 0;
         uint16_t id = 0;
-        bool valid = false;
     };
 
     struct SeqRequestIdentity
     {
-        uint16_t originalSender = 0;
+        uint16_t originalSender = 0; // zero marks an unused ring entry
         uint16_t id = 0;
         uint16_t destination = 0;
         uint16_t requestedSequence = 0;
-        bool valid = false;
     };
 
     struct NeighborState
