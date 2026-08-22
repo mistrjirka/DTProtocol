@@ -72,12 +72,12 @@ int main(int argc, char **argv) {
     assert(mac->getNoiseFloorOfChannel(expected_channels) == 255);
 
     const uint32_t neighborExpiry =
-        mac->recommendedNeighborExpiryMs(30'000, 12'000, 1'000);
+        mac->recommendedNeighborExpiryMs(60'000, 12'000, 1'000);
     if (strict_duty && recommended_duty == 1) {
         assert(neighborExpiry > 180'000);
         assert(neighborExpiry < 190'000);
     } else {
-        assert(neighborExpiry == 30'000);
+        assert(neighborExpiry == 60'000);
     }
 
     const unsigned char payload[] = {1, 2, 3};
@@ -85,22 +85,58 @@ int main(int argc, char **argv) {
     mac->setMode(SENDING, true);
     assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_BUSY);
 
+    // RSSI is the default CCA. A loud carrier must defer without running CAD.
     mac->setMode(RECEIVING, true);
-    radio.scan_channel_result = RADIOLIB_LORA_DETECTED;
+    assert(!mac->isCadCarrierSenseEnabled());
+    radio.rssi = -90;
+    const int scansBeforeRssiBusy = radio.scan_channel_calls;
     assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_CHANNEL_BUSY_TIMEOUT);
+    assert(radio.scan_channel_calls == scansBeforeRssiBusy);
     assert(mac->getTransmitWaitMs() > 0);
     delay(mac->getTransmitWaitMs());
+    radio.rssi = -120;
+
+    // If RX_DONE arrives while RSSI is being sampled, CCA must defer and leave
+    // the wake flag for loop() instead of erasing it at TX start.
+    const int readsBeforeCcaRx = radio.read_data_calls;
+    radio.packet_length = sizeof(MACHeader);
+    radio.trigger_rx_on_next_rssi = true;
+    assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_CHANNEL_BUSY_TIMEOUT);
+    mac->loop();
+    assert(radio.read_data_calls == readsBeforeCcaRx + 1);
+    assert(mac->getMode() == RECEIVING);
+    delay(mac->getTransmitWaitMs());
+
+    // CAD is optional and supplementary. When explicitly enabled, a detected
+    // matching LoRa signal fails closed. The stub models the recommended
+    // 4-symbol CAD plus ~0.5 symbol post-processing: ~18.432 ms at SF9/BW125.
+    mac->setCadCarrierSenseEnabled(true);
+    radio.scan_channel_result = RADIOLIB_LORA_DETECTED;
+    const int scansBeforeCad = radio.scan_channel_calls;
+    const uint64_t cadStartUs = micros();
+    assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_CHANNEL_BUSY_TIMEOUT);
+    assert(radio.scan_channel_calls == scansBeforeCad + 1);
+    assert(radio.last_cad_duration_us >= 18'000);
+    assert(radio.last_cad_duration_us <= 19'000);
+    assert(micros() - cadStartUs >= radio.last_cad_duration_us);
+    assert(mac->getMode() == RECEIVING);
+    delay(mac->getTransmitWaitMs());
     radio.scan_channel_result = RADIOLIB_CHANNEL_FREE;
+    mac->setCadCarrierSenseEnabled(false);
 
     radio.start_transmit_result = -42;
     assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_RADIO_ERROR);
     assert(mac->getMode() == RECEIVING);
 
     radio.start_transmit_result = RADIOLIB_ERR_NONE;
+    const uint64_t busyBeforeTx = radio.modeled_busy_wait_us;
     assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_OK);
     assert(mac->getMode() == SENDING);
     assert(radio.dio1_action != nullptr);
+    assert(radio.modeled_busy_wait_us >= busyBeforeTx + 126);
 
+    // TX completion is classified from the radio IRQ register, not mutable
+    // software state. Deliberately perturb software state before loop().
     const int finishBefore = radio.finish_transmit_calls;
     radio.irq_flags = RADIOLIB_SX126X_IRQ_TX_DONE;
     radio.dio1_action();
@@ -109,6 +145,7 @@ int main(int argc, char **argv) {
     assert(radio.finish_transmit_calls == finishBefore + 1);
     assert(mac->getMode() == RECEIVING);
 
+    // RX_DONE is likewise classified by the hardware IRQ bits.
     const int readsBefore = radio.read_data_calls;
     radio.packet_length = sizeof(MACHeader);
     radio.irq_flags = RADIOLIB_SX126X_IRQ_RX_DONE;
@@ -118,14 +155,17 @@ int main(int argc, char **argv) {
     assert(radio.read_data_calls == readsBefore + 1);
     assert(mac->getMode() == RECEIVING);
 
-    const int clearBefore = radio.clear_irq_calls;
-    const int readsBeforeCad = radio.read_data_calls;
+    // RadioLib 6.x does not expose clearIrqStatus publicly. For a stray CAD or
+    // error wakeup the MAC must restore RX via startReceive(), which remaps and
+    // clears IRQ state through the public driver path.
+    const int rxStartsBeforeStray = radio.start_receive_calls;
+    const int readsBeforeStray = radio.read_data_calls;
     radio.irq_flags = RADIOLIB_SX126X_IRQ_CAD_DONE;
     radio.dio1_action();
-    mac->setMode(RECEIVING, false);
     mac->loop();
-    assert(radio.clear_irq_calls == clearBefore + 1);
-    assert(radio.read_data_calls == readsBeforeCad);
+    assert(radio.start_receive_calls == rxStartsBeforeStray + 1);
+    assert(radio.read_data_calls == readsBeforeStray);
+    assert(radio.irq_flags == 0);
     assert(mac->getMode() == RECEIVING);
 
     const uint32_t wait = mac->getTransmitWaitMs();
