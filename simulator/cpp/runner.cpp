@@ -49,6 +49,11 @@ void done() {
     std::cout << "DONE\n" << std::flush;
 }
 
+void service_protocol_once(bool initialized) {
+    if (initialized)
+        DTPK::getInstance()->loop();
+}
+
 } // namespace
 
 int main() {
@@ -113,7 +118,7 @@ int main() {
                 uint64_t now = 0;
                 in >> now;
                 hostsim::set_time_ms(now);
-                if (initialized) DTPK::getInstance()->loop();
+                service_protocol_once(initialized);
                 done();
             } else if (command == "INJECT") {
                 uint64_t now = 0;
@@ -124,12 +129,20 @@ int main() {
                 bool accepted = hostsim::inject_frame(
                     static_cast<uint16_t>(sender), static_cast<uint16_t>(target), hex_decode(hex));
                 std::cout << "INJECTED " << (accepted ? 1 : 0) << '\n';
+                // Real firmware returns to its main loop immediately after the
+                // radio callback. Do the same here so packet processing and
+                // control replies are not quantized by CppNetwork::tick_ms.
+                if (accepted)
+                    service_protocol_once(initialized);
                 done();
             } else if (command == "PHYDONE") {
                 uint64_t now = 0, token = 0;
                 in >> now >> token;
                 hostsim::set_time_ms(now);
                 hostsim::phy_done(token);
+                // TX-done callbacks can hand an ACKed DATA packet upward or
+                // release LCMM. Service that work in the same firmware turn.
+                service_protocol_once(initialized);
                 done();
             } else if (command == "SEND") {
                 uint64_t now = 0;
@@ -148,6 +161,9 @@ int main() {
                                   << ' ' << ping << '\n';
                     });
                 std::cout << "SENDID " << id << '\n';
+                // Application code and protocol loop run back-to-back on the
+                // MCU; do not inject an artificial <=50 ms send-start delay.
+                service_protocol_once(initialized);
                 done();
             } else if (command == "ROUTES") {
                 uint64_t now = 0;
