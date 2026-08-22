@@ -72,8 +72,6 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data,
                       uint8_t size, uint32_t) {
     if (state_ == SENDING) return MAC_SEND_BUSY;
 
-    // Explicit test injection overrides policy so contracts can exercise fatal
-    // paths even if a previous successful frame established an off-time.
     if (g_next_send_result != MAC_SEND_OK) {
         const uint8_t result = g_next_send_result;
         g_next_send_result = MAC_SEND_OK;
@@ -106,6 +104,11 @@ uint32_t MAC::getTransmitWaitMs() const {
     return std::max(
         remaining_wait(g_forced_wait_until_ms),
         remaining_wait(g_duty_until_ms));
+}
+
+uint8_t MAC::getFallbackDutyCyclePercent() const {
+    const float clamped = std::max(0.0f, std::min(100.0f, g_duty_cycle_percent));
+    return static_cast<uint8_t>(std::lround(clamped));
 }
 
 void MAC::loop() {}
