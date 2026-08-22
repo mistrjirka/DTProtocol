@@ -3,6 +3,8 @@
 
 #include <Arduino.h>
 #include <RadioLib.h>
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include "generalsettings.h"
@@ -114,15 +116,38 @@ public:
 
   uint32_t getTransmitWaitMs() const;
 
-  // Neighbor liveness must tolerate the longest legal silence a peer can incur
-  // after transmitting a full-size frame. `maxHelloGapMs` is the largest normal
-  // HELLO period including jitter. Any packet refreshes liveness, so one such
-  // duty off-time plus the next HELLO gap is a conservative bound even while
-  // chunked CRYST/data traffic is active.
   uint32_t recommendedNeighborExpiryMs(
       uint32_t baseMs,
       uint32_t maxHelloGapMs,
-      uint32_t schedulerMarginMs = 1000) const;
+      uint32_t schedulerMarginMs = 1000) const
+  {
+    if (dutyCyclePercent == 0)
+      return baseMs;
+
+    const float airtimeMs = MathExtension.timeOnAir(
+        MAX_PACKET_SIZE,
+        DEFAULT_PREAMBLE_LENGTH,
+        static_cast<uint8_t>(spreading_factor),
+        bandwidth,
+        static_cast<uint8_t>(coding_rate));
+    if (!(airtimeMs > 0.0f) || !std::isfinite(airtimeMs))
+      return baseMs;
+
+    // After a legal full-size transmission a device can remain silent for
+    // airtime*(100/duty - 1). Any packet refreshes liveness, so adding the
+    // maximum normal HELLO gap and one scheduler margin is conservative even
+    // for chunked CRYST/data traffic. Clamp below signed-millis half range so
+    // wrap-safe deadline arithmetic remains valid.
+    const double offTimeMs =
+        static_cast<double>(airtimeMs) *
+        (100.0 / static_cast<double>(dutyCyclePercent) - 1.0);
+    const double required =
+        offTimeMs + static_cast<double>(maxHelloGapMs) +
+        static_cast<double>(schedulerMarginMs);
+    const uint32_t bounded = static_cast<uint32_t>(std::min<double>(
+        std::ceil(required), static_cast<double>(0x7fffffffu)));
+    return std::max(baseMs, bounded);
+  }
 
   void handlePacket();
   uint8_t sendData(uint16_t target, unsigned char *data,
