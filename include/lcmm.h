@@ -133,6 +133,11 @@ public:
   void loop();
   bool isSending();
 
+  // Why the latest sendPacketSingle() call returned 0. This lets the routing
+  // layer distinguish a temporary carrier/duty backoff from a real radio or
+  // allocation failure without changing the existing packet-ID return API.
+  uint8_t getLastSendResult() const { return lastSendResult; }
+
 private:
   static bool sending;
   static void ReceivePacket(MACPacket *packet, uint16_t size, uint32_t correct);
@@ -152,6 +157,7 @@ private:
 
   uint32_t lastTick;
   uint32_t packetSendStart;
+  uint8_t lastSendResult;
 
   LCMM(DataReceivedCallback dataReceived,
        AcknowledgmentCallback TransmissionComplete);
