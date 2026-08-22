@@ -4,9 +4,8 @@ import json
 from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Literal, Optional, Tuple
 
-from cpp_sim_adapter import CppSimNetwork
 from model import Profile
-from simulator import Simulator
+from shared_backends import SharedCppNetwork, SharedPythonNetwork
 
 
 BackendName = Literal["python", "cpp"]
@@ -63,7 +62,7 @@ class Scenario:
     Topology, continuous trajectories, environmental failures and application
     demand are defined before protocol execution. ``build("python")`` and
     ``build("cpp")`` attach different protocol implementations to the same
-    EnvironmentKernel semantics.
+    EnvironmentKernel semantics and keyed physical randomness.
     """
 
     seed: int = 1
@@ -83,9 +82,16 @@ class Scenario:
         tick_ms: float = 50.0,
     ):
         if backend == "python":
-            network = Simulator(seed=self.seed, profile=profile or Profile.current())
+            network = SharedPythonNetwork(
+                seed=self.seed,
+                profile=profile or Profile.current(),
+            )
         elif backend == "cpp":
-            network = CppSimNetwork(seed=self.seed, binary=binary, tick_ms=tick_ms)
+            network = SharedCppNetwork(
+                seed=self.seed,
+                binary=binary,
+                tick_ms=tick_ms,
+            )
         else:
             raise ValueError(f"unknown backend {backend!r}")
 
