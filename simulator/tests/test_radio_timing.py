@@ -14,6 +14,7 @@ from radio_timing import (
     SX1262_STBY_RC_TO_TX_MS,
     rssi_cca_duration_ms,
     rssi_sample_offsets_ms,
+    rx_packet_read_ms,
     rx_rearm_ms,
     spi_wire_time_ms,
     tx_startup_ms,
@@ -95,6 +96,17 @@ def test_tx_startup_includes_frame_sized_spi_transfer_and_radio_ramp():
     assert full > short
     assert full - short == pytest.approx(
         spi_wire_time_ms(255 - 20), abs=1e-12
+    )
+
+
+def test_rx_buffer_read_scales_with_received_frame_size():
+    tiny = rx_packet_read_ms(11)
+    full = rx_packet_read_ms(255)
+    assert 0.09 < tiny < 0.12
+    assert 1.0 < full < 1.2
+    assert full > tiny
+    assert full - tiny == pytest.approx(
+        spi_wire_time_ms(255 - 11), abs=1e-12
     )
 
 
