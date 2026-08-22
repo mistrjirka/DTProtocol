@@ -3,14 +3,14 @@ from __future__ import annotations
 """Timing helpers for the SX1262 + RadioLib 6.0 path used by DTProtocol.
 
 SPI byte counts and transaction counts are derived from RadioLib 6.0's actual
-``SX126x``/``Module`` paths.  RadioLib uses 2 MHz SPI by default and enables
+``SX126x``/``Module`` paths. RadioLib uses 2 MHz SPI by default and enables
 ``RADIOLIB_SPI_PARANOID`` by default, so verified stream calls are followed by a
 GetStatus transaction.
 
 Absolute wall time cannot be cycle-exact from documentation alone: RadioLib
 waits for SX1262 BUSY around every stream transaction and Semtech publishes
 explicit typical BUSY durations for mode transitions, but not deterministic
-processing time for every configuration command.  The helpers below therefore
+processing time for every configuration command. The helpers below therefore
 model:
 
 * exact SPI wire bytes at the declared 2 MHz default;
@@ -38,7 +38,9 @@ RSSI_CCA_SAMPLE_SPACING_MS = 10.0
 RADIOLIB6_VERIFY_STATUS_BYTES = 3
 RADIOLIB6_VERIFIED_STREAM_TRANSACTIONS = 2  # command + paranoid GetStatus
 
-RSSI_SPI_BYTES_PER_SAMPLE = 1 + 1 + 3 + RADIOLIB6_VERIFY_STATUS_BYTES  # 8
+# SPIreadStream(GET_RSSI_INST, 1) clocks command + status/NOP + one RSSI byte,
+# then default verify=True adds the three-byte paranoid GetStatus transaction.
+RSSI_SPI_BYTES_PER_SAMPLE = 1 + 1 + 1 + RADIOLIB6_VERIFY_STATUS_BYTES  # 6
 RSSI_SPI_TRANSACTIONS_PER_SAMPLE = 2
 
 GET_PACKET_TYPE_SPI_BYTES = 1 + 1 + 1 + RADIOLIB6_VERIFY_STATUS_BYTES  # 6
@@ -145,8 +147,16 @@ START_RECEIVE_SPI_TRANSACTIONS = (
 )  # 14
 FINISH_TRANSMIT_SPI_BYTES = CLEAR_IRQ_SPI_BYTES + SET_STANDBY_SPI_BYTES  # 11
 FINISH_TRANSMIT_SPI_TRANSACTIONS = CLEAR_IRQ_SPI_TRANSACTIONS + SET_STANDBY_SPI_TRANSACTIONS  # 4
-RX_REARM_AFTER_TX_SPI_BYTES = FINISH_TRANSMIT_SPI_BYTES + START_RECEIVE_SPI_BYTES  # 67
-RX_REARM_AFTER_TX_SPI_TRANSACTIONS = FINISH_TRANSMIT_SPI_TRANSACTIONS + START_RECEIVE_SPI_TRANSACTIONS  # 18
+# Production MAC::loop reads the IRQ register before classifying TX_DONE, then
+# RadioLib finishTransmit() clears IRQs/enters standby and MAC re-arms RX.
+RX_REARM_AFTER_TX_SPI_BYTES = (
+    GET_IRQ_STATUS_SPI_BYTES + FINISH_TRANSMIT_SPI_BYTES + START_RECEIVE_SPI_BYTES
+)  # 74
+RX_REARM_AFTER_TX_SPI_TRANSACTIONS = (
+    GET_IRQ_STATUS_SPI_TRANSACTIONS
+    + FINISH_TRANSMIT_SPI_TRANSACTIONS
+    + START_RECEIVE_SPI_TRANSACTIONS
+)  # 20
 RX_REARM_AFTER_READ_SPI_BYTES = START_RECEIVE_SPI_BYTES  # 56
 RX_REARM_AFTER_READ_SPI_TRANSACTIONS = START_RECEIVE_SPI_TRANSACTIONS  # 14
 
