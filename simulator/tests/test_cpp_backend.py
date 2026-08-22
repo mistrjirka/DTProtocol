@@ -88,7 +88,9 @@ def test_real_cpp_cryst_v2_clears_triangle_count_to_infinity_partition():
         # through HELLO expiry and must not count to infinity through 1-2-3.
         net.set_link(1, 4, False)
         net.set_link(3, 4, False)
-        net.run(110_000)
+        # Topology withdrawal is intentionally tied to hard inactivity, not
+        # a finite number of unanswered probes.
+        net.run(210_000)
 
         for node in (1, 2, 3):
             assert 4 not in net.routes(node), (node, net.routes(node))
@@ -108,10 +110,34 @@ def test_real_cpp_cryst_v2_seq_request_recovers_longer_only_path():
         # The old two-hop route disappears. The only surviving route is longer
         # and is initially infeasible under the old destination generation.
         net.set_link(2, 4, False)
-        # With conservative liveness probing, direct-neighbor withdrawal and
-        # the subsequent SEQ_REQ repair are intentionally not instantaneous.
-        # The route should still converge well before hard expiry.
-        net.run(130_000)
+        # Failed probes are not authoritative on lossy half-duplex RF. The
+        # direct neighbor is withdrawn by hard inactivity, then SEQ_REQ makes
+        # the legitimate longer replacement route feasible.
+        net.run(210_000)
 
         assert net.routes(1).get(4) == (3, 3), net.routes(1)
         assert net.routes(3).get(4) == (5, 2), net.routes(3)
+
+
+def test_real_cpp_transient_direct_fade_does_not_commit_false_withdrawal():
+    """Probe loss creates suspicion, but only hard inactivity changes topology."""
+    with CppNetwork(seed=424, tick_ms=100) as net:
+        for node in (1, 2, 3):
+            net.add_node(node)
+        net.add_link(1, 2, jitter_ms=0)
+        net.add_link(2, 3, jitter_ms=0)
+        net.run(60_000)
+        assert net.routes(1).get(3) == (2, 2)
+
+        # This fade is long enough for several reliable liveness probes to fail
+        # but shorter than the 120 s hard inactivity timeout. The previous
+        # two-failed-probes rule withdrew node 3 around t=100 s.
+        net.set_link(2, 3, False)
+        net.run(110_000)
+        assert net.routes(2).get(3) == (3, 1)
+        assert net.routes(1).get(3) == (2, 2)
+
+        net.set_link(2, 3, True)
+        net.run(150_000)
+        assert net.routes(2).get(3) == (3, 1)
+        assert net.routes(1).get(3) == (2, 2)

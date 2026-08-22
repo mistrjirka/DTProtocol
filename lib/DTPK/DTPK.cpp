@@ -157,7 +157,6 @@ void DTPK::noteHeard(uint16_t neighbor)
         return;
     _lastHeard[neighbor] = _currentTime;
     _lastLivenessProbe.erase(neighbor);
-    _livenessProbeFailures.erase(neighbor);
 }
 
 void DTPK::expireNeighbours()
@@ -170,14 +169,11 @@ void DTPK::expireNeighbours()
         const uint16_t neighbor = entry.first;
         const uint32_t age =
             static_cast<uint32_t>(_currentTime - entry.second);
-        const auto failureIt = _livenessProbeFailures.find(neighbor);
-        const uint8_t failures = failureIt == _livenessProbeFailures.end()
-                                     ? 0
-                                     : failureIt->second;
-
-        if (age >= _neighborHardExpiryMs ||
-            (age >= NEIGHBOR_SUSPECT_MS &&
-             failures >= LIVENESS_PROBE_MAX_FAILURES))
+        // In a lossy half-duplex network, even several unanswered reliable
+        // probes are not proof that the neighbour disappeared.  Probes repair
+        // state and can prove liveness when they succeed; only sustained lack
+        // of any valid packet is allowed to withdraw topology.
+        if (age >= _neighborHardExpiryMs)
         {
             stale.push_back(neighbor);
             continue;
@@ -203,7 +199,6 @@ void DTPK::expireNeighbours()
     {
         _lastHeard.erase(neighbor);
         _lastLivenessProbe.erase(neighbor);
-        _livenessProbeFailures.erase(neighbor);
         _neighborState.erase(neighbor);
         _crystAssemblies.erase(neighbor);
 

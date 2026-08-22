@@ -85,7 +85,6 @@ private:
     static constexpr uint32_t NEIGHBOR_SUSPECT_MS = 30000;
     static constexpr uint32_t NEIGHBOR_HARD_EXPIRY_MS = 120000;
     static constexpr uint32_t LIVENESS_PROBE_COOLDOWN_MS = 10000;
-    static constexpr uint8_t LIVENESS_PROBE_MAX_FAILURES = 2;
 
     static constexpr uint32_t MAINTENANCE_PERIOD_MS = 1000;
     static constexpr uint32_t CRYST_JITTER_MIN_MS = 200;
@@ -172,7 +171,6 @@ private:
 
     std::unordered_map<uint16_t, uint32_t> _lastHeard;
     std::unordered_map<uint16_t, uint32_t> _lastLivenessProbe;
-    std::unordered_map<uint16_t, uint8_t> _livenessProbeFailures;
     // LCMM packet id -> direct neighbor. A successful hop ACK is itself proof
     // of liveness even if the subsequent CRYST response is lost.
     std::unordered_map<uint16_t, uint16_t> _livenessProbeByLcmmId;

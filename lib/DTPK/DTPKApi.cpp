@@ -156,12 +156,9 @@ void DTPK::receiveAck(uint16_t id, bool success)
     self->_currentTime = millis();
 
     if (success)
-    {
         self->noteHeard(neighbor);
-        return;
-    }
 
-    uint8_t &failures = self->_livenessProbeFailures[neighbor];
-    if (failures < 0xffu)
-        ++failures;
+    // A failed probe is only absence of evidence on a lossy half-duplex RF
+    // link. It must not become authoritative evidence that the neighbour is
+    // gone; hard inactivity expiry is the topology-changing criterion.
 }
