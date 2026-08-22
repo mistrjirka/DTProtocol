@@ -9,6 +9,7 @@ sys.path.insert(0, str(SIM_ROOT))
 
 from environment import EnvironmentKernel
 from radio_timing import (
+    AN1200_48_SF9_BW125_CAD4_MEASURED_MS,
     CAD_SCAN_FIXED_SPI_BYTES,
     CAD_SCAN_SPI_TRANSACTIONS,
     RADIOLIB6_BUSY_POLL_FLOOR_MS,
@@ -60,6 +61,18 @@ def test_sf9_symbol_cad_and_known_airtime_values():
     assert env.airtime_ms(20) == pytest.approx(226.304, abs=1e-6)
     assert env.airtime_ms(31) == pytest.approx(312.320, abs=1e-6)
     assert env.airtime_ms(255) == pytest.approx(1717.248, abs=1e-6)
+
+
+def test_semtech_measured_sf9_cad_reference_is_kept_distinct_from_generic_model():
+    env = EnvironmentKernel(sf=9, bandwidth_hz=125_000)
+    # AN1200.48's measured four-symbol SF9/BW125 CAD interval is ~4.67
+    # symbols. Keep this as a measured reference; the generic environment uses
+    # the datasheet N+~0.5-symbol model so it remains valid for arbitrary PHYs.
+    assert AN1200_48_SF9_BW125_CAD4_MEASURED_MS == pytest.approx(19.145)
+    assert AN1200_48_SF9_BW125_CAD4_MEASURED_MS > env.cad_duration_ms()
+    assert AN1200_48_SF9_BW125_CAD4_MEASURED_MS / env.symbol_time_ms() == pytest.approx(
+        4.674072265625, abs=1e-12
+    )
 
 
 @pytest.mark.parametrize("sf", range(5, 13))
