@@ -16,6 +16,8 @@ RadioProfileName = Literal[
     "eu869-high-duty",
 ]
 
+# These are available for strict compliance experiments. Region selection by
+# itself does not impose throttling on the practical/default simulator path.
 RADIO_PROFILE_DUTY_PERCENT = {
     "unconstrained": 0.0,
     "eu433": 10.0,
@@ -75,6 +77,7 @@ class Scenario:
     seed: int = 1
     radio_contention: bool = False
     radio_profile: RadioProfileName = "unconstrained"
+    strict_duty_cycle: bool = False
     nodes: List[NodeSpec] = field(default_factory=list)
     links: List[LinkSpec] = field(default_factory=list)
     trajectories: Dict[int, List[Tuple[float, float, float]]] = field(default_factory=dict)
@@ -91,10 +94,11 @@ class Scenario:
         tick_ms: float = 50.0,
     ):
         try:
-            duty_cycle_percent = RADIO_PROFILE_DUTY_PERCENT[self.radio_profile]
+            regional_duty = RADIO_PROFILE_DUTY_PERCENT[self.radio_profile]
         except KeyError as exc:
             raise ValueError(f"unknown radio_profile {self.radio_profile!r}") from exc
 
+        duty_cycle_percent = regional_duty if self.strict_duty_cycle else 0.0
         common = {
             "seed": self.seed,
             "radio_contention": self.radio_contention,
@@ -163,6 +167,7 @@ class Scenario:
             seed=raw.get("seed", 1),
             radio_contention=raw.get("radio_contention", False),
             radio_profile=raw.get("radio_profile", "unconstrained"),
+            strict_duty_cycle=raw.get("strict_duty_cycle", False),
             nodes=[NodeSpec(**x) for x in raw.get("nodes", [])],
             links=[LinkSpec(**x) for x in raw.get("links", [])],
             trajectories={
@@ -187,11 +192,13 @@ class Scenario:
         max_range: Optional[float] = None,
         radio_contention: bool = False,
         radio_profile: RadioProfileName = "unconstrained",
+        strict_duty_cycle: bool = False,
     ) -> "Scenario":
         scenario = Scenario(
             seed=seed,
             radio_contention=radio_contention,
             radio_profile=radio_profile,
+            strict_duty_cycle=strict_duty_cycle,
         )
         scenario.nodes = [
             NodeSpec(i, (float(i - 1) * spacing, 0.0))
