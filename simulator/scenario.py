@@ -123,14 +123,11 @@ class Scenario:
 
         for node in self.nodes:
             if backend == "cpp":
-                # The same field is serialized for both backends. The real C++
-                # adapter will consume it once the corresponding DTPK initializer
-                # option is wired; until then C++ behavior remains the safe base
-                # protocol rather than emulating a different routing rule.
                 network.add_node(
                     node.node_id,
                     k_limit=node.k_limit,
                     position=node.position,
+                    mobile_hint=node.mobile_hint,
                 )
             else:
                 network.add_node(

@@ -67,3 +67,20 @@ def test_wrong_mobile_labels_do_not_change_stable_route_result():
         for node in sorted(net_hinted.nodes)
     }
     assert hinted_routes == static_routes
+
+
+def test_cpp_scenario_wires_mobile_hint_to_real_dtpk():
+    static = Scenario(seed=804, nodes=[NodeSpec(1, mobile_hint=False)])
+    mobile = Scenario(seed=804, nodes=[NodeSpec(1, mobile_hint=True)])
+
+    net_static = static.build("cpp", tick_ms=50)
+    net_mobile = mobile.build("cpp", tick_ms=50)
+    try:
+        net_static.run(60_000)
+        net_mobile.run(60_000)
+        # Isolated nodes emit the same startup control state; the only intended
+        # difference is the 4 s versus 10 s HELLO maintenance cadence.
+        assert net_mobile.rf_metrics.tx_frames > net_static.rf_metrics.tx_frames
+    finally:
+        net_static.close()
+        net_mobile.close()

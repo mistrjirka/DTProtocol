@@ -124,9 +124,10 @@ class Profile:
             # not advertised and never participates in route safety/metrics.
             mobile_hello_period_ms=4_000,
             hello_jitter_fraction=0.20,
-            # Six nominal HELLO periods avoids false expiry/relearn cascades in
-            # larger half-duplex networks while still detecting hard failures.
-            neighbor_expiry_ms=60_000,
+            # Probe loss is not authoritative liveness evidence. The real-C++
+            # scale tests require a 120 s hard no-valid-packet timeout; shorter
+            # expiry caused false withdrawal waves in stable large networks.
+            neighbor_expiry_ms=120_000,
             session_gc_enabled=False,
             sequence_numbers=True,
             feasibility_condition=True,

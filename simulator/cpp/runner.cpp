@@ -77,6 +77,7 @@ int main() {
                 uint64_t seed = 1;
                 double duty_cycle_percent = 0.0;
                 uint32_t initial_duty_wait_ms = 0;
+                unsigned mobile_hint = 0;
                 in >> id >> k_limit >> seed;
                 if (!(in >> origin_sequence)) {
                     origin_sequence = static_cast<unsigned>(seed & 0xffffu);
@@ -92,6 +93,9 @@ int main() {
                     if (!(in >> initial_duty_wait_ms)) {
                         initial_duty_wait_ms = 0;
                         in.clear();
+                    } else if (!(in >> mobile_hint)) {
+                        mobile_hint = 0;
+                        in.clear();
                     }
                 }
                 node_id = static_cast<uint16_t>(id);
@@ -102,7 +106,8 @@ int main() {
                     initial_duty_wait_ms);
                 DTPK::initialize(
                     static_cast<uint8_t>(k_limit),
-                    static_cast<uint16_t>(origin_sequence == 0 ? 1 : origin_sequence));
+                    static_cast<uint16_t>(origin_sequence == 0 ? 1 : origin_sequence),
+                    mobile_hint != 0);
                 DTPK::getInstance()->setPacketReceivedCallback(
                     [](DTPKPacketGenericReceive *packet, uint16_t size) {
                         const size_t header = sizeof(DTPKPacketGenericReceive);

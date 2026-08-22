@@ -44,6 +44,7 @@ class CppNodeProcess:
         origin_sequence: int = 1,
         duty_cycle_percent: float = 0.0,
         initial_duty_wait_ms: float = 0.0,
+        mobile_hint: bool = False,
         binary: Optional[str] = None,
     ):
         self.node_id = node_id
@@ -51,6 +52,7 @@ class CppNodeProcess:
         self.k_limit = k_limit
         self.origin_sequence = int(origin_sequence) & 0xFFFF or 1
         self.duty_cycle_percent = float(duty_cycle_percent)
+        self.mobile_hint = bool(mobile_hint)
         self.events: List[Tuple[str, Tuple]] = []
         self.binary = binary or self.default_binary()
         self.proc = subprocess.Popen(
@@ -69,7 +71,7 @@ class CppNodeProcess:
         initial_wait = max(0, int(math.ceil(initial_duty_wait_ms)))
         self.command(
             f"INIT {node_id} {k_limit} {seed} {self.origin_sequence} "
-            f"{duty:.9f} {initial_wait}"
+            f"{duty:.9f} {initial_wait} {1 if self.mobile_hint else 0}"
         )
 
     @staticmethod
@@ -230,7 +232,7 @@ class CppNetwork(EnvironmentKernel):
         self.binary = binary
         self.tick_ms = float(tick_ms)
         self.nodes: Dict[int, CppNodeProcess] = {}
-        self._node_config: Dict[int, Tuple[int, int]] = {}
+        self._node_config: Dict[int, Tuple[int, int, bool]] = {}
         self._node_origin_sequence: Dict[int, int] = {}
         self._ticks_scheduled_until = 0.0
 
@@ -251,9 +253,10 @@ class CppNetwork(EnvironmentKernel):
         seed: Optional[int] = None,
         k_limit: int = 20,
         position: Tuple[float, float] = (0.0, 0.0),
+        mobile_hint: bool = False,
     ) -> None:
         actual_seed = self.seed * 1009 + node_id if seed is None else seed
-        self._node_config[node_id] = (actual_seed, k_limit)
+        self._node_config[node_id] = (actual_seed, k_limit, bool(mobile_hint))
         origin = self._initial_origin_sequence(actual_seed, node_id)
         self._node_origin_sequence[node_id] = origin
         self.register_node(node_id, up=True, position=position)
@@ -264,6 +267,7 @@ class CppNetwork(EnvironmentKernel):
             origin_sequence=origin,
             duty_cycle_percent=self.duty_cycle_percent,
             initial_duty_wait_ms=self.transmit_wait_ms(node_id),
+            mobile_hint=mobile_hint,
             binary=self.binary,
         )
 
@@ -299,7 +303,7 @@ class CppNetwork(EnvironmentKernel):
         config = self._node_config.get(node_id)
         if config is None:
             return
-        base_seed, k_limit = config
+        base_seed, k_limit, mobile_hint = config
         reboot_seed = base_seed + self.node_epoch.get(node_id, 0)
         origin = self._next_origin_sequence(
             self._node_origin_sequence.get(node_id, 1)
@@ -314,6 +318,7 @@ class CppNetwork(EnvironmentKernel):
             # Regulatory off-time belongs to the RF history and must not be
             # erased merely because the emulated MCU rebooted.
             initial_duty_wait_ms=self.transmit_wait_ms(node_id),
+            mobile_hint=mobile_hint,
             binary=self.binary,
         )
 

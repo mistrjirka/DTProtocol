@@ -87,7 +87,9 @@ def test_cryst_v2_sequence_request_recovers_longer_only_path_without_periodic_or
     old_seq = sim.nodes[4].origin_sequence
 
     sim.set_link(2, 4, False)
-    sim.run(180_000)
+    # v2 now matches the C++ 120 s hard-inactivity policy. The theoretical
+    # backend has no active liveness probe, so allow expiry + SEQ_REQ repair.
+    sim.run(280_000)
 
     assert sim.metrics.seq_req_satisfied >= 1
     assert sim.nodes[4].origin_sequence != old_seq
@@ -109,7 +111,7 @@ def test_cryst_v2_clears_triangle_count_to_infinity_partition_without_loops():
     sim.set_link(3, 4, False)
 
     loops = []
-    for t in range(105_000, 220_001, 5_000):
+    for t in range(105_000, 280_001, 5_000):
         sim.run(t)
         loops.extend(sim.audit()["loops"])
 

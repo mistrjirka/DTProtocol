@@ -37,7 +37,7 @@ def test_region_selection_does_not_throttle_or_change_liveness_by_default():
     for radio_profile in ("unconstrained", "eu433", "eu868", "eu869-high-duty"):
         net = _network(radio_profile)
         assert net.duty_cycle_percent == 0.0
-        assert net.profile.neighbor_expiry_ms == 60_000
+        assert net.profile.neighbor_expiry_ms == 120_000
 
 
 def test_strict_eu868_expands_liveness_but_is_explicit_opt_in():
@@ -45,7 +45,7 @@ def test_strict_eu868_expands_liveness_but_is_explicit_opt_in():
     strict = _network("eu868", strict=True)
 
     assert practical.duty_cycle_percent == 0.0
-    assert practical.profile.neighbor_expiry_ms == 60_000
+    assert practical.profile.neighbor_expiry_ms == 120_000
 
     assert strict.duty_cycle_percent == 1.0
     # Full-size SF9/BW125 frame ~=1.717 s. At 1% the following legal silence is
@@ -88,4 +88,4 @@ def test_practical_eu868_keeps_normal_crystallization_timing():
     assert net.routes(1).get(2) == (2, 1)
     assert net.routes(2).get(1) == (1, 1)
     assert net.rf_metrics.regulatory_deferrals == 0
-    assert net.profile.neighbor_expiry_ms == 60_000
+    assert net.profile.neighbor_expiry_ms == 120_000
