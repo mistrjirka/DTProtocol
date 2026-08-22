@@ -233,6 +233,7 @@ void DTPK::sendSeqRequest(uint16_t destination, uint16_t requestedSequence)
 }
 
 void DTPK::sendNackPacket(uint16_t target, uint16_t from, uint16_t id,
+                          uint16_t sourceSequence,
                           uint16_t failedDestination)
 {
     DTPKPacketHeader *packet =
@@ -242,6 +243,7 @@ void DTPK::sendNackPacket(uint16_t target, uint16_t from, uint16_t id,
 
     packet->type = NACK_NOTFOUND;
     packet->id = id;
+    packet->sourceSequence = sourceSequence;
     // For a NACK, originalSender identifies the destination that could not be
     // reached. This makes {packet id, intended destination} matching unambiguous.
     packet->originalSender = failedDestination;
@@ -261,7 +263,8 @@ void DTPK::sendNackPacket(uint16_t target, uint16_t from, uint16_t id,
         true);
 }
 
-void DTPK::sendAckPacket(uint16_t target, uint16_t from, uint16_t id)
+void DTPK::sendAckPacket(uint16_t target, uint16_t from, uint16_t id,
+                         uint16_t sourceSequence)
 {
     DTPKPacketHeader *packet =
         static_cast<DTPKPacketHeader *>(malloc(sizeof(DTPKPacketHeader)));
@@ -270,6 +273,7 @@ void DTPK::sendAckPacket(uint16_t target, uint16_t from, uint16_t id)
 
     packet->type = ACK;
     packet->id = id;
+    packet->sourceSequence = sourceSequence;
     packet->originalSender = MAC::getInstance()->getId();
     packet->finalTarget = target;
     packet->flags = DTPK_FLAG_NONE;

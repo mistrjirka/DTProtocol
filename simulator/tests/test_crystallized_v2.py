@@ -138,3 +138,37 @@ def test_cryst_v2_stable_network_stops_sending_full_cryst_but_keeps_hellos():
 
     assert sim.metrics.hello_tx > hello_before
     assert sim.metrics.cryst_tx == cryst_before
+
+
+
+def test_data_replay_identity_includes_sender_incarnation_after_reboot():
+    sim = Simulator(seed=177, profile=Profile.crystallized_v2())
+    add_nodes(sim, 2)
+    sim.add_link(1, 2, latency_ms=0, jitter_ms=0)
+    sim.run(100_000)
+
+    sender = sim.nodes[1]
+    receiver = sim.nodes[2]
+    sender.packet_counter = 20
+    first_id = sender.send_data(2, payload_size=8, e2e_ack=True, timeout_ms=20_000)
+    first_sequence = sender.origin_sequence
+    sim.run(130_000)
+    assert first_id == 20
+    assert sim.metrics.delivered_app == 1
+
+    sim.reboot_node(1, downtime_ms=500)
+    sim.run(210_000)
+    assert sender.origin_sequence != first_sequence
+    assert sender.routes[2].next_hop == 2
+
+    # Force the same volatile packet id used before reboot. Only the source
+    # incarnation distinguishes this new message from the old replay entry.
+    sender.packet_counter = first_id
+    second_id = sender.send_data(2, payload_size=9, e2e_ack=True, timeout_ms=20_000)
+    sim.run(240_000)
+
+    assert second_id == first_id
+    assert sim.metrics.delivered_app == 2
+    assert sim.metrics.duplicate_app == 0
+    assert sim.metrics.e2e_success >= 2
+    assert len(receiver.delivered_ids) == 2

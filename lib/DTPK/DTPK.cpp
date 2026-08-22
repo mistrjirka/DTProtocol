@@ -93,22 +93,28 @@ uint16_t DTPK::nextPacketId()
     return _packetCounter++;
 }
 
-bool DTPK::hasSeenData(uint16_t originalSender, uint16_t id) const
+bool DTPK::hasSeenData(uint16_t originalSender, uint16_t sourceSequence,
+                       uint16_t id) const
 {
     for (const PacketIdentity &entry : _recentData)
     {
-        if (entry.valid && entry.originalSender == originalSender && entry.id == id)
+        if (entry.valid &&
+            entry.originalSender == originalSender &&
+            entry.sourceSequence == sourceSequence &&
+            entry.id == id)
             return true;
     }
     return false;
 }
 
-void DTPK::rememberData(uint16_t originalSender, uint16_t id)
+void DTPK::rememberData(uint16_t originalSender, uint16_t sourceSequence,
+                        uint16_t id)
 {
-    if (hasSeenData(originalSender, id))
+    if (hasSeenData(originalSender, sourceSequence, id))
         return;
     PacketIdentity &entry = _recentData[_recentDataNext];
     entry.originalSender = originalSender;
+    entry.sourceSequence = sourceSequence;
     entry.id = id;
     entry.valid = true;
     _recentDataNext = (_recentDataNext + 1) % RECENT_DATA_CACHE_SIZE;
@@ -400,6 +406,7 @@ void DTPK::sendingDeamon()
                 reinterpret_cast<const DTPKPacketGeneric *>(request.packet);
             DTPKPacketWaiting waiting{};
             waiting.id = request.packet->id;
+            waiting.sourceSequence = generic->sourceSequence;
             waiting.target = generic->finalTarget;
             waiting.timeout =
                 request.timeout > 0 ? static_cast<uint32_t>(request.timeout) : 1u;

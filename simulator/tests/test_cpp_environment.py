@@ -99,3 +99,40 @@ def test_real_cpp_rebooted_destination_can_ack_without_reverse_route():
         net.run(start + 18_000)
         assert net.rf_metrics.rf_epoch_drops >= 1
         assert any(result == 1 for result, _ in net.app_acks(1)), net.nodes[1].events
+
+
+@requires_cpp
+def test_real_cpp_reboot_incarnation_prevents_false_duplicate_delivery():
+    """A rebooted sender may reuse a packet id; its new incarnation must differ."""
+    with MovingCppNetwork(seed=177, tick_ms=50) as net:
+        net.add_node(1)
+        net.add_node(2)
+        net.add_link(1, 2, latency_ms=0, jitter_ms=0)
+        net.run(60_000)
+
+        # Populate node 2's replay cache with ids that the rebooted process will
+        # deterministically reuse after startup control traffic.
+        for index in range(6):
+            net.send(
+                1,
+                2,
+                f"before-{index}".encode(),
+                timeout_ms=15_000,
+                e2e_ack=True,
+            )
+            net.run(net.now + 5_000)
+        before = [event for event in net.nodes[2].events if event[0] == "APP_RX"]
+        assert len(before) == 6
+
+        net.fail_node_at(net.now + 10_000, 1)
+        net.recover_node_at(net.now + 20_000, 1)
+        net.run(net.now + 100_000)
+        assert net.routes(1).get(2) == (2, 1)
+
+        net.send(1, 2, b"after-reboot", timeout_ms=15_000, e2e_ack=True)
+        net.run(net.now + 25_000)
+
+        received = [event for event in net.nodes[2].events if event[0] == "APP_RX"]
+        assert len(received) == 7, received
+        assert received[-1][1][3] == b"after-reboot".hex()
+        assert any(result == 1 for result, _ in net.app_acks(1))

@@ -105,6 +105,7 @@ uint16_t DTPK::sendPacket(
     const uint16_t id = nextPacketId();
     packet->type = DATA_SINGLE;
     packet->id = id;
+    packet->sourceSequence = _originSequence;
     packet->originalSender = MAC::getInstance()->getId();
     packet->finalTarget = target;
     packet->flags =
@@ -113,7 +114,7 @@ uint16_t DTPK::sendPacket(
     if (size > 0)
         memcpy(packet->data, payload, size);
 
-    rememberData(packet->originalSender, id);
+    rememberData(packet->originalSender, packet->sourceSequence, id);
 
     addPacketToSendingQueue(
         reinterpret_cast<DTPKPacketUnknown *>(packet),

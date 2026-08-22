@@ -44,12 +44,14 @@ class Node:
         self.txq: Deque[TxRequest] = deque()
         self.lcmm_busy = False
         self.radio_busy_until = 0.0
-        self.waiting_e2e: Optional[Tuple[int, int, float]] = None
+        # packet id, source incarnation, destination, deadline
+        self.waiting_e2e: Optional[Tuple[int, int, int, float]] = None
         self.wait_token = 0
-        self.delivered_ids: Set[Tuple[int, int]] = set()
+        self.delivered_ids: Set[Tuple[int, int, int]] = set()
         self.crashed_reason: Optional[str] = None
 
     def reset_runtime(self) -> None:
+        self.packet_counter = 0
         self.routes_by_neighbor.clear()
         self.routes.clear()
         self.feasibility.clear()
@@ -375,6 +377,7 @@ class Node:
             if req.dtpk_ack and success:
                 self.waiting_e2e = (
                     req.packet.packet_id,
+                    req.packet.sender_sequence,
                     req.packet.final_target or 0,
                     self.sim.now + req.timeout_ms,
                 )
@@ -385,6 +388,7 @@ class Node:
                     self._e2e_timeout,
                     wait_token,
                     req.packet.packet_id,
+                    req.packet.sender_sequence,
                 )
             self.sim.schedule(0, self.pump)
 
@@ -401,10 +405,12 @@ class Node:
     def link_retry_timeout_ms(self, packet: Packet) -> float:
         return 1_650.0 + self.sim.airtime_ms(self.sim._frame_bytes(packet))
 
-    def _e2e_timeout(self, token: int, packet_id: int) -> None:
+    def _e2e_timeout(
+        self, token: int, packet_id: int, source_sequence: int
+    ) -> None:
         if token != self.wait_token or self.waiting_e2e is None:
             return
-        if self.waiting_e2e[0] != packet_id:
+        if self.waiting_e2e[:2] != (packet_id, source_sequence):
             return
         self.waiting_e2e = None
         self.sim.metrics.e2e_failure += 1
@@ -838,6 +844,7 @@ class Node:
             original_sender=self.id,
             final_target=target,
             payload_size=payload_size,
+            sender_sequence=self.origin_sequence,
             wire_dtpk_size=DTPK_GENERIC_HEADER + payload_size,
         )
         self.enqueue(
@@ -852,7 +859,11 @@ class Node:
         return pid
 
     def receive_data_local(self, packet: Packet, previous_hop: int) -> None:
-        key = (packet.original_sender or -1, packet.packet_id)
+        key = (
+            packet.original_sender or -1,
+            packet.sender_sequence,
+            packet.packet_id,
+        )
         duplicate = key in self.delivered_ids
         if duplicate:
             self.sim.metrics.duplicate_app += 1
@@ -881,6 +892,7 @@ class Node:
             packet.packet_id,
             original_sender=self.id,
             final_target=target,
+            sender_sequence=packet.sender_sequence,
             wire_dtpk_size=DTPK_GENERIC_HEADER,
         )
         self.enqueue(
@@ -893,7 +905,11 @@ class Node:
         )
 
     def receive_ack_local(self, packet: Packet, positive: bool) -> None:
-        if self.waiting_e2e is None or self.waiting_e2e[0] != packet.packet_id:
+        if (
+            self.waiting_e2e is None
+            or self.waiting_e2e[:2]
+            != (packet.packet_id, packet.sender_sequence)
+        ):
             self.sim.log(
                 "unexpected_e2e",
                 node=self.id,
@@ -933,6 +949,7 @@ class Node:
                     packet.packet_id,
                     original_sender=self.id,
                     final_target=packet.original_sender,
+                    sender_sequence=packet.sender_sequence,
                     wire_dtpk_size=DTPK_GENERIC_HEADER,
                 )
                 self.sim.metrics.nacks += 1

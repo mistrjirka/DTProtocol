@@ -234,10 +234,11 @@ void DTPK::parseSingleDataPacket(
     DTPKPacketGeneric *data =
         reinterpret_cast<DTPKPacketGeneric *>(packet.frame->data);
 
-    const bool duplicate = hasSeenData(data->originalSender, data->id);
+    const bool duplicate = hasSeenData(
+        data->originalSender, data->sourceSequence, data->id);
     if (!duplicate)
     {
-        rememberData(data->originalSender, data->id);
+        rememberData(data->originalSender, data->sourceSequence, data->id);
         if (_recieveCallback)
             _recieveCallback(
                 data,
@@ -249,7 +250,8 @@ void DTPK::parseSingleDataPacket(
         sendAckPacket(
             data->originalSender,
             packet.frame->mac.sender,
-            data->id);
+            data->id,
+            data->sourceSequence);
 }
 
 bool DTPK::forwardRoutedPacket(const ReceivedPacket &packet)
@@ -267,6 +269,7 @@ bool DTPK::forwardRoutedPacket(const ReceivedPacket &packet)
                 generic->originalSender,
                 packet.frame->mac.sender,
                 generic->id,
+                generic->sourceSequence,
                 generic->finalTarget);
         return false;
     }
@@ -279,12 +282,15 @@ bool DTPK::forwardRoutedPacket(const ReceivedPacket &packet)
                 generic->originalSender,
                 packet.frame->mac.sender,
                 generic->id,
+                generic->sourceSequence,
                 generic->finalTarget);
         return false;
     }
 
     if (generic->type == DATA_SINGLE &&
-        hasSeenData(generic->originalSender, generic->id))
+        hasSeenData(generic->originalSender,
+                    generic->sourceSequence,
+                    generic->id))
         return false;
 
     const size_t outgoingSize = packet.dtpkSize;
@@ -296,6 +302,7 @@ bool DTPK::forwardRoutedPacket(const ReceivedPacket &packet)
                 generic->originalSender,
                 packet.frame->mac.sender,
                 generic->id,
+                generic->sourceSequence,
                 generic->finalTarget);
         return false;
     }
@@ -315,7 +322,9 @@ bool DTPK::forwardRoutedPacket(const ReceivedPacket &packet)
     --out->hopLimit;
 
     if (generic->type == DATA_SINGLE)
-        rememberData(generic->originalSender, generic->id);
+        rememberData(generic->originalSender,
+                     generic->sourceSequence,
+                     generic->id);
 
     addPacketToSendingQueue(
         forwarded,
@@ -391,6 +400,7 @@ void DTPK::receivingDeamon()
         for (DTPKPacketWaiting &waiting : _packetWaiting)
         {
             if (waiting.id == generic->id &&
+                waiting.sourceSequence == generic->sourceSequence &&
                 waiting.target == generic->originalSender)
             {
                 waiting.gotAck = true;

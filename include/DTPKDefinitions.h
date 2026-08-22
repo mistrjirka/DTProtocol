@@ -56,6 +56,7 @@ typedef struct __attribute__((packed))
 {
     DTPKPacketType type;
     uint16_t id;
+    uint16_t sourceSequence;
     uint16_t originalSender;
     uint16_t finalTarget;
     uint8_t flags;
@@ -67,6 +68,7 @@ typedef struct __attribute__((packed))
 {
     DTPKPacketType type;
     uint16_t id;
+    uint16_t sourceSequence;
     uint16_t originalSender;
     uint16_t finalTarget;
     uint8_t flags;

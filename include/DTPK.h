@@ -39,6 +39,7 @@ public:
     struct DTPKPacketWaiting
     {
         uint16_t id;
+        uint16_t sourceSequence;
         uint16_t target;
         int32_t timeLeft;
         uint32_t timeout;
@@ -98,6 +99,7 @@ private:
     struct PacketIdentity
     {
         uint16_t originalSender = 0;
+        uint16_t sourceSequence = 0;
         uint16_t id = 0;
         bool valid = false;
     };
@@ -173,8 +175,10 @@ private:
 
     DTPK(uint16_t originSequence, bool mobileHint);
 
-    bool hasSeenData(uint16_t originalSender, uint16_t id) const;
-    void rememberData(uint16_t originalSender, uint16_t id);
+    bool hasSeenData(uint16_t originalSender, uint16_t sourceSequence,
+                     uint16_t id) const;
+    void rememberData(uint16_t originalSender, uint16_t sourceSequence,
+                      uint16_t id);
     bool hasSeenSeqRequest(uint16_t originalSender, uint16_t id,
                            uint16_t destination, uint16_t requestedSequence) const;
     void rememberSeqRequest(uint16_t originalSender, uint16_t id,
@@ -210,8 +214,10 @@ private:
     void sendCrystRequest(uint16_t neighbor);
     void sendSeqRequest(uint16_t destination, uint16_t requestedSequence);
     void sendNackPacket(uint16_t target, uint16_t from, uint16_t id,
+                        uint16_t sourceSequence,
                         uint16_t failedDestination);
-    void sendAckPacket(uint16_t target, uint16_t from, uint16_t id);
+    void sendAckPacket(uint16_t target, uint16_t from, uint16_t id,
+                       uint16_t sourceSequence);
 
     void parseCrystPacket(const ReceivedPacket &packet);
     void parseHelloPacket(const ReceivedPacket &packet);
