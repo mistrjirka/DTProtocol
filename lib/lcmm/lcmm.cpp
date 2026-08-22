@@ -1,4 +1,5 @@
 #include "include/lcmm.h"
+
 LCMM *LCMM::lcmm = nullptr;
 uint16_t LCMM::packetId = 1;
 LCMM::ACKWaitingSingle LCMM::ackWaitingSingle;
@@ -6,10 +7,13 @@ bool LCMM::waitingForACKSingle = false;
 bool LCMM::sending = false;
 LCMMPacketDataReceive *LCMM::afterCallbackSent_packet = nullptr;
 uint16_t LCMM::afterCallbackSent_size = 0;
+uint16_t LCMM::noAckId = 0;
+LCMM::AcknowledgmentCallback LCMM::noAckAcknowledgmentCallback = nullptr;
+
 void dummyFunction()
 {
-  //Serial.println("dummy function");
 }
+
 void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
 {
   if (crc != packet->crc32 || size <= 0)
@@ -19,7 +23,6 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
   }
 
   uint8_t type = ((LCMMPacketUknownTypeReceive *)packet)->type;
-  Serial.println("RECIEVIED packet response type: " + String(type));
 
   switch (type)
   {
@@ -79,7 +82,6 @@ void LCMM::handleDataACK(LCMMPacketDataReceive *packet, uint16_t size)
       (LCMMPacketResponse *)malloc(sizeof(LCMMPacketResponse) + sizeof(uint16_t));
   if (response == NULL)
   {
-    // We still own the received packet if the ACK cannot even be allocated.
     free(packet);
     return;
   }
@@ -97,7 +99,6 @@ void LCMM::handleDataACK(LCMMPacketDataReceive *packet, uint16_t size)
       sizeof(LCMMPacketResponse) + sizeof(uint16_t),
       5000);
 
-  // MAC::sendData copies the payload into its own MAC packet.
   free(response);
 
   if (result != 0)
@@ -105,8 +106,6 @@ void LCMM::handleDataACK(LCMMPacketDataReceive *packet, uint16_t size)
     MAC::getInstance()->setTransmitDone(dummyFunction);
     LCMM::afterCallbackSent_packet = nullptr;
     LCMM::afterCallbackSent_size = 0;
-    // Deliver the received data rather than leaking it; the missing link ACK
-    // may cause a duplicate retry, which DTPK v2 will suppress separately.
     LCMM::getInstance()->dataReceived(packet, size);
   }
 }
@@ -126,10 +125,6 @@ void LCMM::handleACK(LCMMPacketResponseReceive *packet, uint16_t size)
 
     this->clearSendingPacket();
   }
-  else
-  {
-    Serial.println("unexpected ack");
-  }
 }
 
 bool LCMM::isSending()
@@ -139,10 +134,6 @@ bool LCMM::isSending()
 
 LCMM *LCMM::getInstance()
 {
-  if (lcmm == nullptr)
-  {
-    return nullptr;
-  }
   return lcmm;
 }
 
@@ -151,7 +142,7 @@ bool LCMM::timeoutHandler()
   if (LCMM::waitingForACKSingle)
   {
     uint32_t currTime = millis();
-    uint32_t elapsed = currTime - (uint32_t)LCMM::getInstance()->lastTick;
+    uint32_t elapsed = currTime - LCMM::getInstance()->lastTick;
     LCMM::ackWaitingSingle.timeLeft -= (int)elapsed;
 
     if (LCMM::ackWaitingSingle.timeLeft <= 0)
@@ -181,14 +172,12 @@ bool LCMM::timeoutHandler()
         }
         else
         {
-          // Do not pretend a busy/failed MAC accepted the retry. Re-evaluate on
-          // the next loop without burning an entire link timeout.
           LCMM::ackWaitingSingle.attemptsLeft++;
           LCMM::ackWaitingSingle.timeLeft = 1;
         }
       }
     }
-    LCMM::getInstance()->lastTick = (int)currTime;
+    LCMM::getInstance()->lastTick = currTime;
   }
   return true;
 }
@@ -208,6 +197,8 @@ LCMM::LCMM(DataReceivedCallback dataReceived,
 {
   this->dataReceived = dataReceived;
   this->transmissionComplete = transmissionComplete;
+  this->lastTick = millis();
+  this->packetSendStart = millis();
 }
 
 LCMM::~LCMM()
@@ -224,16 +215,13 @@ void LCMM::loop()
   this->timeoutHandler();
 }
 
-uint16_t _id = 0;
-LCMM::AcknowledgmentCallback _noAckcallback = nullptr;
-
-void noAckCallback()
+void LCMM::noAckTransmitDone()
 {
   LCMM::sending = false;
-  if (_noAckcallback != nullptr)
+  if (LCMM::noAckAcknowledgmentCallback)
   {
-    _noAckcallback(_id, true);
-    _noAckcallback = nullptr;
+    LCMM::noAckAcknowledgmentCallback(LCMM::noAckId, true);
+    LCMM::noAckAcknowledgmentCallback = nullptr;
   }
   MAC::getInstance()->setTransmitDone(dummyFunction);
 }
@@ -271,9 +259,9 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
 
   if (!needACK)
   {
-    _noAckcallback = callback;
-    _id = outgoingId;
-    MAC::getInstance()->setTransmitDone(noAckCallback);
+    LCMM::noAckAcknowledgmentCallback = callback;
+    LCMM::noAckId = outgoingId;
+    MAC::getInstance()->setTransmitDone(LCMM::noAckTransmitDone);
   }
   else
   {
@@ -291,7 +279,7 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
   {
     if (!needACK)
     {
-      _noAckcallback = nullptr;
+      LCMM::noAckAcknowledgmentCallback = nullptr;
       MAC::getInstance()->setTransmitDone(dummyFunction);
     }
     LCMM::sending = false;
@@ -310,8 +298,6 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
   }
   else
   {
-    // MAC copied the packet, so the LCMM allocation can be released, but
-    // `sending` remains true until the physical TX-complete callback.
     free(packet);
   }
 
