@@ -143,6 +143,25 @@ void DTPK::receivePacket(LCMMPacketDataReceive *packet, uint32_t size)
 
 void DTPK::receiveAck(uint16_t id, bool success)
 {
-    (void)id;
-    (void)success;
+    DTPK *self = DTPK::getInstance();
+    if (!self)
+        return;
+
+    auto probe = self->_livenessProbeByLcmmId.find(id);
+    if (probe == self->_livenessProbeByLcmmId.end())
+        return;
+
+    const uint16_t neighbor = probe->second;
+    self->_livenessProbeByLcmmId.erase(probe);
+    self->_currentTime = millis();
+
+    if (success)
+    {
+        self->noteHeard(neighbor);
+        return;
+    }
+
+    uint8_t &failures = self->_livenessProbeFailures[neighbor];
+    if (failures < 0xffu)
+        ++failures;
 }
