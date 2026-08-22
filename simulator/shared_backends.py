@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import hashlib
-import math
 import random
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import DefaultDict, List, Optional, Tuple
+from typing import DefaultDict, Dict, List, Optional, Tuple
 
 from cpp_sim_adapter import CppSimNetwork
 from model import MAC_OVERHEAD, MAX_PACKET_SIZE
@@ -25,6 +24,12 @@ class KeyedEnvironmentMixin:
     draw order. Optional contention records the same RF TX intervals for both
     backends and applies LoRa's broadcast/half-duplex nature independently of
     MAC addressing.
+
+    Node/link state histories are kept here as physical history. This matters
+    for collisions: a failure that happens *after* two frames already interfered
+    must not retroactively make that past interference disappear, while a link
+    that was down for the whole overlap must not become an interferer just
+    because it recovered before decode completion.
     """
 
     def _init_shared_environment(self, *, radio_contention: bool = False) -> None:
@@ -32,6 +37,65 @@ class KeyedEnvironmentMixin:
         self.radio_contention = bool(radio_contention)
         self.medium_metrics = MediumMetrics()
         self._medium_tx: List[dict] = []
+        self._node_state_history: Dict[int, List[Tuple[float, bool]]] = {}
+        self._link_state_history: Dict[frozenset[int], List[Tuple[float, bool]]] = {}
+
+    # ------------------------------------------------------------------
+    # Physical state history. These overrides remain protocol-independent.
+    # ------------------------------------------------------------------
+    def register_node(self, node_id, *, up=True, position=(0.0, 0.0)):
+        result = super().register_node(node_id, up=up, position=position)
+        self._node_state_history.setdefault(node_id, []).append((float(self.now), bool(up)))
+        return result
+
+    def set_node_up(self, node_id: int, up: bool, *, reason: str = "environment") -> None:
+        before = self.node_up.get(node_id, False)
+        super().set_node_up(node_id, up, reason=reason)
+        after = self.node_up.get(node_id, False)
+        if before != after:
+            self._node_state_history.setdefault(node_id, []).append((float(self.now), after))
+
+    def add_link(self, a: int, b: int, **kwargs) -> None:
+        super().add_link(a, b, **kwargs)
+        link = self.get_link(a, b)
+        assert link is not None
+        self._link_state_history.setdefault(frozenset((a, b)), []).append(
+            (float(self.now), bool(link.up))
+        )
+
+    def set_link(self, a: int, b: int, up: bool) -> None:
+        link = self.get_link(a, b)
+        before = None if link is None else bool(link.up)
+        super().set_link(a, b, up)
+        link = self.get_link(a, b)
+        after = None if link is None else bool(link.up)
+        if before != after and after is not None:
+            self._link_state_history.setdefault(frozenset((a, b)), []).append(
+                (float(self.now), after)
+            )
+
+    @staticmethod
+    def _state_at(history: List[Tuple[float, bool]], t_ms: float, default: bool = False) -> bool:
+        state = default
+        for when, value in history:
+            if when > t_ms + 1e-12:
+                break
+            state = value
+        return state
+
+    def _node_up_at(self, node_id: int, t_ms: float) -> bool:
+        return self._state_at(self._node_state_history.get(node_id, []), t_ms, False)
+
+    def _link_up_at(self, a: int, b: int, t_ms: float) -> bool:
+        return self._state_at(
+            self._link_state_history.get(frozenset((a, b)), []), t_ms, False
+        )
+
+    @staticmethod
+    def _history_breakpoints(history: List[Tuple[float, bool]], start_ms: float, end_ms: float):
+        for when, _value in history:
+            if start_ms < when < end_ms:
+                yield when
 
     # ------------------------------------------------------------------
     # Stable environment randomness
@@ -119,6 +183,57 @@ class KeyedEnvironmentMixin:
                 return True
         return self._distance_sq(a, b, end_ms) <= limit_sq + 1e-12
 
+    def _interferer_active_during(
+        self,
+        interferer: int,
+        receiver: int,
+        start_ms: float,
+        end_ms: float,
+    ) -> bool:
+        """True iff RF from interferer can reach receiver at any overlap instant.
+
+        Failure/link transitions are split into constant-state intervals. Motion
+        is then checked analytically inside each interval. This prevents state at
+        decode time from rewriting what physically happened earlier in a frame.
+        """
+        if self.get_link(interferer, receiver) is None or end_ms <= start_ms:
+            return False
+        times = {float(start_ms), float(end_ms)}
+        times.update(
+            self._history_breakpoints(
+                self._node_state_history.get(interferer, []), start_ms, end_ms
+            )
+        )
+        times.update(
+            self._history_breakpoints(
+                self._node_state_history.get(receiver, []), start_ms, end_ms
+            )
+        )
+        times.update(
+            self._history_breakpoints(
+                self._link_state_history.get(frozenset((interferer, receiver)), []),
+                start_ms,
+                end_ms,
+            )
+        )
+        times.update(self._trajectory_breakpoints(interferer, start_ms, end_ms))
+        times.update(self._trajectory_breakpoints(receiver, start_ms, end_ms))
+        ordered = sorted(times)
+
+        for left, right in zip(ordered, ordered[1:]):
+            if right <= left:
+                continue
+            midpoint = (left + right) * 0.5
+            if not self._node_up_at(interferer, midpoint):
+                continue
+            if not self._node_up_at(receiver, midpoint):
+                continue
+            if not self._link_up_at(interferer, receiver, midpoint):
+                continue
+            if self._ever_in_range(interferer, receiver, left, right):
+                return True
+        return False
+
     def _medium_interference(
         self,
         sender: int,
@@ -144,12 +259,12 @@ class KeyedEnvironmentMixin:
                 continue
 
             if other == receiver:
+                # If the desired frame itself is path-valid, the receiver's node
+                # epoch did not change during it. Any overlapping local TX is a
+                # genuine half-duplex receive loss.
                 return "half-duplex"
 
-            link = self.get_link(other, receiver)
-            if link is None or not link.up:
-                continue
-            if self._ever_in_range(other, receiver, overlap_start, overlap_end):
+            if self._interferer_active_during(other, receiver, overlap_start, overlap_end):
                 return "collision"
         return None
 
@@ -165,10 +280,16 @@ class KeyedEnvironmentMixin:
         interference = self._medium_interference(sender, receiver, start_ms, end_ms)
         if interference == "collision":
             self.medium_metrics.collision_drops += 1
+            metrics = getattr(self, "metrics", None)
+            if metrics is not None and hasattr(metrics, "collision_drops"):
+                metrics.collision_drops += 1
             self.log("radio_collision", sender=sender, node=receiver)
             return False, "collision"
         if interference == "half-duplex":
             self.medium_metrics.half_duplex_drops += 1
+            metrics = getattr(self, "metrics", None)
+            if metrics is not None and hasattr(metrics, "half_duplex_drops"):
+                metrics.half_duplex_drops += 1
             self.log("half_duplex_drop", sender=sender, node=receiver)
             return False, "half-duplex"
         return True, "ok"
