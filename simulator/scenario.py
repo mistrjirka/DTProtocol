@@ -9,6 +9,19 @@ from shared_backends import SharedCppNetwork, SharedPythonNetwork
 
 
 BackendName = Literal["python", "cpp"]
+RadioProfileName = Literal[
+    "unconstrained",
+    "eu433",
+    "eu868",
+    "eu869-high-duty",
+]
+
+RADIO_PROFILE_DUTY_PERCENT = {
+    "unconstrained": 0.0,
+    "eu433": 10.0,
+    "eu868": 1.0,
+    "eu869-high-duty": 10.0,
+}
 
 
 @dataclass(frozen=True)
@@ -61,6 +74,7 @@ class Scenario:
 
     seed: int = 1
     radio_contention: bool = False
+    radio_profile: RadioProfileName = "unconstrained"
     nodes: List[NodeSpec] = field(default_factory=list)
     links: List[LinkSpec] = field(default_factory=list)
     trajectories: Dict[int, List[Tuple[float, float, float]]] = field(default_factory=dict)
@@ -76,7 +90,16 @@ class Scenario:
         binary: Optional[str] = None,
         tick_ms: float = 50.0,
     ):
-        common = {"seed": self.seed, "radio_contention": self.radio_contention}
+        try:
+            duty_cycle_percent = RADIO_PROFILE_DUTY_PERCENT[self.radio_profile]
+        except KeyError as exc:
+            raise ValueError(f"unknown radio_profile {self.radio_profile!r}") from exc
+
+        common = {
+            "seed": self.seed,
+            "radio_contention": self.radio_contention,
+            "duty_cycle_percent": duty_cycle_percent,
+        }
         if backend == "python":
             network = SharedPythonNetwork(
                 profile=profile or Profile.current(), **common
@@ -139,6 +162,7 @@ class Scenario:
         return Scenario(
             seed=raw.get("seed", 1),
             radio_contention=raw.get("radio_contention", False),
+            radio_profile=raw.get("radio_profile", "unconstrained"),
             nodes=[NodeSpec(**x) for x in raw.get("nodes", [])],
             links=[LinkSpec(**x) for x in raw.get("links", [])],
             trajectories={
@@ -162,8 +186,13 @@ class Scenario:
         spacing: float = 1.0,
         max_range: Optional[float] = None,
         radio_contention: bool = False,
+        radio_profile: RadioProfileName = "unconstrained",
     ) -> "Scenario":
-        scenario = Scenario(seed=seed, radio_contention=radio_contention)
+        scenario = Scenario(
+            seed=seed,
+            radio_contention=radio_contention,
+            radio_profile=radio_profile,
+        )
         scenario.nodes = [
             NodeSpec(i, (float(i - 1) * spacing, 0.0))
             for i in range(1, n + 1)
