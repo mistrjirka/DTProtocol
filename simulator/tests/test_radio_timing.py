@@ -10,14 +10,20 @@ sys.path.insert(0, str(SIM_ROOT))
 from environment import EnvironmentKernel
 from radio_timing import (
     CAD_SCAN_FIXED_SPI_BYTES,
+    CAD_SCAN_SPI_TRANSACTIONS,
+    RADIOLIB6_BUSY_POLL_FLOOR_MS,
     RADIOLIB6_DEFAULT_SPI_HZ,
     RSSI_SPI_BYTES_PER_SAMPLE,
     RX_READ_FIXED_SPI_BYTES,
+    RX_READ_SPI_TRANSACTIONS,
     RX_REARM_AFTER_READ_SPI_BYTES,
+    RX_REARM_AFTER_READ_SPI_TRANSACTIONS,
     RX_REARM_AFTER_TX_SPI_BYTES,
+    RX_REARM_AFTER_TX_SPI_TRANSACTIONS,
     SX1262_STBY_RC_TO_RX_MS,
     SX1262_STBY_RC_TO_TX_MS,
     TX_SETUP_FIXED_SPI_BYTES,
+    TX_SETUP_SPI_TRANSACTIONS,
     cad_scan_spi_overhead_ms,
     rssi_cca_duration_ms,
     rssi_sample_offsets_ms,
@@ -47,11 +53,8 @@ def test_sf9_symbol_cad_and_known_airtime_values():
     env = EnvironmentKernel(sf=9, bandwidth_hz=125_000, coding_rate_denominator=7)
 
     assert env.symbol_time_ms() == pytest.approx(4.096, abs=1e-9)
-    # RadioLib 6 defaults SF9 CAD to four symbols; SX126x then needs roughly
-    # half a symbol of post-processing before CAD_DONE.
     assert env.cad_duration_ms() == pytest.approx(18.432, abs=1e-9)
 
-    # Values are also pinned by the C++ embedded-math contract.
     assert env.airtime_ms(4) == pytest.approx(140.288, abs=1e-6)
     assert env.airtime_ms(11) == pytest.approx(168.960, abs=1e-6)
     assert env.airtime_ms(20) == pytest.approx(226.304, abs=1e-6)
@@ -76,65 +79,69 @@ def test_airtime_matches_radiolib_equation_across_supported_profiles(
 
 
 def test_radiolib6_default_spi_is_well_below_sx1262_limit():
-    # RadioLib 6 defaults to 2 MHz. SX1261/2 permits 16 MHz SCK, so the default
-    # path is comfortably inside the chip timing bound.
     assert RADIOLIB6_DEFAULT_SPI_HZ == 2_000_000
     assert RADIOLIB6_DEFAULT_SPI_HZ <= 16_000_000
+    assert RADIOLIB6_BUSY_POLL_FLOOR_MS == pytest.approx(0.001)
     assert spi_wire_time_ms(255, RADIOLIB6_DEFAULT_SPI_HZ) == pytest.approx(
         1.020, abs=1e-12
     )
 
 
-def test_exact_radiolib6_transaction_byte_counts_are_pinned():
-    # These values are derived from tag 6.0.0 SX126x.cpp + Module.cpp with the
-    # default RADIOLIB_SPI_PARANOID verification enabled.
+def test_exact_radiolib6_transaction_counts_are_pinned():
+    # Derived from tag 6.0.0 SX126x.cpp + Module.cpp with default paranoid
+    # verification. Byte counts are exact; transaction counts pin RadioLib's
+    # deterministic delay-before-BUSY-poll floor as well.
     assert RSSI_SPI_BYTES_PER_SAMPLE == 8
     assert TX_SETUP_FIXED_SPI_BYTES == 87
+    assert TX_SETUP_SPI_TRANSACTIONS == 24
     assert RX_READ_FIXED_SPI_BYTES == 61
+    assert RX_READ_SPI_TRANSACTIONS == 19
     assert RX_REARM_AFTER_TX_SPI_BYTES == 67
+    assert RX_REARM_AFTER_TX_SPI_TRANSACTIONS == 18
     assert RX_REARM_AFTER_READ_SPI_BYTES == 56
+    assert RX_REARM_AFTER_READ_SPI_TRANSACTIONS == 14
     assert CAD_SCAN_FIXED_SPI_BYTES == 63
+    assert CAD_SCAN_SPI_TRANSACTIONS == 18
 
 
-def test_production_rssi_cca_timing_is_three_samples_over_twenty_ms():
+def test_production_rssi_cca_timing_includes_radiolib_busy_poll_floor():
     offsets = rssi_sample_offsets_ms()
     assert len(offsets) == 3
-    assert offsets == pytest.approx((0.032, 10.064, 20.096), abs=1e-12)
-    assert rssi_cca_duration_ms() == pytest.approx(20.096, abs=1e-12)
+    assert offsets == pytest.approx((0.034, 10.068, 20.102), abs=1e-12)
+    assert rssi_cca_duration_ms() == pytest.approx(20.102, abs=1e-12)
 
 
-def test_tx_startup_matches_exact_radiolib6_sequence():
-    # MAC first issues SetStandby; RadioLib startTransmit then clocks the exact
-    # LoRa setup sequence and waits for STBY_RC -> TX BUSY to fall.
-    assert tx_startup_ms(20) == pytest.approx(0.554, abs=1e-12)
-    assert tx_startup_ms(255) == pytest.approx(1.494, abs=1e-12)
+def test_tx_startup_is_documented_lower_typical_bound():
+    # Exact wire bytes + deterministic RadioLib BUSY-poll floor + Semtech's
+    # documented typical STBY_RC->TX transition. Configuration-command BUSY
+    # processing and MCU execution remain explicitly unmodeled.
+    assert tx_startup_ms(20) == pytest.approx(0.577, abs=1e-12)
+    assert tx_startup_ms(255) == pytest.approx(1.517, abs=1e-12)
     assert tx_startup_ms(255) - tx_startup_ms(20) == pytest.approx(
         spi_wire_time_ms(255 - 20), abs=1e-12
     )
     assert tx_startup_ms(20) > SX1262_STBY_RC_TO_TX_MS
 
 
-def test_rx_done_to_lcmm_callback_matches_exact_radiolib6_sequence():
-    assert rx_packet_read_ms(11) == pytest.approx(0.288, abs=1e-12)
-    assert rx_packet_read_ms(255) == pytest.approx(1.264, abs=1e-12)
+def test_rx_done_to_lcmm_callback_includes_busy_poll_floor():
+    assert rx_packet_read_ms(11) == pytest.approx(0.307, abs=1e-12)
+    assert rx_packet_read_ms(255) == pytest.approx(1.283, abs=1e-12)
     assert rx_packet_read_ms(255) - rx_packet_read_ms(11) == pytest.approx(
         spi_wire_time_ms(255 - 11), abs=1e-12
     )
 
 
 def test_rx_rearm_distinguishes_tx_done_from_rx_callback_return():
-    # TX_DONE executes finishTransmit() then startReceive().  RX_DONE where no
-    # immediate ACK/TX starts only needs startReceive() after the callback.
-    assert rx_rearm_ms() == pytest.approx(0.351, abs=1e-12)
-    assert rx_rearm_after_read_ms() == pytest.approx(0.307, abs=1e-12)
+    assert rx_rearm_ms() == pytest.approx(0.368, abs=1e-12)
+    assert rx_rearm_after_read_ms() == pytest.approx(0.320, abs=1e-12)
     assert rx_rearm_ms() > rx_rearm_after_read_ms() > SX1262_STBY_RC_TO_RX_MS
 
 
-def test_optional_cad_has_252us_spi_overhead_around_correlation_window():
-    assert cad_scan_spi_overhead_ms() == pytest.approx(0.252, abs=1e-12)
+def test_optional_cad_includes_spi_and_busy_poll_floor_around_correlation():
+    assert cad_scan_spi_overhead_ms() == pytest.approx(0.270, abs=1e-12)
     env = EnvironmentKernel(sf=9, bandwidth_hz=125_000)
     assert env.cad_duration_ms() + cad_scan_spi_overhead_ms() == pytest.approx(
-        18.684, abs=1e-9
+        18.702, abs=1e-9
     )
 
 
