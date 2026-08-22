@@ -130,41 +130,156 @@ class KeyedEnvironmentMixin:
 
 
 class SharedPythonNetwork(KeyedEnvironmentMixin, Simulator):
-    def __init__(self, *args, radio_contention: bool = False, **kwargs):
+    def __init__(
+        self,
+        *args,
+        radio_contention: bool = False,
+        duty_cycle_percent: float = 0.0,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
+        duty = float(duty_cycle_percent)
+        if duty < 0.0 or duty > 100.0:
+            raise ValueError("duty_cycle_percent must be between 0 and 100")
+        self.duty_cycle_percent = duty
         self._init_shared_environment(radio_contention=radio_contention)
 
     def transmit(self, sender_id, target, packet, reliable, on_complete, attempt=1):
+        wait = self.transmit_wait_ms(sender_id)
+        if wait > 1e-9:
+            self.note_regulatory_deferral(sender_id)
+            self.schedule(
+                wait,
+                self.transmit,
+                sender_id,
+                target,
+                packet,
+                reliable,
+                on_complete,
+                attempt,
+            )
+            return
+
         sender = self.nodes[sender_id]
         frame_bytes = self._frame_bytes(packet)
-        if (self.node_up.get(sender_id, False) and sender.up and not sender.crashed and
-                frame_bytes <= MAX_PACKET_SIZE and self.now >= sender.radio_busy_until):
+        actual_start = (
+            self.node_up.get(sender_id, False)
+            and sender.up
+            and not sender.crashed
+            and frame_bytes <= MAX_PACKET_SIZE
+            and self.now >= sender.radio_busy_until
+        )
+        if actual_start:
             airtime = self.airtime_ms(frame_bytes)
+            self.account_transmission(sender_id, self.now, self.now + airtime)
             self._record_medium_tx(sender_id, self.now, self.now + airtime)
         return super().transmit(sender_id, target, packet, reliable, on_complete, attempt)
 
     def _deliver(self, receiver_id, previous_hop, packet, reliable, ack_context,
                  receiver_epoch=None):
         receiver = self.nodes[receiver_id]
-        if (reliable and receiver.up and not receiver.crashed and
-                self.node_up.get(receiver_id, False) and
-                (receiver_epoch is None or self.node_epoch.get(receiver_id, 0) == receiver_epoch) and
-                self.get_link(receiver_id, previous_hop) is not None):
-            ack_airtime = self.airtime_ms(MAC_OVERHEAD + 3)
-            self._record_medium_tx(receiver_id, self.now, self.now + ack_airtime)
-        return super()._deliver(
-            receiver_id, previous_hop, packet, reliable, ack_context, receiver_epoch
+        if (
+            not receiver.up
+            or receiver.crashed
+            or not self.node_up.get(receiver_id, False)
+            or (
+                receiver_epoch is not None
+                and self.node_epoch.get(receiver_id, 0) != receiver_epoch
+            )
+        ):
+            self.rf_metrics.firmware_epoch_drops += 1
+            return
+
+        self.rf_metrics.rf_delivered += 1
+        if not reliable:
+            receiver.receive(packet, previous_hop)
+            return
+
+        sender_id, target, original_packet, on_complete, attempt = ack_context
+        link = self.get_link(receiver_id, sender_id)
+        if link is None:
+            self.schedule(
+                receiver.link_retry_timeout_ms(packet),
+                self._retry_or_finish,
+                sender_id,
+                target,
+                original_packet,
+                True,
+                on_complete,
+                attempt,
+            )
+            return
+
+        # Production LCMM gives the DTPK payload upward if its immediate link ACK
+        # cannot be sent. A duty-blocked ACK is therefore a missing ACK, not a
+        # delayed RF frame: the sender times out and retries later.
+        if self.transmit_wait_ms(receiver_id) > 1e-9:
+            self.note_regulatory_deferral(receiver_id)
+            receiver.receive(packet, previous_hop)
+            self.schedule(
+                self.nodes[sender_id].link_retry_timeout_ms(original_packet),
+                self._retry_or_finish,
+                sender_id,
+                target,
+                original_packet,
+                True,
+                on_complete,
+                attempt,
+            )
+            return
+
+        ack_bytes = MAC_OVERHEAD + 1 + 2
+        ack_airtime = self.airtime_ms(ack_bytes)
+        ack_start = self.now
+        ack_end = ack_start + ack_airtime
+        self.account_transmission(receiver_id, ack_start, ack_end)
+        self._record_medium_tx(receiver_id, ack_start, ack_end)
+        self.metrics.radio_link_ack_frames += 1
+        self.metrics.bytes_on_air += ack_bytes
+        self.rf_metrics.tx_frames += 1
+
+        ack_epochs = self.capture_frame_epochs(receiver_id, sender_id)
+        lost = self.sample_link_loss(receiver_id, sender_id, ack=True)
+        if lost:
+            self.metrics.link_loss_drops += 1
+            self.rf_metrics.rf_loss_drops += 1
+
+        self.schedule_at(
+            ack_end,
+            self._python_ack_rf_complete,
+            receiver_id,
+            sender_id,
+            packet,
+            previous_hop,
+            original_packet,
+            target,
+            on_complete,
+            attempt,
+            ack_start,
+            ack_end,
+            *ack_epochs,
+            lost,
+            self.jittered_latency(link),
+            priority=self.RADIO_PRIORITY,
         )
 
 
 class SharedCppNetwork(KeyedEnvironmentMixin, CppSimNetwork):
-    def __init__(self, *args, radio_contention: bool = False, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, *args, radio_contention: bool = False,
+                 duty_cycle_percent: float = 0.0, **kwargs):
+        super().__init__(
+            *args,
+            duty_cycle_percent=duty_cycle_percent,
+            **kwargs,
+        )
         self._init_shared_environment(radio_contention=radio_contention)
 
     def _start_tx(self, sender, tx, at):
-        airtime = self.airtime_ms(MAC_OVERHEAD + len(tx.payload))
-        self._record_medium_tx(sender, at, at + airtime)
+        # Do not record a medium interval until the shared policy says this is
+        # an actual RF transmission. CppNetwork retains a safety gate as well.
+        if self.transmit_wait_ms(sender, at) <= 1e-6:
+            airtime = self.airtime_ms(MAC_OVERHEAD + len(tx.payload))
+            self._record_medium_tx(sender, at, at + airtime)
         return super()._start_tx(sender, tx, at)
 
 
