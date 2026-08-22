@@ -58,6 +58,7 @@ public:
     uint16_t getId();
     void setTransmitDone(TransmitDone callback);
     uint32_t getTransmitWaitMs() const;
+    uint8_t getFallbackDutyCyclePercent() const;
 
     // Host-only entry points. The production protocol never calls these.
     bool hostInject(uint16_t sender, uint16_t target,
