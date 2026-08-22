@@ -113,10 +113,18 @@ bool CrystDatabase::rebuildCache()
                 candidate.neighborMetric};
 
             auto existing = nextCache.find(candidate.destination);
+            const bool newerGeneration =
+                existing != nextCache.end() &&
+                sequenceNewer(candidateRoute.sequence, existing->second.sequence);
+            const bool sameGenerationBetterMetric =
+                existing != nextCache.end() &&
+                candidateRoute.sequence == existing->second.sequence &&
+                (candidateRoute.distance < existing->second.distance ||
+                 (candidateRoute.distance == existing->second.distance &&
+                  candidateRoute.router < existing->second.router));
             if (existing == nextCache.end() ||
-                candidateRoute.distance < existing->second.distance ||
-                (candidateRoute.distance == existing->second.distance &&
-                 candidateRoute.router < existing->second.router))
+                newerGeneration ||
+                sameGenerationBetterMetric)
             {
                 nextCache[candidate.destination] = candidateRoute;
             }

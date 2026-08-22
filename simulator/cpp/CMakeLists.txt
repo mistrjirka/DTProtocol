@@ -58,6 +58,7 @@ target_include_directories(dtprotocol_lcmm_contract BEFORE PRIVATE
     ${REPO_ROOT}/include
 )
 target_compile_options(dtprotocol_lcmm_contract PRIVATE
+    -UNDEBUG
     -include${CMAKE_CURRENT_SOURCE_DIR}/host/mac.h
     -include${REPO_ROOT}/include/mathextension.h
     -Wall -Wextra -Wconversion -Wno-unused-parameter
@@ -85,6 +86,7 @@ target_include_directories(dtprotocol_mac_contract BEFORE PRIVATE
     ${REPO_ROOT}
 )
 target_compile_options(dtprotocol_mac_contract PRIVATE
+    -UNDEBUG
     -Wall -Wextra -Wconversion -Wno-unused-parameter
 )
 target_compile_definitions(dtprotocol_mac_contract PRIVATE HOST_SIM=1)
@@ -100,6 +102,30 @@ add_test(NAME production_mac_eu869_high_duty
          COMMAND dtprotocol_mac_contract eu869-high-duty)
 add_test(NAME production_mac_eu433
          COMMAND dtprotocol_mac_contract eu433)
+
+# -----------------------------------------------------------------------------
+# Crystallization database contract: freshness (destination generation) must
+# dominate metric among feasible candidates. This is a routing-safety/liveness
+# invariant, independent of the RF adapter.
+# -----------------------------------------------------------------------------
+add_executable(dtprotocol_cryst_database_contract
+    cryst_database_contract_tests.cpp
+    ${REPO_ROOT}/lib/DTPK/CrystDatabase.cpp
+)
+target_compile_features(dtprotocol_cryst_database_contract PRIVATE cxx_std_17)
+set_target_properties(dtprotocol_cryst_database_contract PROPERTIES CXX_EXTENSIONS ON)
+target_include_directories(dtprotocol_cryst_database_contract BEFORE PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/host
+    ${REPO_ROOT}
+    ${REPO_ROOT}/include
+)
+target_compile_options(dtprotocol_cryst_database_contract PRIVATE
+    -UNDEBUG
+    -include${CMAKE_CURRENT_SOURCE_DIR}/host/mac.h
+    -Wall -Wextra -Wconversion -Wno-unused-parameter
+)
+target_compile_definitions(dtprotocol_cryst_database_contract PRIVATE HOST_SIM=1)
+add_test(NAME crystallization_database_contract COMMAND dtprotocol_cryst_database_contract)
 
 # -----------------------------------------------------------------------------
 # Small embedded-math contract. The radio path depends on quickSort() during
@@ -119,6 +145,7 @@ target_include_directories(dtprotocol_math_contract BEFORE PRIVATE
     ${REPO_ROOT}
 )
 target_compile_options(dtprotocol_math_contract PRIVATE
+    -UNDEBUG
     -Wall -Wextra -Wconversion -Wno-unused-parameter
 )
 target_compile_definitions(dtprotocol_math_contract PRIVATE HOST_SIM=1)
@@ -129,7 +156,8 @@ if(DTP_HOST_SANITIZERS)
             dtprotocol_host_node
             dtprotocol_lcmm_contract
             dtprotocol_mac_contract
-            dtprotocol_math_contract)
+            dtprotocol_math_contract
+            dtprotocol_cryst_database_contract)
         target_compile_options(${target} PRIVATE
             -fsanitize=address,undefined -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE -fsanitize=address,undefined)

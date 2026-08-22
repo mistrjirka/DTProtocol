@@ -111,3 +111,27 @@ def test_feasible_profile_recovers_when_only_remaining_path_is_longer():
     assert final["correct"], final
     assert sim.nodes[1].routes[4].distance == 3
     assert sim.nodes[1].routes[4].next_hop == 3
+
+
+def test_newer_feasible_generation_beats_shorter_stale_route():
+    sim = Simulator(seed=71, profile=Profile.crystallized_v2())
+    for node_id in (1, 2, 3, 4):
+        sim.add_node(node_id)
+    sim.run(0)
+    node = sim.nodes[1]
+
+    node.routes_by_neighbor[2] = {
+        4: AdvertisedRoute(4, 2, 2, 1),
+    }
+    node.rebuild_routes()
+    node._update_feasibility_from_advertisement()
+    assert node.routes[4].next_hop == 2
+    assert node.routes[4].sequence == 1
+
+    node.routes_by_neighbor[3] = {
+        4: AdvertisedRoute(4, 3, 4, 2),
+    }
+    node.rebuild_routes()
+    assert node.routes[4].next_hop == 3
+    assert node.routes[4].distance == 4
+    assert node.routes[4].sequence == 2

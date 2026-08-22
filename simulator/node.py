@@ -754,8 +754,19 @@ class Node:
                     blocked[dest].append(route)
                     self.sim.metrics.feasibility_rejects += 1
             if feasible:
+                # Destination generation is freshness, not a metric. A newer
+                # feasible generation supersedes all older candidates even when
+                # the older path is shorter. Only compare distance/next-hop
+                # within the selected newest generation.
+                newest = feasible[0].sequence
+                for route in feasible[1:]:
+                    if sequence_newer(route.sequence, newest):
+                        newest = route.sequence
+                same_generation = [
+                    route for route in feasible if route.sequence == newest
+                ]
                 new[dest] = min(
-                    feasible,
+                    same_generation,
                     key=lambda route: (route.distance, route.next_hop),
                 )
 
