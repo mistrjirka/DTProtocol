@@ -23,11 +23,9 @@ target_include_directories(dtprotocol_host_node BEFORE PRIVATE
     ${REPO_ROOT}/include
 )
 
-# lcmm.cpp includes "include/lcmm.h", whose sibling mac.h would otherwise win
-# quote-include lookup. Pre-including the host MAC defines MAC_LAYER_H first and
-# leaves every higher protocol source file unchanged.
 target_compile_options(dtprotocol_host_node PRIVATE
     -include ${CMAKE_CURRENT_SOURCE_DIR}/host/mac.h
+    -include ${REPO_ROOT}/include/mathextension.h
     -Wall -Wextra -Wno-unused-parameter
 )
 target_compile_definitions(dtprotocol_host_node PRIVATE HOST_SIM=1)
