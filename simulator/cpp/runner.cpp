@@ -68,13 +68,19 @@ int main() {
 
         try {
             if (command == "INIT") {
-                unsigned id = 0, k_limit = 20;
+                unsigned id = 0, k_limit = 20, origin_sequence = 1;
                 uint64_t seed = 1;
                 in >> id >> k_limit >> seed;
+                if (!(in >> origin_sequence)) {
+                    origin_sequence = 1;
+                    in.clear();
+                }
                 node_id = static_cast<uint16_t>(id);
                 hostsim::reset(node_id, seed);
                 MAC::initialize(node_id);
-                DTPK::initialize(static_cast<uint8_t>(k_limit));
+                DTPK::initialize(
+                    static_cast<uint8_t>(k_limit),
+                    static_cast<uint16_t>(origin_sequence == 0 ? 1 : origin_sequence));
                 DTPK::getInstance()->setPacketReceivedCallback(
                     [](DTPKPacketGenericReceive *packet, uint16_t size) {
                         const size_t header = sizeof(DTPKPacketGenericReceive);
