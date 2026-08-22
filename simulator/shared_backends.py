@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import DefaultDict, List, Optional, Tuple
 
 from cpp_sim_adapter import CppSimNetwork
-from model import MAC_OVERHEAD, MAX_PACKET_SIZE
+from model import MAC_OVERHEAD, MAX_PACKET_SIZE, NEIGHBOR_RECORD_SIZE
 from simulator import Simulator
 
 
@@ -144,6 +144,15 @@ class SharedPythonNetwork(KeyedEnvironmentMixin, Simulator):
         self.duty_cycle_percent = duty
         self._init_shared_environment(radio_contention=radio_contention)
 
+    def _frame_bytes(self, packet):
+        base = super()._frame_bytes(packet)
+        if packet.kind != "CRYST":
+            return base
+        record_size = getattr(packet, "cryst_record_size", NEIGHBOR_RECORD_SIZE)
+        return base + len(packet.advertisements) * (
+            int(record_size) - NEIGHBOR_RECORD_SIZE
+        )
+
     def transmit(self, sender_id, target, packet, reliable, on_complete, attempt=1):
         wait = self.transmit_wait_ms(sender_id)
         if wait > 1e-9:
@@ -210,9 +219,6 @@ class SharedPythonNetwork(KeyedEnvironmentMixin, Simulator):
             )
             return
 
-        # Production LCMM gives the DTPK payload upward if its immediate link ACK
-        # cannot be sent. A duty-blocked ACK is therefore a missing ACK, not a
-        # delayed RF frame: the sender times out and retries later.
         if self.transmit_wait_ms(receiver_id) > 1e-9:
             self.note_regulatory_deferral(receiver_id)
             receiver.receive(packet, previous_hop)
@@ -275,8 +281,6 @@ class SharedCppNetwork(KeyedEnvironmentMixin, CppSimNetwork):
         self._init_shared_environment(radio_contention=radio_contention)
 
     def _start_tx(self, sender, tx, at):
-        # Do not record a medium interval until the shared policy says this is
-        # an actual RF transmission. CppNetwork retains a safety gate as well.
         if self.transmit_wait_ms(sender, at) <= 1e-6:
             airtime = self.airtime_ms(MAC_OVERHEAD + len(tx.payload))
             self._record_medium_tx(sender, at, at + airtime)
