@@ -21,6 +21,9 @@ class Node:
 
         self.routes_by_neighbor: Dict[int, Dict[int, AdvertisedRoute]] = {}
         self.routes: Dict[int, Route] = {}
+        # For each destination: best finite distance that *this node has
+        # advertised*. This is intentionally not updated merely by route
+        # selection; that distinction is part of the feasibility proof.
         self.feasibility: Dict[int, FeasibilityState] = {}
         self.origin_sequence = 0
 
@@ -63,9 +66,9 @@ class Node:
         self.generation += 1
 
         if self.profile.sequence_numbers:
-            # The Python model keeps the node object across simulated reboots, so
-            # this models a persistent boot generation. The embedded C++ backend
-            # will use a persistence hook for the same property.
+            # Persistent across simulated reboot in the Python model. The C++
+            # implementation will use a persistence hook/range reservation so a
+            # reboot cannot move a source sequence backwards.
             self.origin_sequence = (self.origin_sequence + 1) & 0xFFFF
             if self.origin_sequence == 0:
                 self.origin_sequence = 1
@@ -130,7 +133,8 @@ class Node:
         expiry = self.profile.neighbor_expiry_ms
         assert expiry is not None
         stale = [
-            n for n, last in self.last_heard.items()
+            neighbor
+            for neighbor, last in self.last_heard.items()
             if self.sim.now - last >= expiry
         ]
         changed = False
@@ -139,9 +143,8 @@ class Node:
             if neighbor in self.routes_by_neighbor:
                 del self.routes_by_neighbor[neighbor]
                 changed = True
-        if changed:
-            if self.rebuild_routes():
-                self.schedule_cryst("neighbor_expired")
+        if changed and self.rebuild_routes():
+            self.schedule_cryst("neighbor_expired")
         self.sim.schedule(expiry / 3, self._expiry_tick, gen)
 
     def schedule_cryst(self, reason: str) -> None:
@@ -160,10 +163,44 @@ class Node:
         )
         self.sim.schedule(delay, self._emit_cryst, token)
 
+    def _update_feasibility_from_advertisement(self) -> None:
+        """Record finite routing distances immediately before advertising them.
+
+        Babel's FD is based on updates sent by this node. A newer sequence resets
+        the metric component; within one sequence the FD metric can only decrease.
+        """
+        if not self.profile.feasibility_condition:
+            return
+        for dest, route in self.routes.items():
+            if route.distance >= ROUTE_INFINITY:
+                continue
+            state = self.feasibility.get(dest)
+            if state is None:
+                self.feasibility[dest] = FeasibilityState(
+                    route.sequence,
+                    route.distance,
+                )
+            elif sequence_newer(route.sequence, state.sequence):
+                self.feasibility[dest] = FeasibilityState(
+                    route.sequence,
+                    route.distance,
+                )
+                self.sim.metrics.sequence_resets += 1
+            elif (
+                route.sequence == state.sequence
+                and route.distance < state.feasible_distance
+            ):
+                self.feasibility[dest] = FeasibilityState(
+                    state.sequence,
+                    route.distance,
+                )
+
     def _emit_cryst(self, token: int) -> None:
         if token != self.cryst_token or not self.up or self.crashed:
             return
         self.cryst_scheduled = False
+
+        self._update_feasibility_from_advertisement()
 
         ads: List[AdvertisedRoute] = []
         if self.profile.advertise_self_route:
@@ -246,11 +283,11 @@ class Node:
                     self.sim.now + req.timeout_ms,
                 )
                 self.wait_token += 1
-                token = self.wait_token
+                wait_token = self.wait_token
                 self.sim.schedule(
                     req.timeout_ms,
                     self._e2e_timeout,
-                    token,
+                    wait_token,
                     req.packet.packet_id,
                 )
             self.sim.schedule(0, self.pump)
@@ -262,10 +299,7 @@ class Node:
             req.lcmm_ack,
             completed,
         )
-        if (
-            not req.lcmm_ack
-            and self.profile.noack_releases_lcmm_immediately
-        ):
+        if not req.lcmm_ack and self.profile.noack_releases_lcmm_immediately:
             self.sim.schedule(0, self.pump)
 
     def link_retry_timeout_ms(self, packet: Packet) -> float:
@@ -285,8 +319,8 @@ class Node:
         if not self.up or self.crashed:
             return
 
-        # Liveness is a property of hearing a valid direct RF neighbor, not of
-        # participating in a particular crystallization wave.
+        # Any valid directly-received DTPK packet proves that RF neighbour alive.
+        # This is independent of crystallization-wave participation.
         self.last_heard[previous_hop] = self.sim.now
 
         if packet.kind == "CRYST":
@@ -322,19 +356,19 @@ class Node:
             )
 
         advertised_me = any(
-            ad.dest == self.id
-            for ad in packet.advertisements
+            advertisement.dest == self.id
+            for advertisement in packet.advertisements
         )
 
         sender_sequence = 0
         if self.profile.sequence_numbers:
-            for ad in packet.advertisements:
+            for advertisement in packet.advertisements:
                 if (
-                    ad.dest == previous_hop
-                    and ad.via == previous_hop
-                    and ad.distance == 0
+                    advertisement.dest == previous_hop
+                    and advertisement.via == previous_hop
+                    and advertisement.distance == 0
                 ):
-                    sender_sequence = ad.sequence
+                    sender_sequence = advertisement.sequence
                     break
 
         incoming: Dict[int, AdvertisedRoute] = {
@@ -346,33 +380,29 @@ class Node:
             )
         }
 
-        for ad in packet.advertisements:
+        for advertisement in packet.advertisements:
             # Sender's explicit self route became the direct candidate above.
-            if self.profile.sequence_numbers and ad.dest == previous_hop:
+            if self.profile.sequence_numbers and advertisement.dest == previous_hop:
                 continue
-            # Broadcast split horizon: each receiver drops a route whose selected
-            # next hop at the sender was the receiver itself.
-            if ad.dest == self.id or ad.via == self.id:
+            # Broadcast split horizon: reject routes whose sender-selected next
+            # hop was us, and never learn a route to ourselves.
+            if advertisement.dest == self.id or advertisement.via == self.id:
                 continue
 
-            distance = ad.distance + 1
+            distance = advertisement.distance + 1
             if self.profile.distance_uint8_wrap:
                 distance &= 0xFF
             elif self.profile.max_metric is not None:
                 distance = min(distance, self.profile.max_metric)
 
-            # 255 is an explicit infinity in v2 and is never selected.
-            if (
-                self.profile.sequence_numbers
-                and distance >= ROUTE_INFINITY
-            ):
+            if self.profile.sequence_numbers and distance >= ROUTE_INFINITY:
                 continue
 
-            incoming[ad.dest] = AdvertisedRoute(
-                ad.dest,
+            incoming[advertisement.dest] = AdvertisedRoute(
+                advertisement.dest,
                 previous_hop,
                 distance,
-                ad.sequence,
+                advertisement.sequence,
             )
 
         old = self.routes_by_neighbor.get(previous_hop)
@@ -382,10 +412,7 @@ class Node:
 
         should_send = (
             (not advertised_me)
-            or (
-                self.profile.propagate_on_route_change
-                and best_changed
-            )
+            or (self.profile.propagate_on_route_change and best_changed)
         )
         self.sim.log(
             "cryst_rx",
@@ -438,133 +465,55 @@ class Node:
     def _route_candidates(self) -> Dict[int, List[Route]]:
         candidates: Dict[int, List[Route]] = defaultdict(list)
         for router, contribution in self.routes_by_neighbor.items():
-            for dest, ad in contribution.items():
+            for dest, advertisement in contribution.items():
                 if dest == self.id:
                     continue
                 candidates[dest].append(
                     Route(
                         router,
-                        ad.via,
-                        ad.distance,
-                        ad.sequence,
+                        advertisement.via,
+                        advertisement.distance,
+                        advertisement.sequence,
                     )
                 )
         return candidates
 
-    @staticmethod
-    def _newest_sequence(routes: List[Route]) -> int:
-        newest = routes[0].sequence
-        for route in routes[1:]:
-            if sequence_newer(route.sequence, newest):
-                newest = route.sequence
-        return newest
+    def _is_feasible(self, dest: int, route: Route) -> bool:
+        if route.distance >= ROUTE_INFINITY:
+            return False
 
-    def _rebuild_feasible(self, old: Dict[int, Route]) -> Dict[int, Route]:
+        state = self.feasibility.get(dest)
+        if state is None:
+            return True
+
+        if sequence_newer(route.sequence, state.sequence):
+            return True
+
+        if route.sequence != state.sequence:
+            return False
+
+        # Feasibility compares the metric announced by our neighbour, not our
+        # local route metric. With unit-cost links that value is distance - 1.
+        neighbour_metric = max(0, route.distance - 1)
+        return neighbour_metric < state.feasible_distance
+
+    def _rebuild_feasible(self) -> Dict[int, Route]:
         candidates = self._route_candidates()
         new: Dict[int, Route] = {}
 
         for dest, routes in candidates.items():
-            routes = [
-                route
-                for route in routes
-                if route.distance < ROUTE_INFINITY
-            ]
-            if not routes:
+            finite = [route for route in routes if route.distance < ROUTE_INFINITY]
+            feasible = [route for route in finite if self._is_feasible(dest, route)]
+            self.sim.metrics.feasibility_rejects += len(finite) - len(feasible)
+            if not feasible:
                 continue
 
-            state = self.feasibility.get(dest)
-            current = old.get(dest)
-
-            if state is None:
-                newest = self._newest_sequence(routes)
-                same_generation = [
-                    route
-                    for route in routes
-                    if route.sequence == newest
-                ]
-                chosen = min(
-                    same_generation,
-                    key=lambda route: (route.distance, route.next_hop),
-                )
-                self.feasibility[dest] = FeasibilityState(
-                    newest,
-                    chosen.distance,
-                )
-                new[dest] = chosen
-                continue
-
-            newer = [
-                route
-                for route in routes
-                if sequence_newer(route.sequence, state.sequence)
-            ]
-            if newer:
-                newest = self._newest_sequence(newer)
-                fresh = [
-                    route
-                    for route in newer
-                    if route.sequence == newest
-                ]
-                chosen = min(
-                    fresh,
-                    key=lambda route: (route.distance, route.next_hop),
-                )
-                self.feasibility[dest] = FeasibilityState(
-                    newest,
-                    chosen.distance,
-                )
-                self.sim.metrics.sequence_resets += 1
-                new[dest] = chosen
-                continue
-
-            same = [
-                route
-                for route in routes
-                if route.sequence == state.sequence
-            ]
-
-            # The selected successor may report a worse metric without raising
-            # feasible distance. Switching to another successor is allowed only
-            # if that neighbor advertises a metric strictly below our FD. With
-            # unit link cost its advertised metric is local_distance - 1.
-            selected_candidate = None
-            if current is not None and current.sequence == state.sequence:
-                selected_candidate = next(
-                    (
-                        route
-                        for route in same
-                        if route.next_hop == current.next_hop
-                    ),
-                    None,
-                )
-
-            feasible_successors = [
-                route
-                for route in same
-                if max(0, route.distance - 1) < state.feasible_distance
-            ]
-
-            valid = list(feasible_successors)
-            if (
-                selected_candidate is not None
-                and selected_candidate not in valid
-            ):
-                valid.append(selected_candidate)
-
-            if not valid:
-                if same:
-                    self.sim.metrics.feasibility_rejects += len(same)
-                continue
-
-            chosen = min(
-                valid,
+            # Sequence numbers are admission/safety information, not a route
+            # preference. Among feasible routes choose minimum local metric.
+            new[dest] = min(
+                feasible,
                 key=lambda route: (route.distance, route.next_hop),
             )
-            self.feasibility[dest] = FeasibilityState(
-                state.sequence,
-                min(state.feasible_distance, chosen.distance),
-            )
-            new[dest] = chosen
 
         return new
 
@@ -572,7 +521,7 @@ class Node:
         old = self.routes
 
         if self.profile.feasibility_condition:
-            new = self._rebuild_feasible(old)
+            new = self._rebuild_feasible()
         else:
             candidates = self._route_candidates()
             new: Dict[int, Route] = {}
@@ -673,10 +622,7 @@ class Node:
         )
 
     def receive_ack_local(self, packet: Packet, positive: bool) -> None:
-        if (
-            self.waiting_e2e is None
-            or self.waiting_e2e[0] != packet.packet_id
-        ):
+        if self.waiting_e2e is None or self.waiting_e2e[0] != packet.packet_id:
             self.sim.log(
                 "unexpected_e2e",
                 node=self.id,
