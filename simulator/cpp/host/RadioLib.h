@@ -5,6 +5,9 @@
 #include <cstring>
 
 #define RADIOLIB_ERR_NONE 0
+#define RADIOLIB_PREAMBLE_DETECTED -14
+#define RADIOLIB_CHANNEL_FREE -15
+#define RADIOLIB_LORA_DETECTED -702
 #define RADIOLIB_SX126X_SYNC_WORD_PRIVATE 0x12
 
 class SX1262 {
@@ -18,6 +21,7 @@ public:
     uint16_t preamble_length = 0;
     int rssi = -120;
     int start_transmit_result = RADIOLIB_ERR_NONE;
+    int scan_channel_result = RADIOLIB_CHANNEL_FREE;
     bool receiving = false;
     bool sleeping = false;
     bool standby_mode = false;
@@ -72,6 +76,7 @@ public:
         return RADIOLIB_ERR_NONE;
     }
 
+    int scanChannel() { return scan_channel_result; }
     int getRSSI(bool = false) { return rssi; }
     uint32_t random(uint32_t max_value) {
         return max_value ? (0x1234u % max_value) : 0;
