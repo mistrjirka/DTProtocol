@@ -29,6 +29,11 @@ SX1262_STBY_RC_TO_RX_MS = 0.083
 SX1262_STBY_RC_TO_TX_MS = 0.126
 SX1262_WARM_SLEEP_TO_STBY_RC_MS = 0.340
 
+# AN1200.48 measured reference for the DTProtocol default PHY. This is a lab
+# result, not a replacement for the generic datasheet CAD timing equation used
+# by EnvironmentKernel for arbitrary SF/BW combinations.
+AN1200_48_SF9_BW125_CAD4_MEASURED_MS = 19.145
+
 RSSI_CCA_SAMPLES = 3
 RSSI_CCA_SAMPLE_SPACING_MS = 10.0
 
