@@ -8,9 +8,8 @@ subprocess protocol into a coroutine: on hardware ``MAC::sendData()`` remains in
 continuous RX for ~20 ms, can latch DIO1, and may then return a transient busy
 result to LCMM.
 
-For clear-channel and non-contention experiments we can still reproduce the
-important wall-clock ordering exactly enough to compare Python and C++ protocol
-behavior:
+For clear-channel and non-contention experiments we reproduce the important
+wall-clock ordering:
 
     firmware sendData call
       -> 3-sample RSSI CCA
@@ -22,15 +21,16 @@ behavior:
 and on reception:
 
     RF end / RX_DONE
-      -> RadioLib/MAC IRQ + packet-buffer SPI reads
+      -> RadioLib/MAC IRQ + packet-buffer SPI reads while SX1262 remains in
+         continuous RX and automatically searches for the next packet
       -> firmware RX callback
-      -> (immediate outbound ACK/TX, or RX re-arm)
+      -> (immediate outbound ACK/TX, or explicit startReceive re-arm call)
 
 The overlay is deliberately conservative during the synthetic clear CCA: the
 fake subprocess has already entered its SENDING state, so the simulated radio is
-considered unavailable for reception.  Therefore this backend is *not* the MAC
-capacity oracle under ``radio_contention=True``; SharedPythonNetwork remains the
-production-CCA model for those experiments.
+considered unavailable for reception. Therefore this backend is *not* the MAC
+capacity oracle under ``radio_contention=True``; TimedSharedPythonNetwork remains
+the production-CCA model for those experiments.
 """
 
 from typing import Dict
@@ -51,6 +51,9 @@ class TimedSharedCppNetwork(SharedCppNetwork):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        # This tracks intervals in which RF reception itself is unavailable
+        # (TX/setup/re-arm), not host-side SPI reads while continuous RX remains
+        # active.
         self._radio_rx_ready_at: Dict[int, float] = {}
 
     def add_node(self, node_id: int, **kwargs) -> None:
@@ -98,7 +101,7 @@ class TimedSharedCppNetwork(SharedCppNetwork):
         rf_end = rf_start + airtime
         rx_ready = rf_end + rx_rearm_ms()
 
-        # The subprocess fake MAC already considers itself SENDING.  Treat the
+        # The subprocess fake MAC already considers itself SENDING. Treat the
         # radio as unavailable until the real MAC would have completed TX and
         # restored continuous RX.
         self._radio_rx_ready_at[sender] = max(
@@ -203,11 +206,10 @@ class TimedSharedCppNetwork(SharedCppNetwork):
 
         frame_bytes = MAC_OVERHEAD + len(payload)
         read_done = rf_end + latency_ms + rx_packet_read_ms(frame_bytes)
-        # Until the packet buffer/IRQ sequence has completed the receiver cannot
-        # safely begin another modeled frame.
-        self._radio_rx_ready_at[receiver] = max(
-            self._radio_rx_ready_at.get(receiver, 0.0), read_done
-        )
+        # In SX1262 Rx Continuous mode RX_DONE does not leave RX: the chip
+        # automatically searches for the next packet while the host reads the
+        # previous buffer. Delay the firmware callback, but do not mark RF RX
+        # unavailable merely because SPI/CPU work is in progress.
         self.schedule_at(
             read_done,
             self._firmware_deliver_after_read,
@@ -242,13 +244,13 @@ class TimedSharedCppNetwork(SharedCppNetwork):
 
         if txs:
             # A reliable DATA callback can synchronously start its link ACK.
-            # _start_tx() below replaces the read deadline with the full
+            # _start_tx() below replaces the receive state with the full
             # CCA/setup/TX/re-arm deadline.
             self._handle_txs(receiver, txs, self.now)
         else:
-            # No immediate TX: production MAC::loop calls startReceive() after
-            # the RX callback returns.  Keep the radio unavailable through that
-            # documented SPI + STBY_RC->RX interval.
+            # The chip has remained in continuous RX, but production MAC::loop
+            # explicitly calls startReceive() again after the callback. Model
+            # that short command/re-arm interval from callback return onward.
             self._radio_rx_ready_at[receiver] = max(
                 self._radio_rx_ready_at.get(receiver, 0.0),
                 self.now + rx_rearm_after_read_ms(),
