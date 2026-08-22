@@ -74,6 +74,7 @@ private:
     static constexpr uint32_t HELLO_PERIOD_MS = 10000;
     static constexpr uint32_t HELLO_JITTER_MS = 2000;
     static constexpr uint32_t NEIGHBOR_EXPIRY_MS = 30000;
+    static constexpr uint32_t MAINTENANCE_PERIOD_MS = 1000;
     static constexpr uint32_t CRYST_JITTER_MIN_MS = 200;
     static constexpr uint32_t CRYST_JITTER_MAX_MS = 1500;
     static constexpr uint32_t CRYST_ASSEMBLY_EXPIRY_MS = 30000;
@@ -136,6 +137,7 @@ private:
     uint16_t _originSequence;
     uint32_t _routeVersion;
     int32_t _helloRemaining;
+    int32_t _maintenanceRemaining;
 
     std::vector<DTPKPacketRequest> _packetRequests;
     std::vector<DTPKPacketWaiting> _packetWaiting;
@@ -187,7 +189,8 @@ private:
     void sendHello();
     void sendCrystRequest(uint16_t neighbor);
     void sendSeqRequest(uint16_t destination, uint16_t requestedSequence);
-    void sendNackPacket(uint16_t target, uint16_t from, uint16_t id);
+    void sendNackPacket(uint16_t target, uint16_t from, uint16_t id,
+                        uint16_t failedDestination);
     void sendAckPacket(uint16_t target, uint16_t from, uint16_t id);
 
     void parseCrystPacket(std::pair<DTPKPacketUnknownReceive *, size_t> packet);
