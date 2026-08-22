@@ -1,58 +1,88 @@
 #ifndef CRYST_DATABASE_H
 #define CRYST_DATABASE_H
+
 #include <stdint.h>
-#include <functional>
-#include <mac.h>
-#include <lcmm.h>
-#include "generalsettings.h"
-#include <vector>
-#include <unordered_map>
+#include <stddef.h>
 #include <algorithm>
-#include <queue>
-#include <mathextension.h>
-#include <DTPKDefinitions.h>
-#include <DTPKDefinitions.h>
 #include <unordered_map>
+#include <vector>
+
+#include <DTPKDefinitions.h>
+
+struct CrystSequenceRequest
+{
+    uint16_t destination;
+    uint16_t requestedSequence;
+};
 
 class CrystDatabase
 {
 public:
+    explicit CrystDatabase(uint16_t id);
+
     RoutingRecord *getRouting(uint16_t id);
 
-    bool removeRouting(uint16_t id);
+    // A HELLO proves the direct neighbour alive. If `invalidateIndirect` is
+    // true (new incarnation / no full-state knowledge), all old indirect
+    // contribution from that neighbour is discarded immediately.
+    bool updateDirectNeighbor(uint16_t from,
+                              uint16_t originSequence,
+                              bool invalidateIndirect = false);
 
-    bool addRouting(uint16_t id, NeighborRecord);
+    // Replace one neighbour's complete contribution transactionally after the
+    // DTPK layer has reassembled all CRYST chunks.
+    bool updateFromCrystPacket(uint16_t from,
+                               uint16_t originSequence,
+                               const NeighborRecordV2 *records,
+                               size_t count);
 
-    bool addRoutingFromDataPacket(uint16_t from, uint16_t originalSender);
+    bool removeNeighbor(uint16_t from);
 
-    void changeMap(unordered_multimap<uint16_t, NeighborRecord>);
+    // Feasible distance is based on state this node actually advertises. Call
+    // immediately before serialising a route-state snapshot.
+    void noteAdvertisedRoutes();
 
-    unordered_multimap<uint16_t, NeighborRecord> getMap();
+    std::vector<NeighborRecordV2> getListOfRoutesV2() const;
 
-    bool updateFromCrystPacket(uint16_t from, NeighborRecord *packet, int numOfNeighbours);
+    // Backward-compatible application/UI view used by Picopod.
+    std::vector<NeighborRecord> getListOfNeighbours() const;
 
-    void buildCache();
-
-    bool isInCrystalizationSession();
-
-    void startCrystalizationSession();
-
-    bool endCrystalizationSession();
-
-    vector<NeighborRecord> getListOfNeighbours();
-
-    CrystDatabase(uint16_t id);
+    // Rebuilds that lose a destination solely because every candidate is
+    // infeasible enqueue a generation request. DTPK applies flood cooldown and
+    // transmission policy.
+    std::vector<CrystSequenceRequest> takeSequenceRequests();
 
 private:
-    uint16_t myId;
-    bool crystalizationSession;
-    vector<uint16_t> crystalizationSessionIds; // ids of nodes that are in crystalization session. In the end everything that is not in the crystalization session will be deleted
-    unordered_multimap<uint16_t, NeighborRecord> routeToId;
-    unordered_map<uint16_t, RoutingRecord> idToRouteCache;
+    struct Candidate
+    {
+        uint16_t destination;
+        uint16_t router;
+        uint16_t sequence;
+        uint8_t distance;
+        uint8_t neighborMetric;
+    };
 
-    vector<NeighborRecord> getNeighboursFromPacket(uint16_t from, NeighborRecord *packet, int numOfNeighbours);
-    bool compareNeighbours(vector<NeighborRecord> a, vector<NeighborRecord> b); 
-    bool amIInNeighbours(NeighborRecord *packet, int numOfNeighbours);
+    struct FeasibilityRecord
+    {
+        uint16_t sequence;
+        uint8_t feasibleDistance;
+    };
+
+    uint16_t myId;
+    std::unordered_map<uint16_t, std::vector<Candidate>> routesByNeighbor;
+    std::unordered_map<uint16_t, RoutingRecord> routeCache;
+    std::unordered_map<uint16_t, FeasibilityRecord> feasibility;
+    std::vector<CrystSequenceRequest> pendingSequenceRequests;
+
+    static bool sequenceNewer(uint16_t a, uint16_t b);
+    static uint16_t nextSequence(uint16_t value);
+    static bool candidateEqual(const Candidate &a, const Candidate &b);
+    static bool routeEqual(const RoutingRecord &a, const RoutingRecord &b);
+
+    bool candidateFeasible(const Candidate &candidate) const;
+    bool rebuildCache();
+    void queueSequenceRequest(uint16_t destination, uint16_t requestedSequence);
+    static void sortCandidates(std::vector<Candidate> &records);
 };
 
 #endif
