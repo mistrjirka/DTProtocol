@@ -78,6 +78,7 @@ private:
     static constexpr uint32_t CRYST_JITTER_MAX_MS = 1500;
     static constexpr uint32_t CRYST_ASSEMBLY_EXPIRY_MS = 30000;
     static constexpr uint32_t SEQ_REQ_COOLDOWN_MS = 5000;
+    static constexpr uint8_t SEQ_REQ_MAX_ATTEMPTS = 5;
     static constexpr uint16_t MAX_CRYST_CHUNKS = 256;
     static constexpr size_t RECENT_DATA_CACHE_SIZE = 64;
     static constexpr size_t RECENT_SEQ_REQ_CACHE_SIZE = 64;
@@ -114,6 +115,13 @@ private:
         std::vector<uint8_t> received;
     };
 
+    struct PendingSeqRequest
+    {
+        uint16_t requestedSequence = 0;
+        uint32_t lastSent = 0;
+        uint8_t attempts = 0;
+    };
+
     std::array<PacketIdentity, RECENT_DATA_CACHE_SIZE> _recentData{};
     size_t _recentDataNext = 0;
     std::array<SeqRequestIdentity, RECENT_SEQ_REQ_CACHE_SIZE> _recentSeqRequests{};
@@ -141,7 +149,7 @@ private:
     std::unordered_map<uint16_t, uint32_t> _lastHeard;
     std::unordered_map<uint16_t, NeighborState> _neighborState;
     std::unordered_map<uint16_t, CrystAssembly> _crystAssemblies;
-    std::unordered_map<uint16_t, uint32_t> _seqRequestLastSent;
+    std::unordered_map<uint16_t, PendingSeqRequest> _pendingSeqRequests;
 
     DTPK(uint8_t KLimit, uint16_t originSequence);
 
@@ -162,6 +170,7 @@ private:
     void expireNeighbours();
     void expireAssemblies();
     void processSequenceRequests();
+    void retrySequenceRequests();
 
     void addPacketToSendingQueue(DTPKPacketUnknown *packet,
                                  size_t size,
