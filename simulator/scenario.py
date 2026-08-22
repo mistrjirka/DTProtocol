@@ -59,13 +59,13 @@ class AppSendEvent:
 class Scenario:
     """Backend-independent experiment definition.
 
-    Topology, continuous trajectories, environmental failures and application
-    demand are defined before protocol execution. ``build("python")`` and
-    ``build("cpp")`` attach different protocol implementations to the same
-    EnvironmentKernel semantics and keyed physical randomness.
+    Topology, continuous trajectories, environmental failures, optional shared
+    channel contention and application demand are defined before protocol
+    execution. Only the protocol/node implementation changes between backends.
     """
 
     seed: int = 1
+    radio_contention: bool = False
     nodes: List[NodeSpec] = field(default_factory=list)
     links: List[LinkSpec] = field(default_factory=list)
     trajectories: Dict[int, List[Tuple[float, float, float]]] = field(default_factory=dict)
@@ -81,16 +81,20 @@ class Scenario:
         binary: Optional[str] = None,
         tick_ms: float = 50.0,
     ):
+        common = {
+            "seed": self.seed,
+            "radio_contention": self.radio_contention,
+        }
         if backend == "python":
             network = SharedPythonNetwork(
-                seed=self.seed,
                 profile=profile or Profile.current(),
+                **common,
             )
         elif backend == "cpp":
             network = SharedCppNetwork(
-                seed=self.seed,
                 binary=binary,
                 tick_ms=tick_ms,
+                **common,
             )
         else:
             raise ValueError(f"unknown backend {backend!r}")
@@ -151,6 +155,7 @@ class Scenario:
         raw = json.loads(text)
         return Scenario(
             seed=raw.get("seed", 1),
+            radio_contention=raw.get("radio_contention", False),
             nodes=[NodeSpec(**x) for x in raw.get("nodes", [])],
             links=[LinkSpec(**x) for x in raw.get("links", [])],
             trajectories={
@@ -173,8 +178,9 @@ class Scenario:
         jitter_ms: float = 0.0,
         spacing: float = 1.0,
         max_range: Optional[float] = None,
+        radio_contention: bool = False,
     ) -> "Scenario":
-        scenario = Scenario(seed=seed)
+        scenario = Scenario(seed=seed, radio_contention=radio_contention)
         scenario.nodes = [
             NodeSpec(i, (float(i - 1) * spacing, 0.0))
             for i in range(1, n + 1)
