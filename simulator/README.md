@@ -22,7 +22,7 @@ It owns:
 - LoRa airtime;
 - RF loss RNG;
 - latency/jitter;
-- later, shared collision/LBT/channel occupancy modelling.
+- shared-channel occupancy, collision/hidden-terminal and RSSI-CCA/backoff modelling.
 
 Two protocol implementations attach to that same environment:
 
@@ -47,6 +47,8 @@ This is the preferred way to do differential testing. Topology, trajectories, fa
 - `current`: reproduces important behavior of the current C++ implementation, including the global end-to-end ACK gate, no triggered CRYST on every route change, unreliable relayed hops, forwarding-size growth, uint8 metric wrap, etc.
 - `intended`: fixes implementation defects while keeping event-triggered crystallization semantics.
 - `robust`: `intended` plus periodic CRYST refresh and per-neighbor expiry. This is a test candidate, **not yet a claim that the protocol is proven correct**.
+- `feasible`: adds destination generations + the loop-free feasibility condition.
+- `cryst-v2`: event-triggered/chunked CRYST, HELLO state identity, sequence requests, explicit infinity and feasibility; this is the current v2 design candidate.
 
 ## Examples
 
@@ -81,10 +83,11 @@ Sanitizers are also exercised in CI. On the reference implementation that job is
 - data forwarding, end-to-end DTPK ACK/NACK, and per-hop LCMM-style retries;
 - packet/ACK loss, latency/jitter, partitions/healing, node failures/reboots;
 - continuous moving-node geometry over the complete RF airtime;
-- LoRa airtime approximation and the 255-byte packet ceiling;
+- documented LoRa airtime and the 255-byte packet ceiling;
+- RSSI CCA timing, 25-250 ms randomized backoff, collisions, hidden terminals and half-duplex;
 - important current implementation defects as Python profile switches.
 
-Shared-channel collision/hidden-terminal/CAD/LBT modelling is the next major physical-layer addition.
+The main remaining RF realism gaps are received-power/capture/preamble-lock and an asynchronous C++-subprocess CCA handshake. See `SIMULATOR_VALIDATION.md`; do not use the C++ backend as the quantitative contention-capacity oracle yet.
 
 ## Correctness properties checked by `audit()`
 
@@ -125,3 +128,13 @@ After convergence, selected hop count should equal graph shortest-path distance 
 The current crystallization session uses "which neighbors transmitted during this wave" as a liveness test. These are not equivalent facts. A healthy neighbor may have no reason to transmit during another node's quiet-period session and can therefore be removed. `robust` disables session-participation deletion and instead uses explicit per-neighbor last-heard expiry.
 
 `experiments.py` contains Monte-Carlo convergence, hop-reliability, reconnect, and routing-loop counterexample searches.
+
+## Current v2 liveness result
+
+A direct-neighbor liveness probe is **positive evidence only**. A successful LCMM ACK refreshes liveness, but a finite number of unanswered probes must not withdraw topology: loss/half-duplex can make a healthy neighbor miss them. Only the 120 s hard no-valid-packet timeout currently removes a direct neighbor.
+
+This distinction was found by the real-C++ scale simulator. With the old "two failed probes = dead" rule a stable 64-node line was correct at 600 s but later lost 626 routes at 1200 s before relearning them. Keeping the 120 s hard timeout while removing failed-probe eviction stayed at 0 missing / 0 wrong routes through 1500 s; a 96-node line reached 0 / 0 by 1200 s and stayed there through 2400 s.
+
+## Mobile hint
+
+`mobile_hint` is not a correctness input and is not transmitted. It only shortens that node's HELLO period from 10 s to 4 s. A 500-seed two-node contact experiment found the hint useful for short encounters (5 s: 92.8% versus 55.4% mutual discovery), while the difference disappeared by roughly 10-12 s. In a stable two-node 60 s run it increased modeled bytes on air from 350 to 530. Keep it optional/local; do not use it in feasibility, route metrics, expiry or advertised state.

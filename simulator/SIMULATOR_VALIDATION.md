@@ -105,6 +105,19 @@ The safer API is therefore a **local HELLO-period / fast-discovery override**, n
 routing identity. A wrong setting then only trades airtime for discovery latency and
 can never change feasibility, route validity, sequence handling or loop prevention.
 
+
+### Stable-network liveness stress result
+
+Large real-C++ line tests exposed a false-failure mode in the earlier v2 liveness policy. Two unanswered reliable CRYST probes were being treated as authoritative proof that a direct neighbor was gone. On a stable 64-node line this caused large indirect route withdrawals/relearn waves even though every one-hop route was still physically valid.
+
+Isolation tests separated the two mechanisms:
+
+- 120 s hard inactivity + **failed-probe eviction disabled**: 64 nodes stayed 0 missing / 0 wrong through 1500 s; 96 nodes reached 0 / 0 by 1200 s and stayed there through 2400 s.
+- hard expiry effectively disabled + **two-failed-probe eviction enabled**: the 64-node collapse reproduced (376 missing routes at 1140 s, 626 at 1200 s).
+- a 60 s hard timeout, even without failed-probe eviction, was still too aggressive at this scale.
+
+Therefore probe success may refresh liveness, but probe failure is only suspicion. Current C++ v2 changes topology only after 120 s without any valid packet from that neighbor. Future faster failure response should be a local soft-suspect/data-path policy, not a network-wide route withdrawal inferred from a small number of missed RF exchanges.
+
 ## Large-network interpretation rules
 
 - **Lines / sparse graphs without `radio_contention`:** suitable for routing-state,
