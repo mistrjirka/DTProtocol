@@ -23,6 +23,8 @@ target_include_directories(dtprotocol_host_node BEFORE PRIVATE
     ${REPO_ROOT}/include
 )
 
+# Concatenate -include with its path: CMake otherwise de-duplicates repeated
+# `-include` tokens and can leave the second header looking like a source file.
 target_compile_options(dtprotocol_host_node PRIVATE
     -include${CMAKE_CURRENT_SOURCE_DIR}/host/mac.h
     -include${REPO_ROOT}/include/mathextension.h
