@@ -8,6 +8,16 @@ SIM_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIM_ROOT))
 
 from environment import EnvironmentKernel
+from radio_timing import (
+    RADIOLIB6_DEFAULT_SPI_HZ,
+    SX1262_STBY_RC_TO_RX_MS,
+    SX1262_STBY_RC_TO_TX_MS,
+    rssi_cca_duration_ms,
+    rssi_sample_offsets_ms,
+    rx_rearm_ms,
+    spi_wire_time_ms,
+    tx_startup_ms,
+)
 from scenario import LinkSpec, Scenario
 
 
@@ -54,6 +64,43 @@ def test_airtime_matches_radiolib_equation_across_supported_profiles(
     assert env.airtime_ms(payload) == pytest.approx(
         _reference_airtime_ms(payload, sf, bandwidth_hz), abs=1e-9
     )
+
+
+def test_radiolib6_default_spi_is_well_below_sx1262_limit():
+    # RadioLib 6 defaults to 2 MHz. SX1261/2 permits 16 MHz SCK, so the default
+    # path is comfortably inside the chip timing bound.
+    assert RADIOLIB6_DEFAULT_SPI_HZ == 2_000_000
+    assert RADIOLIB6_DEFAULT_SPI_HZ <= 16_000_000
+    assert spi_wire_time_ms(255, RADIOLIB6_DEFAULT_SPI_HZ) == pytest.approx(
+        1.020, abs=1e-12
+    )
+
+
+def test_production_rssi_cca_timing_is_three_samples_over_twenty_ms():
+    offsets = rssi_sample_offsets_ms()
+    assert len(offsets) == 3
+    assert offsets[0] > 0.0
+    assert offsets[1] - offsets[0] == pytest.approx(10.012, abs=1e-9)
+    assert offsets[2] - offsets[1] == pytest.approx(10.012, abs=1e-9)
+    assert rssi_cca_duration_ms() == pytest.approx(20.036, abs=1e-9)
+
+
+def test_tx_startup_includes_frame_sized_spi_transfer_and_radio_ramp():
+    # A full frame requires >1 ms just to clock the RadioLib command/buffer
+    # sequence at its default 2 MHz before the SX1262 PA transition completes.
+    full = tx_startup_ms(255)
+    short = tx_startup_ms(20)
+    assert full > 1.3
+    assert short > SX1262_STBY_RC_TO_TX_MS
+    assert full > short
+    assert full - short == pytest.approx(
+        spi_wire_time_ms(255 - 20), abs=1e-12
+    )
+
+
+def test_rx_rearm_contains_spi_commands_and_physical_rx_transition():
+    assert rx_rearm_ms() > SX1262_STBY_RC_TO_RX_MS
+    assert 0.20 < rx_rearm_ms() < 0.35
 
 
 def test_default_link_delay_is_not_fake_radio_propagation():
