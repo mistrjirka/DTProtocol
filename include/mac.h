@@ -129,6 +129,12 @@ public:
       dutyCycleUntil = 0;
   }
 
+  // RSSI energy sensing is the default. SX126x CAD is a LoRa correlator whose
+  // detection probability falls near sensitivity and which only sees matching
+  // LoRa waveforms; enable it only as an additional check after RSSI says free.
+  void setCadCarrierSenseEnabled(bool enabled) { cadCarrierSenseEnabled = enabled; }
+  bool isCadCarrierSenseEnabled() const { return cadCarrierSenseEnabled; }
+
   uint32_t getTransmitWaitMs() const;
 
   // Helper for applications that explicitly enable a duty limit and want to
@@ -189,6 +195,7 @@ private:
   MACRegion region;
   int maxConductedPowerDbm;
   uint8_t dutyCyclePercent;
+  bool cadCarrierSenseEnabled;
 
   int noiseFloor[13];
   uint16_t id;
