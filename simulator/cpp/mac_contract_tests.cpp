@@ -46,9 +46,17 @@ int main() {
     mac->setMode(SENDING, true);
     assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_BUSY);
 
+    // CAD detects LoRa activity even when RSSI itself remains below the energy
+    // threshold. v2 must return quickly and impose randomized retry backoff.
+    mac->setMode(RECEIVING, true);
+    radio.scan_channel_result = RADIOLIB_LORA_DETECTED;
+    assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_CHANNEL_BUSY_TIMEOUT);
+    assert(mac->getTransmitWaitMs() > 0);
+    delay(mac->getTransmitWaitMs());
+    radio.scan_channel_result = RADIOLIB_CHANNEL_FREE;
+
     // A synchronous RadioLib startTransmit failure must return an error and
     // restore RX state instead of wedging forever in SENDING.
-    mac->setMode(RECEIVING, true);
     radio.start_transmit_result = -42;
     assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_RADIO_ERROR);
     assert(mac->getMode() == RECEIVING);
@@ -57,6 +65,19 @@ int main() {
     radio.start_transmit_result = RADIOLIB_ERR_NONE;
     assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_OK);
     assert(mac->getMode() == SENDING);
+
+    // Simulate TX-done IRQ. EU868 must then remain non-blockingly unavailable
+    // until the conservative 1% duty-cycle off-time expires.
+    assert(radio.dio1_action != nullptr);
+    radio.dio1_action();
+    mac->loop();
+    assert(mac->getMode() == RECEIVING);
+    assert(mac->getTransmitWaitMs() > 0);
+    assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_DUTY_CYCLE);
+
+    delay(mac->getTransmitWaitMs());
+    assert(mac->getTransmitWaitMs() == 0);
+    assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_OK);
 
     return 0;
 }
