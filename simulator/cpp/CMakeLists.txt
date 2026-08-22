@@ -87,9 +87,12 @@ target_compile_options(dtprotocol_mac_contract PRIVATE
 target_compile_definitions(dtprotocol_mac_contract PRIVATE HOST_SIM=1)
 
 # Every invocation is a fresh process, which is important because production
-# MAC is intentionally a singleton. Exercise each regional profile separately.
+# MAC is intentionally a singleton. Region selection is practical by default;
+# one extra invocation pins the optional strict fallback-duty policy.
 add_test(NAME production_mac_eu868
          COMMAND dtprotocol_mac_contract eu868)
+add_test(NAME production_mac_eu868_strict_duty
+         COMMAND dtprotocol_mac_contract eu868 strict-duty)
 add_test(NAME production_mac_eu869_high_duty
          COMMAND dtprotocol_mac_contract eu869-high-duty)
 add_test(NAME production_mac_eu433
