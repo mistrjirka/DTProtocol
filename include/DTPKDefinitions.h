@@ -3,13 +3,6 @@
 #ifndef DPTKDefinitions_H
 #define DPTKDefinitions_H
 
-enum DTPKStates
-{
-    STANDBY,
-    WORKING,
-    CRYSTALIZATION
-};
-
 enum DTPKPacketType : uint8_t
 {
     CRYST,
@@ -45,14 +38,12 @@ typedef struct __attribute__((packed))
     uint8_t distance;
 } NeighborRecordV2;
 
-typedef struct RoutingRecord
+struct RoutingRecord
 {
     uint16_t router;
-    uint16_t originalRouter;
     uint8_t distance;
     uint16_t sequence;
-    uint8_t neighborMetric;
-} RoutingRecord;
+};
 
 typedef struct __attribute__((packed))
 {
@@ -175,12 +166,5 @@ typedef struct __attribute__((packed))
     uint16_t id;
     unsigned char data[];
 } DTPKPacketUnknownReceive;
-
-typedef struct __attribute__((packed))
-{
-    LCMMDataHeader lcmm;
-    DTPKPacketHeader header;
-    uint16_t responseId;
-} DTPKPacketACKReceive;
 
 #endif

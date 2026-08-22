@@ -35,10 +35,8 @@ bool CrystDatabase::candidateEqual(const Candidate &a, const Candidate &b)
 bool CrystDatabase::routeEqual(const RoutingRecord &a, const RoutingRecord &b)
 {
     return a.router == b.router &&
-           a.originalRouter == b.originalRouter &&
            a.distance == b.distance &&
-           a.sequence == b.sequence &&
-           a.neighborMetric == b.neighborMetric;
+           a.sequence == b.sequence;
 }
 
 void CrystDatabase::sortCandidates(std::vector<Candidate> &records)
@@ -107,10 +105,8 @@ bool CrystDatabase::rebuildCache()
 
             RoutingRecord candidateRoute{
                 candidate.router,
-                candidate.router,
                 candidate.distance,
-                candidate.sequence,
-                candidate.neighborMetric};
+                candidate.sequence};
 
             auto existing = nextCache.find(candidate.destination);
             const bool newerGeneration =

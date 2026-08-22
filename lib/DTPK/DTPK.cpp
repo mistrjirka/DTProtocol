@@ -8,8 +8,11 @@ DTPK *DTPK::dtpk = nullptr;
 
 void DTPK::initialize(uint8_t KLimit, uint16_t originSequence, bool mobileHint)
 {
+    // KLimit belonged to the pre-v2 crystallization-session algorithm. Keep the
+    // parameter for source compatibility, but v2 has no session window.
+    (void)KLimit;
     if (!dtpk)
-        dtpk = new DTPK(KLimit, originSequence, mobileHint);
+        dtpk = new DTPK(originSequence, mobileHint);
 }
 
 DTPK *DTPK::getInstance()
@@ -46,20 +49,18 @@ uint32_t DTPK::effectiveHelloPeriodMs() const
     return period;
 }
 
-DTPK::DTPK(uint8_t KLimit, uint16_t originSequence, bool mobileHint)
+DTPK::DTPK(uint16_t originSequence, bool mobileHint)
     : _crystDatabase(MAC::getInstance()->getId())
 {
-    _Klimit = KLimit;
     _packetCounter = 0;
-    _timeOfInit = millis();
-    _currentTime = _timeOfInit;
+    _currentTime = millis();
     _lastTick = _currentTime;
     _mobileHint = mobileHint;
 
-    _seed = MathExtension.murmur64(
+    const uint64_t seed = MathExtension.murmur64(
         (static_cast<uint64_t>(MAC::getInstance()->random()) << 32) |
         MAC::getInstance()->random());
-    randomSeed(_seed);
+    randomSeed(seed);
 
     _originSequence = originSequence == 0 ? 1 : originSequence;
     _routeVersion = 1;

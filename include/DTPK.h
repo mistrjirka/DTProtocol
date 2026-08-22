@@ -65,11 +65,6 @@ public:
     std::vector<NeighborRecord> getNeighbours();
     bool isMobileHintEnabled() const { return _mobileHint; }
 
-    static bool isAckPacket(DTPKPacketType type)
-    {
-        return type == ACK || type == NACK_NOTFOUND;
-    }
-
 private:
     static DTPK *dtpk;
     static void receivePacket(LCMMPacketDataReceive *packet, uint32_t size);
@@ -148,11 +143,8 @@ private:
     std::array<SeqRequestIdentity, RECENT_SEQ_REQ_CACHE_SIZE> _recentSeqRequests{};
     size_t _recentSeqRequestNext = 0;
 
-    uint64_t _seed;
-    uint32_t _timeOfInit;
     uint32_t _currentTime;
     uint32_t _lastTick;
-    uint8_t _Klimit;
     uint16_t _packetCounter;
     uint16_t _originSequence;
     uint32_t _routeVersion;
@@ -178,7 +170,7 @@ private:
     std::unordered_map<uint16_t, CrystAssembly> _crystAssemblies;
     std::unordered_map<uint16_t, PendingSeqRequest> _pendingSeqRequests;
 
-    DTPK(uint8_t KLimit, uint16_t originSequence, bool mobileHint);
+    DTPK(uint16_t originSequence, bool mobileHint);
 
     bool hasSeenData(uint16_t originalSender, uint16_t id) const;
     void rememberData(uint16_t originalSender, uint16_t id);

@@ -152,8 +152,6 @@ void LCMM::handleACK(LCMMPacketResponseReceive *packet, uint16_t size)
       ackWaitingSingle.id == packet->packetIds[0] &&
       ackWaitingSingle.target == packet->mac.sender)
   {
-    currentPing = millis() - packetSendStart;
-
     if (ackWaitingSingle.callback)
       ackWaitingSingle.callback(ackWaitingSingle.id, true);
 
@@ -243,15 +241,10 @@ LCMM::LCMM(DataReceivedCallback dataReceived,
   this->dataReceived = dataReceived;
   this->transmissionComplete = transmissionComplete;
   this->lastTick = millis();
-  this->packetSendStart = millis();
   this->lastSendResult = MAC_SEND_OK;
 }
 
 LCMM::~LCMM()
-{
-}
-
-void LCMM::handlePacket()
 {
 }
 
@@ -271,9 +264,6 @@ void LCMM::noAckTransmitDone()
   }
   MAC::getInstance()->setTransmitDone(dummyFunction);
 }
-
-void LCMM::sendPacketLarge(uint16_t target, unsigned char *data, uint32_t size,
-                           uint32_t timeout, uint8_t attempts) {}
 
 uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
                                 unsigned char *data, uint8_t size,
@@ -302,7 +292,6 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
     return 0;
   }
 
-  this->packetSendStart = millis();
 
   LCMMPacketData *packet =
       (LCMMPacketData *)malloc(sizeof(LCMMPacketData) + size);
