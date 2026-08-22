@@ -42,7 +42,9 @@ class LinkSpec:
     b: int
     loss: float = 0.0
     ack_loss: Optional[float] = None
-    latency_ms: float = 5.0
+    # Optional synthetic delay after RF completion. Physical propagation is
+    # negligible compared with LoRa airtime at ordinary mesh distances.
+    latency_ms: float = 0.0
     jitter_ms: float = 0.0
     up: bool = True
     max_range: Optional[float] = None
@@ -197,7 +199,7 @@ class Scenario:
         seed: int = 1,
         loss: float = 0.0,
         ack_loss: Optional[float] = None,
-        latency_ms: float = 5.0,
+        latency_ms: float = 0.0,
         jitter_ms: float = 0.0,
         spacing: float = 1.0,
         max_range: Optional[float] = None,
