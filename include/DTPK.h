@@ -78,7 +78,11 @@ private:
     static constexpr uint32_t HELLO_PERIOD_MS = 10000;
     static constexpr uint32_t MOBILE_HELLO_PERIOD_MS = 4000;
     static constexpr uint32_t HELLO_JITTER_MS = 2000;
-    static constexpr uint32_t BASE_NEIGHBOR_EXPIRY_MS = 30000;
+    // A 30 s hard timeout (only ~3 nominal HELLO periods) caused healthy
+    // neighbours to expire in larger half-duplex networks when control traffic
+    // hid several consecutive HELLOs. 60 s still detects hard failures promptly
+    // while avoiding false expiry/relearn cascades observed at 32+ nodes.
+    static constexpr uint32_t BASE_NEIGHBOR_EXPIRY_MS = 60000;
     static constexpr uint32_t MAINTENANCE_PERIOD_MS = 1000;
     static constexpr uint32_t CRYST_JITTER_MIN_MS = 200;
     static constexpr uint32_t CRYST_JITTER_MAX_MS = 1500;
@@ -89,9 +93,9 @@ private:
     static constexpr size_t RECENT_DATA_CACHE_SIZE = 64;
     static constexpr size_t RECENT_SEQ_REQ_CACHE_SIZE = 64;
 
-    // Practical/default MAC has no duty throttle, so this remains 30 s. If an
+    // Practical/default MAC has no duty throttle, so this remains 60 s. If an
     // application explicitly enables strict duty limiting before DTPK starts,
-    // this helper keeps that optional mode from breaking liveness.
+    // this helper can only increase the timeout enough to preserve liveness.
     uint32_t NEIGHBOR_EXPIRY_MS =
         MAC::getInstance()->recommendedNeighborExpiryMs(
             BASE_NEIGHBOR_EXPIRY_MS,
