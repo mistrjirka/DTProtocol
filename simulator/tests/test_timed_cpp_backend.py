@@ -24,6 +24,18 @@ requires_cpp = pytest.mark.skipif(
 )
 
 
+def test_scenario_cpp_default_tick_is_accuracy_oriented_without_starting_processes():
+    # Scenario construction with no nodes does not need the host binary. Keep
+    # the user-facing default much closer to the continuously-spinning Pico
+    # firmware loop; scale tests can still request 50-100 ms explicitly.
+    net = Scenario().build("cpp")
+    try:
+        assert isinstance(net, TimedSharedCppNetwork)
+        assert net.tick_ms == pytest.approx(10.0)
+    finally:
+        net.close()
+
+
 def test_cpp_rf_start_waits_for_clear_cca_and_radio_setup_without_host_binary():
     net = TimedSharedCppNetwork(seed=901, radio_contention=True)
     net.register_node(1, up=True)
