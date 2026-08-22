@@ -1,24 +1,30 @@
 from __future__ import annotations
+
 import copy
 from dataclasses import dataclass, replace
 from typing import Optional, Tuple
+
 BROADCAST = 0
 MAC_OVERHEAD = 8
 LCMM_OVERHEAD = 3
 LCMM_RX_HEADER = MAC_OVERHEAD + LCMM_OVERHEAD
-DTPK_GENERIC_HEADER = 7  # type:u8, id:u16, originalSender:u16, finalTarget:u16
+DTPK_GENERIC_HEADER = 7
 DTPK_CRYST_HEADER = 3
 NEIGHBOR_RECORD_SIZE = 5
+NEIGHBOR_RECORD_V2_SIZE = 7  # dest:u16, via:u16, sequence:u16, metric:u8
 MAX_PACKET_SIZE = 255
+ROUTE_INFINITY = 255
 
 
 @dataclass(frozen=True)
 class Profile:
-    """Behavior switches for the protocol implementation/model.
+    """Behavior switches for protocol experiments.
 
-    `current()` intentionally mirrors important behavior/bugs in the C++ tree.
-    `intended()` fixes implementation bugs while preserving the crystallization idea.
-    `robust()` additionally adds periodic refresh and triggered propagation.
+    `current()` mirrors important behavior/bugs in the reference C++ tree.
+    `intended()` removes implementation bugs without changing routing theory.
+    `robust()` separates liveness from crystallization and adds repair refreshes.
+    `feasible()` adds destination generations + a feasibility condition to make
+    next-hop changes loop-safe while retaining crystallization propagation.
     """
 
     name: str
@@ -42,6 +48,11 @@ class Profile:
     max_lcmm_attempts: int = 3
     e2e_timeout_ms: int = 5_000
 
+    sequence_numbers: bool = False
+    feasibility_condition: bool = False
+    origin_seq_period_ms: Optional[int] = None
+    advertise_self_route: bool = False
+
     @staticmethod
     def current() -> "Profile":
         return Profile(name="current")
@@ -60,7 +71,7 @@ class Profile:
             noack_releases_lcmm_immediately=False,
             mac_busy_silent_drop=False,
             distance_uint8_wrap=False,
-            max_metric=255,
+            max_metric=ROUTE_INFINITY,
             duplicate_suppression=True,
         )
 
@@ -72,6 +83,18 @@ class Profile:
             periodic_cryst_ms=15_000,
             neighbor_expiry_ms=45_000,
             session_gc_enabled=False,
+        )
+
+    @staticmethod
+    def feasible() -> "Profile":
+        return replace(
+            Profile.robust(),
+            name="feasible",
+            periodic_cryst_ms=30_000,
+            origin_seq_period_ms=60_000,
+            sequence_numbers=True,
+            feasibility_condition=True,
+            advertise_self_route=True,
         )
 
 
@@ -98,6 +121,7 @@ class AdvertisedRoute:
     dest: int
     via: int
     distance: int
+    sequence: int = 0
 
 
 @dataclass(frozen=True)
@@ -105,6 +129,22 @@ class Route:
     next_hop: int
     advertised_via: int
     distance: int
+    sequence: int = 0
+
+
+@dataclass
+class FeasibilityState:
+    sequence: int
+    feasible_distance: int
+
+
+def sequence_newer(a: int, b: int) -> bool:
+    """RFC1982-style comparison for 16-bit routing sequence numbers."""
+    a &= 0xFFFF
+    b &= 0xFFFF
+    if a == b:
+        return False
+    return ((a - b) & 0xFFFF) < 0x8000
 
 
 @dataclass
@@ -116,6 +156,7 @@ class Packet:
     payload_size: int = 0
     advertisements: Tuple[AdvertisedRoute, ...] = ()
     wire_dtpk_size: int = 0
+    cryst_record_size: int = NEIGHBOR_RECORD_SIZE
 
     def clone(self) -> "Packet":
         return copy.copy(self)
@@ -124,7 +165,7 @@ class Packet:
 @dataclass
 class TxRequest:
     packet: Packet
-    next_hop: Optional[int]  # None means broadcast
+    next_hop: Optional[int]
     lcmm_ack: bool
     dtpk_ack: bool = False
     timeout_ms: int = 5_000
@@ -156,3 +197,5 @@ class Metrics:
     max_queue: int = 0
     max_route_entries: int = 0
     max_contributions: int = 0
+    feasibility_rejects: int = 0
+    sequence_resets: int = 0

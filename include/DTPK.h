@@ -13,36 +13,30 @@
 #include <DTPKDefinitions.h>
 #include <CrystDatabase.h>
 
-
 /**
- * Axiomatical definition of protocol.
- * Let node be a device that is capable of sending and receiving packets with these properties:
- * If node recieves crystalization packet
- * - It will check if sender is in routing table. If not, it will add sender to the routing table with all of its children and update the routing cache.
- * - If routing cache changes, it will send crystalization packet to all of its neighbours.
- * - If node is not in crystalization session, it will start one.
- * - If node is in crystalization session, it will add sender to the list of nodes in crystalization session.
- * - If timeout of Klimit is reached, it will end crystalization session and remove all nodes that are not in crystalization session from routing table.
- * - - If routing table changes, it will send crystalization packet to all of its neighbours.
- * **/
-
-
+ * DTPK routing layer.
+ *
+ * The original crystallization algorithm is intentionally preserved on the
+ * protocol-v2 branch until the host-simulator baseline is clean. Implementation
+ * fixes in this phase must not rely on crystallization-session behavior for
+ * correctness.
+ */
 
 typedef struct CrystTimeout
 {
-    int remaining;
+    int32_t remaining;
     bool sendingPacket;
-    int remainingTimeToSend;
+    int32_t remainingTimeToSend;
 } CrystTimeout;
 
 class DTPK
 {
-    public:
-    // Callback function type definition
+public:
     using PacketReceivedCallback =
         std::function<void(DTPKPacketGenericReceive *packet, uint16_t size)>;
     using PacketAckCallback =
         std::function<void(uint8_t result, uint16_t ping)>;
+
     typedef struct DTPKPacketRequest
     {
         DTPKPacketUnknown *packet;
@@ -50,14 +44,15 @@ class DTPK
         uint16_t target;
         int32_t timeout;
         int32_t timeLeftToSend;
-        bool lcmmAck;     // ACK at LCMM layer
-        bool dtpkAck;     // ACK at DTPK layer
+        bool lcmmAck;
+        bool dtpkAck;
         DTPK::PacketAckCallback callback;
     } DTPKPacketRequest;
+
     typedef struct
     {
         uint16_t id;
-        uint32_t timeLeft;
+        int32_t timeLeft;
         uint32_t timeout;
         bool gotAck;
         bool success;
@@ -65,38 +60,35 @@ class DTPK
     } DTPKPacketWaiting;
 
     static DTPK *getInstance();
-
     static void initialize(uint8_t KLimit = 20);
+
     void setPacketReceivedCallback(PacketReceivedCallback callback);
-    uint16_t sendPacket(uint16_t target, unsigned char *packet, size_t size, int16_t timeout, bool isAck = false, PacketAckCallback callback = nullptr);
+    uint16_t sendPacket(uint16_t target, unsigned char *packet, size_t size,
+                        int16_t timeout, bool isAck = false,
+                        PacketAckCallback callback = nullptr);
     void loop();
     vector<NeighborRecord> getNeighbours();
 
-    // Add a new method to check if a packet is an acknowledgment
-    static bool isAckPacket(DTPKPacketType type) {
+    static bool isAckPacket(DTPKPacketType type)
+    {
         return type == ACK || type == NACK_NOTFOUND;
     }
 
-    private:
-
-    //Static section
-
+private:
     static DTPK *dtpk;
     static void receivePacket(LCMMPacketDataReceive *packet, uint16_t size);
     static void receiveAck(uint16_t id, bool success);
 
-    //Dynamic section
-
     uint64_t _seed;
-    uint64_t _timeOfInit;
-    uint64_t _currentTime;
-    uint64_t _lastTick;
+    uint32_t _timeOfInit;
+    uint32_t _currentTime;
+    uint32_t _lastTick;
     uint8_t _Klimit;
     uint16_t _packetCounter;
-    
+
     vector<DTPKPacketRequest> _packetRequests;
     vector<DTPKPacketWaiting> _packetWaiting;
-    queue<pair<DTPKPacketUnknownReceive*, size_t>> _packetReceived;
+    queue<pair<DTPKPacketUnknownReceive *, size_t>> _packetReceived;
     CrystDatabase _crystDatabase;
     CrystTimeout _crystTimeout;
     PacketReceivedCallback _recieveCallback;
@@ -106,34 +98,33 @@ class DTPK
     DTPKPacketCryst *prepareCrystPacket(size_t *size);
     bool isPacketForMe(DTPKPacketUnknownReceive *packet, size_t size);
 
-    void addPacketToSendingQueue(DTPKPacketUnknown *packet, 
-                                size_t size, 
-                                uint16_t target, 
-                                int16_t timeout, 
-                                int16_t timeLeftToSend, 
-                                bool lcmmAck = false,
-                                bool dtpkAck = false,
-                                PacketAckCallback callback = nullptr);
-    
-    void sendPacketToTarget(DTPKPacketUnknown* packet, 
-                           size_t size, 
-                           uint16_t target, 
-                           int16_t timeout, 
-                           bool dtpkAck);
+    void addPacketToSendingQueue(DTPKPacketUnknown *packet,
+                                 size_t size,
+                                 uint16_t target,
+                                 int16_t timeout,
+                                 int16_t timeLeftToSend,
+                                 bool lcmmAck = false,
+                                 bool dtpkAck = false,
+                                 PacketAckCallback callback = nullptr);
+
+    void sendPacketToTarget(DTPKPacketUnknown *packet,
+                            size_t size,
+                            uint16_t target,
+                            int16_t timeout,
+                            bool dtpkAck);
 
     void sendCrystPacket();
     void sendNackPacket(uint16_t target, uint16_t from, uint16_t id);
     void sendAckPacket(uint16_t target, uint16_t from, uint16_t id);
 
-    void parseCrystPacket(pair<DTPKPacketUnknownReceive*, size_t> packet);
-    void parseSingleDataPacket(pair<DTPKPacketUnknownReceive*, size_t> packet);
+    void parseCrystPacket(pair<DTPKPacketUnknownReceive *, size_t> packet);
+    void parseSingleDataPacket(pair<DTPKPacketUnknownReceive *, size_t> packet);
 
     void receivingDeamon();
     void sendingDeamon();
     void timeoutDeamon();
     void crystDeamon();
 
-    
     DTPK(uint8_t KLimit);
 };
 
