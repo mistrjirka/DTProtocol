@@ -27,6 +27,14 @@ bool radioOk(int status)
   Serial.println("RadioLib configuration error: " + String(status));
   return false;
 }
+
+bool irqPending()
+{
+  noInterrupts();
+  const bool pending = MAC::operationDone;
+  interrupts();
+  return pending;
+}
 } // namespace
 
 MAC::MAC(
@@ -58,6 +66,7 @@ MAC::MAC(
       // strict legal fallback limits are available through
       // setDutyCycleLimitPercent() when an application explicitly wants them.
       dutyCyclePercent(0),
+      cadCarrierSenseEnabled(false),
       id(static_cast<uint16_t>(nodeId)),
       channel(defaultChannel),
       spreading_factor(defaultSpreadingFactor),
@@ -381,28 +390,53 @@ bool MAC::transmissionAuthorized()
   if (channel < 0 || !validChannel(static_cast<uint16_t>(channel)))
     return false;
 
-  const State previousMode = getMode();
+  // RSSI sensing is deliberately done while continuous RX remains armed. The
+  // previous CAD-first path repeatedly moved RX -> standby/CAD -> RX and could
+  // destroy a packet that began during carrier sensing.
+  if (getMode() != RECEIVING)
+    setMode(RECEIVING, true);
 
-  setMode(IDLE, true);
-  const int cad = module.scanChannel();
-  if (cad == RADIOLIB_LORA_DETECTED || cad == RADIOLIB_PREAMBLE_DETECTED)
-  {
-    setMode(previousMode, true);
+  if (irqPending())
     return false;
-  }
 
-  setMode(RECEIVING, true);
-  delay(TIME_BETWEENMEASUREMENTS / 3);
-  int rssi = static_cast<int>(module.getRSSI(false));
-  for (int i = 1; i < NUMBER_OF_MEASUREMENTS_LBT; ++i)
+  int rssi = 0;
+  for (int i = 0; i < NUMBER_OF_MEASUREMENTS_LBT; ++i)
   {
-    delay(TIME_BETWEENMEASUREMENTS);
+    if (i != 0)
+      delay(TIME_BETWEENMEASUREMENTS);
+    if (irqPending())
+      return false;
     rssi += static_cast<int>(module.getRSSI(false));
   }
   rssi /= NUMBER_OF_MEASUREMENTS_LBT;
 
-  setMode(previousMode, true);
-  return rssi < noiseFloor[channel] + squelch;
+  if (irqPending() || rssi >= noiseFloor[channel] + squelch)
+    return false;
+
+  if (!cadCarrierSenseEnabled)
+    return true;
+
+  // Optional CAD catches matching LoRa below the RSSI threshold, but is not a
+  // reliable general carrier detector. scanChannel() is synchronous in
+  // RadioLib and temporarily replaces RX/CAD IRQ state, so only run it after
+  // RSSI is clear and after confirming no RX IRQ is pending.
+  const int cad = module.scanChannel();
+
+  // A synchronous CAD completion can trigger our shared DIO1 callback. It
+  // cannot be RX_DONE while the chip is in CAD, so consume only that wake flag.
+  noInterrupts();
+  operationDone = false;
+  interrupts();
+
+  if (cad != RADIOLIB_CHANNEL_FREE)
+  {
+    // Detection and errors both fail closed. Re-arm continuous RX; RadioLib's
+    // startReceive path also restores RX IRQ mapping and clears stale CAD IRQs.
+    setMode(RECEIVING, true);
+    return false;
+  }
+
+  return true;
 }
 
 bool MAC::waitForTransmissionAuthorization(uint32_t timeout)
@@ -450,8 +484,21 @@ uint8_t MAC::sendData(
   if (!packet)
     return MAC_SEND_ALLOC_FAILED;
 
+  // Do not blindly clear operationDone here: an RX_DONE may have arrived after
+  // the final CCA sample. Preserve it and defer this transmission instead.
+  noInterrupts();
+  const bool receivePending = operationDone;
+  if (!receivePending)
+    operationDone = false;
+  interrupts();
+  if (receivePending)
+  {
+    free(packet);
+    startCarrierBackoff();
+    return MAC_SEND_CHANNEL_BUSY_TIMEOUT;
+  }
+
   const uint8_t finalPacketLength = static_cast<uint8_t>(MAC_OVERHEAD + size);
-  operationDone = false;
   setMode(SENDING, true);
   const int result = module.startTransmit(
       reinterpret_cast<unsigned char *>(packet),
@@ -478,7 +525,9 @@ void MAC::loop()
   if (!pending)
     return;
 
-  const uint32_t irq = module.getIrqFlags();
+  // RadioLib 6.x exposes getIrqStatus() publicly. Newer getIrqFlags() helpers
+  // must not be required while library.json still declares RadioLib ^6.0.0.
+  const uint16_t irq = module.getIrqStatus();
 
   if ((irq & RADIOLIB_SX126X_IRQ_TX_DONE) != 0)
   {
@@ -497,8 +546,9 @@ void MAC::loop()
     return;
   }
 
-  if (irq != 0)
-    module.clearIrqFlags(irq);
+  // clearIrqStatus() is protected in RadioLib 6.x. Re-entering receive through
+  // the public API restores RX IRQ mapping and clears stale CAD/error flags.
+  // Do not infer event type from mutable software state.
   if (getMode() != SENDING)
     setMode(RECEIVING, true);
 }
