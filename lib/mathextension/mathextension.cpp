@@ -105,7 +105,8 @@ float MathExtensionClass::timeOnAir(
     // bandwidth is supplied in kHz, so symbolTime is directly in ms.
     const float symbolTime =
         static_cast<float>(1UL << spreadingFactor) / bandwidth;
-    const bool lowDataRateOptimize = symbolTime > 16.0f;
+    // RadioLib autoLDRO() enables optimization when symbol length is >=16 ms.
+    const bool lowDataRateOptimize = symbolTime >= 16.0f;
 
     // Match the SX126x LoRa time-on-air equation used by RadioLib. For SF5/6
     // the preamble coefficient and the +8 term differ from SF7-12.
