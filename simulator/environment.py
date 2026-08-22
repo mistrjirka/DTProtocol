@@ -31,7 +31,16 @@ class RadioLink:
     jitter_ms: float = 0.0
     up: bool = True
     epoch: int = 0
+    # Decode, interference and energy-detection reach are distinct on real RF.
+    # `max_range` remains the backward-compatible decode limit.
     max_range: Optional[float] = None
+    interference_range: Optional[float] = None
+    cca_range: Optional[float] = None
+    # Optional two-state Gilbert-Elliott fading. `loss`/`ack_loss` are the good
+    # state probabilities; bad_loss applies while the directed link is bad.
+    burst_bad_loss: Optional[float] = None
+    burst_good_to_bad: float = 0.0
+    burst_bad_to_good: float = 1.0
 
     def other(self, node: int) -> int:
         if node == self.a:
@@ -52,6 +61,8 @@ class RfMetrics:
     firmware_epoch_drops: int = 0
     regulatory_deferrals: int = 0
     regulatory_airtime_ms: float = 0.0
+    burst_bad_samples: int = 0
+    burst_state_transitions: int = 0
 
 
 class EnvironmentKernel:
@@ -108,6 +119,11 @@ class EnvironmentKernel:
         self.trajectories: Dict[int, List[Waypoint]] = {}
 
         self.link_max_range: Dict[frozenset[int], Optional[float]] = {}
+        self.link_interference_range: Dict[frozenset[int], Optional[float]] = {}
+        self.link_cca_range: Dict[frozenset[int], Optional[float]] = {}
+        # State is directional and ACK-specific because fading and ACK timing
+        # need not be sampled in lock-step with the forward data direction.
+        self._burst_bad_state: Dict[Tuple[int, int, bool], bool] = {}
         self.drop_next: Dict[Tuple[int, int], int] = {}
         self.rf_metrics = RfMetrics()
         self.trace: List[dict] = []
@@ -255,19 +271,63 @@ class EnvironmentKernel:
         jitter_ms: float = 0.0,
         up: bool = True,
         max_range: Optional[float] = None,
+        interference_range: Optional[float] = None,
+        cca_range: Optional[float] = None,
+        burst_bad_loss: Optional[float] = None,
+        burst_good_to_bad: float = 0.0,
+        burst_bad_to_good: float = 1.0,
     ) -> None:
+        def probability(name: str, value: Optional[float]) -> Optional[float]:
+            if value is None:
+                return None
+            result = float(value)
+            if result < 0.0 or result > 1.0:
+                raise ValueError(f"{name} must be between 0 and 1")
+            return result
+
+        good_loss = probability("loss", loss)
+        reverse_loss = probability("ack_loss", ack_loss)
+        bad_loss = probability("burst_bad_loss", burst_bad_loss)
+        good_to_bad = probability("burst_good_to_bad", burst_good_to_bad)
+        bad_to_good = probability("burst_bad_to_good", burst_bad_to_good)
+        assert good_loss is not None and good_to_bad is not None and bad_to_good is not None
+
+        decode = None if max_range is None else float(max_range)
+        interference = (
+            decode if interference_range is None else float(interference_range)
+        )
+        cca = interference if cca_range is None else float(cca_range)
+        for name, value in (
+            ("max_range", decode),
+            ("interference_range", interference),
+            ("cca_range", cca),
+        ):
+            if value is not None and value < 0.0:
+                raise ValueError(f"{name} must be non-negative")
+
         key = frozenset((a, b))
         self.links[key] = RadioLink(
             a=a,
             b=b,
-            loss=float(loss),
-            ack_loss=ack_loss,
+            loss=good_loss,
+            ack_loss=reverse_loss,
             latency_ms=float(latency_ms),
             jitter_ms=float(jitter_ms),
             up=bool(up),
-            max_range=None if max_range is None else float(max_range),
+            max_range=decode,
+            interference_range=interference,
+            cca_range=cca,
+            burst_bad_loss=bad_loss,
+            burst_good_to_bad=good_to_bad,
+            burst_bad_to_good=bad_to_good,
         )
-        self.link_max_range[key] = None if max_range is None else float(max_range)
+        self.link_max_range[key] = decode
+        self.link_interference_range[key] = interference
+        self.link_cca_range[key] = cca
+        self._burst_bad_state.pop((a, b, False), None)
+        self._burst_bad_state.pop((b, a, False), None)
+        self._burst_bad_state.pop((a, b, True), None)
+        self._burst_bad_state.pop((b, a, True), None)
 
     def get_link(self, a: int, b: int) -> Optional[RadioLink]:
         return self.links.get(frozenset((a, b)))
@@ -367,12 +427,36 @@ class EnvironmentKernel:
                 )
         return (points[-1].x, points[-1].y)
 
-    def _range_limit(self, a: int, b: int) -> Optional[float]:
+    def _range_limit(
+        self, a: int, b: int, range_kind: str = "decode"
+    ) -> Optional[float]:
         key = frozenset((a, b))
-        if key in self.link_max_range:
-            return self.link_max_range[key]
         link = self.get_link(a, b)
-        return link.max_range if link else None
+        if range_kind == "decode":
+            if key in self.link_max_range:
+                return self.link_max_range[key]
+            return link.max_range if link else None
+        if range_kind == "interference":
+            if key in self.link_interference_range:
+                return self.link_interference_range[key]
+            if link:
+                return (
+                    link.interference_range
+                    if link.interference_range is not None
+                    else link.max_range
+                )
+            return None
+        if range_kind == "cca":
+            if key in self.link_cca_range:
+                return self.link_cca_range[key]
+            if link:
+                if link.cca_range is not None:
+                    return link.cca_range
+                if link.interference_range is not None:
+                    return link.interference_range
+                return link.max_range
+            return None
+        raise ValueError(f"unknown range kind {range_kind!r}")
 
     def _distance_sq(self, a: int, b: int, t_ms: float) -> float:
         ax, ay = self.position_at(a, t_ms)
@@ -389,8 +473,15 @@ class EnvironmentKernel:
             if start_ms < point.t_ms < end_ms:
                 yield point.t_ms
 
-    def stays_in_range(self, a: int, b: int, start_ms: float, end_ms: float) -> bool:
-        limit = self._range_limit(a, b)
+    def stays_in_range(
+        self,
+        a: int,
+        b: int,
+        start_ms: float,
+        end_ms: float,
+        range_kind: str = "decode",
+    ) -> bool:
+        limit = self._range_limit(a, b, range_kind)
         if limit is None:
             return True
         if end_ms < start_ms:
@@ -405,10 +496,26 @@ class EnvironmentKernel:
         # "remain in range for the whole frame" predicate.
         return all(self._distance_sq(a, b, t) <= limit_sq + 1e-12 for t in times)
 
-    def in_range_now(self, a: int, b: int, at_ms: Optional[float] = None) -> bool:
+    def in_range_now(
+        self,
+        a: int,
+        b: int,
+        at_ms: Optional[float] = None,
+        range_kind: str = "decode",
+    ) -> bool:
         t = self.now if at_ms is None else float(at_ms)
-        limit = self._range_limit(a, b)
+        limit = self._range_limit(a, b, range_kind)
         return limit is None or self._distance_sq(a, b, t) <= limit * limit + 1e-12
+
+    def in_interference_range_now(
+        self, a: int, b: int, at_ms: Optional[float] = None
+    ) -> bool:
+        return self.in_range_now(a, b, at_ms, "interference")
+
+    def in_cca_range_now(
+        self, a: int, b: int, at_ms: Optional[float] = None
+    ) -> bool:
+        return self.in_range_now(a, b, at_ms, "cca")
 
     # ------------------------------------------------------------------
     # RF helpers shared by Python and C++ adapters
@@ -475,14 +582,52 @@ class EnvironmentKernel:
         self.drop_next[key] -= 1
         return True
 
+    def _sample_link_loss_with_rng(
+        self,
+        link: RadioLink,
+        sender: int,
+        receiver: int,
+        *,
+        ack: bool,
+        rng: random.Random,
+    ) -> bool:
+        good_probability = (
+            link.ack_loss if ack and link.ack_loss is not None else link.loss
+        )
+        if link.burst_bad_loss is None:
+            return rng.random() < good_probability
+
+        key = (int(sender), int(receiver), bool(ack))
+        bad = self._burst_bad_state.get(key, False)
+        probability = link.burst_bad_loss if bad else good_probability
+        if bad:
+            self.rf_metrics.burst_bad_samples += 1
+        lost = rng.random() < probability
+
+        transition = rng.random()
+        next_bad = (
+            transition >= link.burst_bad_to_good
+            if bad
+            else transition < link.burst_good_to_bad
+        )
+        if next_bad != bad:
+            self.rf_metrics.burst_state_transitions += 1
+        self._burst_bad_state[key] = next_bad
+        return lost
+
     def sample_link_loss(self, sender: int, receiver: int, *, ack: bool = False) -> bool:
         link = self.get_link(sender, receiver)
         if link is None:
             return True
         if self._consume_drop(sender, receiver):
             return True
-        probability = link.ack_loss if ack and link.ack_loss is not None else link.loss
-        return self.env_rng.random() < probability
+        return self._sample_link_loss_with_rng(
+            link,
+            sender,
+            receiver,
+            ack=ack,
+            rng=self.env_rng,
+        )
 
     def frame_start_valid(self, sender: int, receiver: int) -> bool:
         link = self.get_link(sender, receiver)

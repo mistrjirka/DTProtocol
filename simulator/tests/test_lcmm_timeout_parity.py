@@ -86,14 +86,13 @@ def test_clear_attempt_deadline_includes_data_airtime_but_not_double_counts_cca_
         1,
     )
 
-    expected_deadline = (
+    base_deadline = (
         request_start
         + 3000
         + math.ceil(net.airtime_ms(frame_bytes))
     )
-    assert net._hop_deadline_ms[net._deadline_key(1, packet)] == pytest.approx(
-        expected_deadline
-    )
+    deadline = net._hop_deadline_ms[net._deadline_key(1, packet)]
+    assert base_deadline + 25 <= deadline <= base_deadline + 250
     assert node.link_retry_timeout_ms(packet) == pytest.approx(
-        max(1.0, expected_deadline - rf_start)
+        max(1.0, deadline - rf_start)
     )

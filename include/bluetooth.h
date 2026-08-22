@@ -1,111 +1,108 @@
-// Check if BLE libraries are available
-#if __has_include(<BLEDevice.h>) && __has_include(<BLEServer.h>) && __has_include(<BLEUtils.h>)
-#ifndef BLUETOOTH_H
-#define BLUETOOTH_H
-#define BLE_AVAILABLE 1
+#ifndef DTPK_BLUETOOTH_H
+#define DTPK_BLUETOOTH_H
 
+#include <BluetoothProtocol.h>
 
+#if defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
+#define DTPK_BLE_AVAILABLE 1
+
+#include <BLE2902.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
-#include <functional>
 #include <DTPK.h>
+#include <functional>
+#include <deque>
+#include <vector>
 
-#define BLE_MSG_TYPE_OUTBOUND     0x01
-#define BLE_MSG_TYPE_ACK          0x02
-#define BLE_MSG_TYPE_INBOUND      0x03
-#define BLE_MSG_TYPE_NEIGHBORS    0x04
-
-#define WATCH_SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define MSG_CHAR_UUID            "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-#define NEIGHCOUNT_CHAR_UUID     "beb5483e-36e1-4688-b7f5-ea07361b26a9"
-
-// Message structures
-#pragma pack(push, 1)
-struct BLEMessageHeader {
-    uint8_t type;
-    uint16_t messageId;
-    uint16_t length;
-};
-
-struct BLEOutboundMessage {
-    BLEMessageHeader header;
-    uint16_t recipientId;
-    char data[];
-};
-
-struct BLEInboundMessage {
-    BLEMessageHeader header;
-    uint16_t senderId;
-    char data[];
-};
-
-struct BLEAckMessage {
-    BLEMessageHeader header;
-    uint16_t originalMessageId;
-    uint8_t success;
-    uint16_t ping;
-};
-
-struct BLENeighborInfo {
-    uint16_t id;
-    uint16_t distance;
-};
-
-struct BLENeighborsMessage {
-    BLEMessageHeader header;
-    uint8_t count;
-    BLENeighborInfo neighbors[];
-};
-#pragma pack(pop)
-
-class Bluetooth {
+class Bluetooth
+{
 public:
-    static Bluetooth* getInstance();
+    static Bluetooth *getInstance();
     static void initialize();
-    
-    void setup();
+
+    bool setup();
     void loop();
     void startAdvertising();
     void stopAdvertising();
-    void updateNeighborsList();
-    void sendMessage(const char* message);
-    void sendOutboundMessage(uint16_t recipientId, uint16_t messageId, const char* message);
-    void sendInboundMessage(uint16_t senderId, const char* message, size_t messageLen);
     void sendAckMessage(uint16_t originalMessageId, bool success, uint16_t ping);
+    void sendInboundMessage(
+        uint16_t senderId,
+        const uint8_t *message,
+        size_t messageLen);
     void sendNeighborsUpdate();
-    
-    // Set callback for received DTPK packets
-    void setDTPKPacketCallback(DTPK::PacketReceivedCallback callback) {
+
+    void setDTPKPacketCallback(DTPK::PacketReceivedCallback callback)
+    {
         dtpkCallback = callback;
     }
 
-    bool deviceIsConnected() {
-        return deviceConnected;
-    }
+    bool deviceIsConnected() const { return deviceConnected; }
+    bool isReady() const { return ready; }
 
-    void setDeviceName(const char* name) {
-        deviceName = name;
+    void setDeviceName(const char *name)
+    {
+        if (name && *name)
+            deviceName = name;
     }
 
 private:
-    friend class WatchServerCallbacks;  // Add this line to grant access
-    friend class MsgCharacteristicCallbacks; // Also add this for consistency
-    int32_t disconnectionTime;
-    static Bluetooth* instance;
-    BLEServer* pServer;
-    BLECharacteristic* pMsgCharacteristic;
-    BLECharacteristic* pNeighCountCharacteristic;
-    bool deviceConnected;
-    bool oldDeviceConnected;
-    DTPK::PacketReceivedCallback dtpkCallback;
-    const char* deviceName = "LoraWatch"; // Default name
+    friend class DTPKBLEServerCallbacks;
+    friend class DTPKBLEMessageCallbacks;
 
-    Bluetooth();  // Private constructor
+    static Bluetooth *instance;
+
+    BLEServer *server = nullptr;
+    BLECharacteristic *messageCharacteristic = nullptr;
+    BLECharacteristic *neighborCountCharacteristic = nullptr;
+    bool deviceConnected = false;
+    bool oldDeviceConnected = false;
+    bool ready = false;
+    uint32_t disconnectionTime = 0;
+    uint16_t messageCounter = 0;
+    DTPK::PacketReceivedCallback dtpkCallback;
+    static constexpr size_t MAX_QUEUED_NOTIFICATIONS = 128;
+    std::deque<std::vector<uint8_t>> messageNotifications;
+    const char *deviceName = "DTPK";
+
+    Bluetooth() = default;
     void handleConnection(bool connected);
-    void handleDTPKPacket(DTPKPacketGeneric* packet, uint16_t size);
+    void handleWrite(const std::string &value);
+    void handleDTPKPacket(DTPKPacketGeneric *packet, uint16_t size);
     void periodicNeighborUpdate();
+    uint16_t nextMessageId();
+    bool notify(
+        BLECharacteristic *characteristic,
+        const uint8_t *bytes,
+        size_t size);
+    bool queueMessageNotification(
+        std::vector<uint8_t> bytes, bool priority = false);
+    void pumpMessageNotification();
+};
+
+#else
+#define DTPK_BLE_AVAILABLE 0
+
+class Bluetooth
+{
+public:
+    static Bluetooth *getInstance()
+    {
+        static Bluetooth instance;
+        return &instance;
+    }
+    static void initialize() {}
+    bool setup() { return false; }
+    void loop() {}
+    void startAdvertising() {}
+    void stopAdvertising() {}
+    void sendAckMessage(uint16_t, bool, uint16_t) {}
+    void sendInboundMessage(uint16_t, const uint8_t *, size_t) {}
+    void sendNeighborsUpdate() {}
+    void setDeviceName(const char *) {}
+    bool deviceIsConnected() const { return false; }
+    bool isReady() const { return false; }
 };
 
 #endif
-#endif // BLUETOOTH_H
+#endif

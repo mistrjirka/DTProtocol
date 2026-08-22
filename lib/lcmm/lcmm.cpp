@@ -9,8 +9,7 @@ uint16_t LCMM::packetId = 1;
 LCMM::ACKWaitingSingle LCMM::ackWaitingSingle;
 bool LCMM::waitingForACKSingle = false;
 bool LCMM::sending = false;
-LCMMPacketDataReceive *LCMM::afterCallbackSent_packet = nullptr;
-uint16_t LCMM::afterCallbackSent_size = 0;
+std::queue<LCMM::PendingReceive> LCMM::pendingReceived;
 uint16_t LCMM::noAckId = 0;
 LCMM::AcknowledgmentCallback LCMM::noAckAcknowledgmentCallback = nullptr;
 
@@ -29,6 +28,13 @@ int clampTimeoutToInt(uint64_t value)
   return static_cast<int>(std::min(value, limit));
 }
 } // namespace
+
+uint32_t retryJitterMs()
+{
+  // Desynchronise reliable-hop retries from periodic control traffic and from
+  // other relays. This is a wait extension, not a consumed RF attempt.
+  return 25u + (MAC::getInstance()->random() % 226u);
+}
 
 void dummyFunction()
 {
@@ -91,51 +97,60 @@ void LCMM::handleDataNoACK(LCMMPacketDataReceive *packet, uint16_t size)
   LCMM::getInstance()->dataReceived(packet, size);
 }
 
-void LCMM::afterCallbackSent()
+void LCMM::linkAckTransmitDone()
 {
-  LCMMPacketDataReceive *packet = LCMM::afterCallbackSent_packet;
-  const uint16_t size = LCMM::afterCallbackSent_size;
-  LCMM::afterCallbackSent_packet = nullptr;
-  LCMM::afterCallbackSent_size = 0;
-
-  if (packet != nullptr)
-    LCMM::getInstance()->dataReceived(packet, size);
-
+  // The link ACK is an LCMM-owned transmission. Releasing this flag before the
+  // next DTPK scheduler turn prevents an unrelated control frame from stealing
+  // the radio callback, while payload delivery remains owned by the queue.
+  LCMM::sending = false;
   MAC::getInstance()->setTransmitDone(dummyFunction);
+}
+
+void LCMM::deliverPendingReceived()
+{
+  if (MAC::getInstance()->getMode() == SENDING || pendingReceived.empty())
+    return;
+
+  PendingReceive pending = pendingReceived.front();
+  pendingReceived.pop();
+  if (pending.packet)
+    dataReceived(pending.packet, pending.size);
 }
 
 void LCMM::handleDataACK(LCMMPacketDataReceive *packet, uint16_t size)
 {
+  if (!packet)
+    return;
+
+  // The received payload is valid independently of whether we can allocate or
+  // transmit its link ACK. Queue it first; a sender retry is harmless because
+  // DTPK performs replay suppression using sender incarnation + packet id.
+  pendingReceived.push(PendingReceive{packet, size});
+
   LCMMPacketResponse *response =
       (LCMMPacketResponse *)malloc(sizeof(LCMMPacketResponse) + sizeof(uint16_t));
   if (response == NULL)
-  {
-    free(packet);
     return;
-  }
 
   response->type = PACKET_TYPE_ACK;
   response->packetIds[0] = packet->id;
 
-  LCMM::afterCallbackSent_packet = packet;
-  LCMM::afterCallbackSent_size = size;
-  MAC::getInstance()->setTransmitDone(afterCallbackSent);
-
+  // A direct link ACK bypasses sendPacketSingle(), so it must explicitly own
+  // LCMM's busy state. Without this, DTPK can start a HELLO while the ACK is in
+  // flight and overwrite the one MAC transmit-done callback.
+  LCMM::sending = true;
+  MAC::getInstance()->setTransmitDone(linkAckTransmitDone);
   const uint8_t result = MAC::getInstance()->sendData(
       packet->mac.sender,
       (unsigned char *)response,
       sizeof(LCMMPacketResponse) + sizeof(uint16_t),
       5000);
-
   free(response);
 
   if (result != MAC_SEND_OK)
   {
+    LCMM::sending = false;
     MAC::getInstance()->setTransmitDone(dummyFunction);
-    LCMM::afterCallbackSent_packet = nullptr;
-    LCMM::afterCallbackSent_size = 0;
-    // Upper DTPK replay suppression makes a later sender retry idempotent.
-    LCMM::getInstance()->dataReceived(packet, size);
   }
 }
 
@@ -200,6 +215,7 @@ bool LCMM::timeoutHandler()
       {
         LCMM::ackWaitingSingle.timeLeft =
             LCMM::ackWaitingSingle.timeout +
+            static_cast<int>(retryJitterMs()) +
             static_cast<int>(timeBeforeSending - timeAfterSending);
       }
       else if (transientMacFailure(result))
@@ -251,6 +267,7 @@ LCMM::~LCMM()
 void LCMM::loop()
 {
   MAC::getInstance()->loop();
+  deliverPendingReceived();
   this->timeoutHandler();
 }
 
@@ -303,7 +320,10 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
     return 0;
   }
 
-  packet->id = LCMM::packetId++;
+  packet->id = LCMM::packetId;
+  ++LCMM::packetId;
+  if (LCMM::packetId == 0)
+    LCMM::packetId = 1;
   packet->type = needACK ? PACKET_TYPE_DATA_ACK : PACKET_TYPE_DATA_NOACK;
   memcpy(packet->data, data, size);
   const uint16_t outgoingId = packet->id;
@@ -393,7 +413,8 @@ LCMM::ACKWaitingSingle LCMM::prepareAckWaitingSingle(
   const int64_t elapsedInsideSend =
       static_cast<int64_t>(timeAfterSending) - static_cast<int64_t>(timeBeforeSending);
   const int64_t initialTime =
-      static_cast<int64_t>(timeout) + static_cast<int64_t>(airtimeMs) - elapsedInsideSend;
+      static_cast<int64_t>(timeout) + static_cast<int64_t>(airtimeMs) +
+      static_cast<int64_t>(retryJitterMs()) - elapsedInsideSend;
   callbackStruct.timeLeft =
       initialTime <= 1
           ? 1

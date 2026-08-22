@@ -2,21 +2,34 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, replace
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 BROADCAST = 0
+MAX_PACKET_SIZE = 255
 MAC_OVERHEAD = 8
 LCMM_OVERHEAD = 3
 LCMM_RX_HEADER = MAC_OVERHEAD + LCMM_OVERHEAD
 DTPK_GENERIC_HEADER = 11
 DTPK_CRYST_HEADER = 3
-DTPK_CRYST_V2_HEADER = 13  # type:u8,id:u16,origin-seq:u16,route-version:u32,chunk-index:u16,chunk-count:u16
-DTPK_HELLO_SIZE = 9
-DTPK_CRYST_REQ_SIZE = 3
-DTPK_SEQ_REQ_SIZE = 10
+DTPK_CRYST_V2_HEADER = 11  # type:u8,origin-seq:u16,route-version:u32,chunk-index:u16,chunk-count:u16
+DTPK_HELLO_SIZE = 7
+DTPK_CRYST_REQ_SIZE = 7
+DTPK_SEQ_REQ_SIZE = 11
+DTPK_DEFAULT_HOP_LIMIT = 255
+DTPK_SINGLE_PAYLOAD_SIZE = MAX_PACKET_SIZE - MAC_OVERHEAD - LCMM_OVERHEAD - DTPK_GENERIC_HEADER
+DTPK_FRAGMENT_HEADER = 14
+DTPK_FRAGMENT_QUERY_SIZE = 15
+DTPK_FRAGMENT_STATUS_HEADER = 14
+DTPK_FRAGMENT_PAYLOAD_SIZE = MAX_PACKET_SIZE - MAC_OVERHEAD - LCMM_OVERHEAD - DTPK_FRAGMENT_HEADER
+DTPK_MAX_MESSAGE_SIZE = 16 * 1024
+DTPK_MAX_FRAGMENT_ASSEMBLIES = 2
+DTPK_FRAGMENT_ASSEMBLY_EXPIRY_MS = 120_000
+DTPK_FRAGMENT_QUERY_INTERVAL_MS = 5_000
+DTPK_FRAGMENT_TIMEOUT_PER_HOP_MS = 5_000
+DTPK_CRYST_ASSEMBLY_EXPIRY_MS = 30_000
+DTPK_MAX_CRYST_CHUNKS = 16
 NEIGHBOR_RECORD_SIZE = 5
-NEIGHBOR_RECORD_V2_SIZE = 7  # dest:u16, via:u16, sequence:u16, metric:u8
-MAX_PACKET_SIZE = 255
+NEIGHBOR_RECORD_V2_SIZE = 5  # dest:u16, sequence:u16, metric:u8
 ROUTE_INFINITY = 255
 
 
@@ -39,6 +52,7 @@ class Profile:
     periodic_cryst_ms: Optional[int] = None
     hello_period_ms: Optional[int] = None
     mobile_hello_period_ms: Optional[int] = None
+    mobile_discovery_hello_period_ms: Optional[int] = None
     hello_jitter_fraction: float = 0.0
     propagate_on_route_change: bool = False
     cryst_missing_self_reply: bool = True
@@ -67,7 +81,7 @@ class Profile:
     seqno_requests: bool = False
     seqno_request_cooldown_ms: int = 5_000
     seqno_request_max_cooldown_ms: int = 60_000
-    seqno_request_hop_limit: int = 32
+    seqno_request_hop_limit: int = DTPK_DEFAULT_HOP_LIMIT
 
     @staticmethod
     def current() -> "Profile":
@@ -124,11 +138,13 @@ class Profile:
             # A node may opt into a faster local maintenance cadence. This is
             # not advertised and never participates in route safety/metrics.
             mobile_hello_period_ms=4_000,
+            mobile_discovery_hello_period_ms=1_000,
             hello_jitter_fraction=0.20,
             # Probe loss is not authoritative liveness evidence. The real-C++
             # scale tests require a 120 s hard no-valid-packet timeout; shorter
             # expiry caused false withdrawal waves in stable large networks.
             neighbor_expiry_ms=120_000,
+            max_lcmm_attempts=5,
             session_gc_enabled=False,
             sequence_numbers=True,
             feasibility_condition=True,
@@ -195,18 +211,36 @@ def next_sequence(value: int) -> int:
 
 
 @dataclass
+class CrystAssemblyState:
+    sender_sequence: int
+    route_version: int
+    chunk_count: int
+    last_update_ms: float
+    chunks: Dict[int, Tuple[AdvertisedRoute, ...]]
+
+
+@dataclass
 class Packet:
     kind: str  # CRYST, HELLO, CRYST_REQ, SEQ_REQ, DATA, ACK, NACK
     packet_id: int
     original_sender: Optional[int] = None
     final_target: Optional[int] = None
     payload_size: int = 0
+    e2e_ack_requested: bool = False
     advertisements: Tuple[AdvertisedRoute, ...] = ()
     wire_dtpk_size: int = 0
     cryst_record_size: int = NEIGHBOR_RECORD_SIZE
     sender_sequence: int = 0
     route_version: int = 0
+    chunk_index: int = 0
+    chunk_count: int = 1
     requested_sequence: int = 0
+    repair_flood: bool = False
+    total_size: int = 0
+    fragment_index: int = 0
+    fragment_count: int = 1
+    query_id: int = 0
+    missing_fragments: Tuple[int, ...] = ()
     hop_limit: int = 0
 
     def clone(self) -> "Packet":
@@ -258,3 +292,10 @@ class Metrics:
     max_contributions: int = 0
     feasibility_rejects: int = 0
     sequence_resets: int = 0
+    multipart_messages_started: int = 0
+    multipart_messages_completed: int = 0
+    fragments_tx: int = 0
+    fragment_retransmits: int = 0
+    fragment_status_tx: int = 0
+    fragment_query_tx: int = 0
+    fragment_assemblies_expired: int = 0

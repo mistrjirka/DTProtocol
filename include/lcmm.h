@@ -4,6 +4,7 @@
 #include "generalsettings.h"
 #include "mac.h"
 #include <functional>
+#include <queue>
 #include <vector>
 #include <cstring>
 #include <stdio.h>
@@ -103,9 +104,14 @@ private:
   static LCMM *lcmm;
   static bool timeoutHandler();
 
-  static LCMMPacketDataReceive *afterCallbackSent_packet;
-  static uint16_t afterCallbackSent_size;
-  static void afterCallbackSent();
+  struct PendingReceive
+  {
+    LCMMPacketDataReceive *packet;
+    uint16_t size;
+  };
+  static std::queue<PendingReceive> pendingReceived;
+  static void linkAckTransmitDone();
+  void deliverPendingReceived();
 
   static uint16_t noAckId;
   static AcknowledgmentCallback noAckAcknowledgmentCallback;

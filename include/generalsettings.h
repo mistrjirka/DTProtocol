@@ -5,6 +5,16 @@
 #define MAC_OVERHEAD (4+2+2)
 #define LCMM_OVERHEAD (1+2)
 #define DTP_OVERHEAD (1+2+2+2+2+1+1)
+
+// Multipart application messages are bounded so a malformed or hostile peer
+// cannot consume all MCU RAM. Applications may override these before including
+// DTProtocol headers. The wire format itself supports up to 255 fragments.
+#ifndef DTPK_MAX_MESSAGE_SIZE
+#define DTPK_MAX_MESSAGE_SIZE (16u * 1024u)
+#endif
+#ifndef DTPK_MAX_FRAGMENT_ASSEMBLIES
+#define DTPK_MAX_FRAGMENT_ASSEMBLIES 2u
+#endif
 #define DATASIZE_MAC (MAX_PACKET_SIZE - MAC_OVERHEAD)
 #define DATASIZE_LCMM (MAX_PACKET_SIZE - LCMM_OVERHEAD - MAC_OVERHEAD)
 #define DATASIZE_DTP (MAX_PACKET_SIZE - DTP_OVERHEAD - LCMM_OVERHEAD - MAC_OVERHEAD)

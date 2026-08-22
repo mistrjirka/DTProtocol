@@ -160,7 +160,7 @@ int main() {
                 auto payload = hex_decode(hex);
                 uint16_t id = DTPK::getInstance()->sendPacket(
                     static_cast<uint16_t>(target), payload.data(), payload.size(),
-                    static_cast<int16_t>(timeout), ack != 0,
+                    static_cast<int32_t>(timeout), ack != 0,
                     [](uint8_t result, uint16_t ping) {
                         std::cout << "APP_ACK " << static_cast<unsigned>(result)
                                   << ' ' << ping << '\n';

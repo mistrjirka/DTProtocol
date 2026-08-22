@@ -80,12 +80,17 @@ class KeyedEnvironmentMixin:
             return True
         if self._consume_drop(sender, receiver):
             return True
-        p = link.ack_loss if ack and link.ack_loss is not None else link.loss
         rng = self._keyed_rng(
             "ack-loss" if ack else "data-loss", sender, receiver,
             self._time_key(self.now),
         )
-        return rng.random() < p
+        return self._sample_link_loss_with_rng(
+            link,
+            sender,
+            receiver,
+            ack=ack,
+            rng=rng,
+        )
 
     def transmit_wait_ms(self, node_id: int, at_ms: Optional[float] = None) -> float:
         """Combine optional regulatory spacing with MAC carrier backoff."""
@@ -133,7 +138,7 @@ class KeyedEnvironmentMixin:
                 continue
             if not self.node_up.get(other, False):
                 continue
-            if self.in_range_now(other, receiver, at):
+            if self.in_cca_range_now(other, receiver, at):
                 return True
         return False
 
@@ -178,12 +183,19 @@ class KeyedEnvironmentMixin:
             or self._rx_completion_during_cca(node_id, cca_start_ms, cca_end)
         )
 
-    def _ever_in_range(self, a: int, b: int, start_ms: float, end_ms: float) -> bool:
-        limit = self._range_limit(a, b)
+    def _ever_in_range(
+        self,
+        a: int,
+        b: int,
+        start_ms: float,
+        end_ms: float,
+        range_kind: str = "decode",
+    ) -> bool:
+        limit = self._range_limit(a, b, range_kind)
         if limit is None:
             return self.get_link(a, b) is not None
         if end_ms <= start_ms:
-            return self.in_range_now(a, b, start_ms)
+            return self.in_range_now(a, b, start_ms, range_kind)
         times = {float(start_ms), float(end_ms)}
         times.update(self._trajectory_breakpoints(a, start_ms, end_ms))
         times.update(self._trajectory_breakpoints(b, start_ms, end_ms))
@@ -218,7 +230,13 @@ class KeyedEnvironmentMixin:
             if other == receiver:
                 return "half-duplex"
             link = self.get_link(other, receiver)
-            if link is not None and link.up and self._ever_in_range(other, receiver, left, right):
+            if (
+                link is not None
+                and link.up
+                and self._ever_in_range(
+                    other, receiver, left, right, "interference"
+                )
+            ):
                 return "collision"
         return None
 
@@ -253,12 +271,19 @@ class MobileAwareNode(Node):
 
     def _effective_hello_period_ms(self) -> float:
         configured = self.profile.hello_period_ms
-        if self.mobile_hint and self.profile.mobile_hello_period_ms is not None:
-            configured = self.profile.mobile_hello_period_ms
+        if self.mobile_hint:
+            connected = bool(self.last_heard)
+            if (
+                not connected
+                and self.profile.mobile_discovery_hello_period_ms is not None
+            ):
+                configured = self.profile.mobile_discovery_hello_period_ms
+            elif self.profile.mobile_hello_period_ms is not None:
+                configured = self.profile.mobile_hello_period_ms
         period = float(configured or 1)
 
         # Preserve the optional strict-duty simulator behavior. Practical mode
-        # has duty_cycle_percent=0 and therefore gets the normal 4 s/10 s clocks.
+        # has duty_cycle_percent=0 and therefore gets the normal clocks.
         duty = float(getattr(self.sim, "duty_cycle_percent", 0.0))
         if 0.0 < duty <= 1.0:
             period = max(period, 60_000.0)

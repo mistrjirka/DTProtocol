@@ -18,6 +18,7 @@ add_executable(dtprotocol_host_node
     ${REPO_ROOT}/lib/DTPK/DTPKApi.cpp
     ${REPO_ROOT}/lib/DTPK/DTPKControl.cpp
     ${REPO_ROOT}/lib/DTPK/DTPKReceive.cpp
+    ${REPO_ROOT}/lib/DTPK/DTPKFragment.cpp
     ${REPO_ROOT}/lib/DTPK/CrystDatabase.cpp
     ${REPO_ROOT}/lib/lcmm/lcmm.cpp
     ${REPO_ROOT}/lib/mathextension/mathextension.cpp
@@ -123,6 +124,31 @@ target_compile_options(dtprotocol_cryst_database_contract PRIVATE
 )
 add_test(NAME crystallization_database_contract COMMAND dtprotocol_cryst_database_contract)
 
+# Pure wire-format contracts: no Arduino, BLE stack, MAC or RadioLib needed.
+add_executable(dtprotocol_bluetooth_protocol_contract
+    bluetooth_protocol_contract_tests.cpp
+)
+target_compile_features(dtprotocol_bluetooth_protocol_contract PRIVATE cxx_std_17)
+target_include_directories(dtprotocol_bluetooth_protocol_contract PRIVATE
+    ${REPO_ROOT}/include
+)
+target_compile_options(dtprotocol_bluetooth_protocol_contract PRIVATE
+    -UNDEBUG -Wall -Wextra -Wconversion
+)
+add_test(NAME bluetooth_protocol_contract COMMAND dtprotocol_bluetooth_protocol_contract)
+
+add_executable(dtprotocol_multipart_contract
+    multipart_contract_tests.cpp
+)
+target_compile_features(dtprotocol_multipart_contract PRIVATE cxx_std_17)
+target_include_directories(dtprotocol_multipart_contract PRIVATE
+    ${REPO_ROOT}/include
+)
+target_compile_options(dtprotocol_multipart_contract PRIVATE
+    -UNDEBUG -Wall -Wextra -Wconversion
+)
+add_test(NAME multipart_wire_contract COMMAND dtprotocol_multipart_contract)
+
 # -----------------------------------------------------------------------------
 # Small embedded-math contract. The radio path depends on quickSort() during
 # noise calibration and timeOnAir() for LCMM/duty timing, so both are sanitizer
@@ -153,7 +179,9 @@ if(DTP_HOST_SANITIZERS)
             dtprotocol_lcmm_contract
             dtprotocol_mac_contract
             dtprotocol_math_contract
-            dtprotocol_cryst_database_contract)
+            dtprotocol_cryst_database_contract
+            dtprotocol_bluetooth_protocol_contract
+            dtprotocol_multipart_contract)
         target_compile_options(${target} PRIVATE
             -fsanitize=address,undefined -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE -fsanitize=address,undefined)

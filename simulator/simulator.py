@@ -87,7 +87,9 @@ class Simulator(EnvironmentKernel):
         ]
 
     def _frame_bytes(self, packet: Packet) -> int:
-        if packet.kind == "CRYST":
+        if packet.kind == "CRYST" and packet.wire_dtpk_size:
+            dtpk = packet.wire_dtpk_size
+        elif packet.kind == "CRYST":
             dtpk = DTPK_CRYST_HEADER + len(packet.advertisements) * NEIGHBOR_RECORD_SIZE
         elif packet.wire_dtpk_size:
             dtpk = packet.wire_dtpk_size
@@ -503,6 +505,8 @@ class Simulator(EnvironmentKernel):
         on_complete: Callable[[bool], None],
         attempt: int,
     ) -> None:
+        if getattr(on_complete, "_dtp_completed", False):
+            return
         if attempt >= self.profile.max_lcmm_attempts:
             on_complete(False)
         else:
@@ -582,6 +586,18 @@ class Simulator(EnvironmentKernel):
 
     def audit(self) -> dict:
         truth = self.shortest_distances()
+        # Environment-up nodes must also have a running, non-crashed protocol
+        # instance. Treating them as absent makes a fresh/unstarted or crashed
+        # network vacuously pass every routing property.
+        inactive = [
+            (
+                node_id,
+                "crashed" if node.crashed else "not_started",
+            )
+            for node_id, node in self.nodes.items()
+            if self.node_up.get(node_id, False)
+            and (not node.up or node.crashed)
+        ]
         missing, stale, wrong_distance, loops = [], [], [], []
         stretch_values = []
         for node_id, node in self.nodes.items():
@@ -607,6 +623,7 @@ class Simulator(EnvironmentKernel):
         self.metrics.loops_observed += len(loops)
         self.metrics.stale_route_observations += len(stale)
         return {
+            "inactive": inactive,
             "missing": missing,
             "stale": stale,
             "wrong_distance": wrong_distance,
@@ -616,7 +633,9 @@ class Simulator(EnvironmentKernel):
                 if stretch_values
                 else None
             ),
-            "correct": not (missing or stale or wrong_distance or loops),
+            "correct": not (
+                inactive or missing or stale or wrong_distance or loops
+            ),
         }
 
     def follow_route(

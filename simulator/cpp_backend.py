@@ -282,6 +282,11 @@ class CppNetwork(EnvironmentKernel):
         jitter_ms: float = 0.0,
         up: bool = True,
         max_range: Optional[float] = None,
+        interference_range: Optional[float] = None,
+        cca_range: Optional[float] = None,
+        burst_bad_loss: Optional[float] = None,
+        burst_good_to_bad: float = 0.0,
+        burst_bad_to_good: float = 1.0,
     ) -> None:
         super().add_link(
             a,
@@ -292,6 +297,11 @@ class CppNetwork(EnvironmentKernel):
             jitter_ms=jitter_ms,
             up=up,
             max_range=max_range,
+            interference_range=interference_range,
+            cca_range=cca_range,
+            burst_bad_loss=burst_bad_loss,
+            burst_good_to_bad=burst_good_to_bad,
+            burst_bad_to_good=burst_bad_to_good,
         )
 
     def _on_environment_node_down(self, node_id: int) -> None:

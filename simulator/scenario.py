@@ -49,6 +49,11 @@ class LinkSpec:
     jitter_ms: float = 0.0
     up: bool = True
     max_range: Optional[float] = None
+    interference_range: Optional[float] = None
+    cca_range: Optional[float] = None
+    burst_bad_loss: Optional[float] = None
+    burst_good_to_bad: float = 0.0
+    burst_bad_to_good: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -151,6 +156,11 @@ class Scenario:
                 jitter_ms=link.jitter_ms,
                 up=link.up,
                 max_range=link.max_range,
+                interference_range=link.interference_range,
+                cca_range=link.cca_range,
+                burst_bad_loss=link.burst_bad_loss,
+                burst_good_to_bad=link.burst_good_to_bad,
+                burst_bad_to_good=link.burst_bad_to_good,
             )
 
         for node_id, points in self.trajectories.items():
@@ -216,6 +226,11 @@ class Scenario:
         jitter_ms: float = 0.0,
         spacing: float = 1.0,
         max_range: Optional[float] = None,
+        interference_range: Optional[float] = None,
+        cca_range: Optional[float] = None,
+        burst_bad_loss: Optional[float] = None,
+        burst_good_to_bad: float = 0.0,
+        burst_bad_to_good: float = 1.0,
         radio_contention: bool = False,
         radio_profile: RadioProfileName = "unconstrained",
         strict_duty_cycle: bool = False,
@@ -245,6 +260,11 @@ class Scenario:
                 latency_ms=latency_ms,
                 jitter_ms=jitter_ms,
                 max_range=max_range,
+                interference_range=interference_range,
+                cca_range=cca_range,
+                burst_bad_loss=burst_bad_loss,
+                burst_good_to_bad=burst_good_to_bad,
+                burst_bad_to_good=burst_bad_to_good,
             )
             for i in range(1, n)
         ]

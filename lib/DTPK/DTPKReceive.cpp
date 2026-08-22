@@ -57,7 +57,46 @@ void DTPK::parseCrystRequestPacket(
 {
     if (packet.dtpkSize < sizeof(DTPKPacketCrystRequest))
         return;
-    noteHeard(packet.frame->mac.sender);
+
+    DTPKPacketCrystRequest *request =
+        reinterpret_cast<DTPKPacketCrystRequest *>(packet.frame->data);
+    const uint16_t sender = packet.frame->mac.sender;
+    noteHeard(sender);
+
+    bool acceptDigest = false;
+    bool invalidateIndirect = false;
+    const auto applied = _neighborState.find(sender);
+    if (applied == _neighborState.end())
+    {
+        acceptDigest = true;
+        invalidateIndirect = true;
+    }
+    else if (request->originSequence == applied->second.originSequence)
+    {
+        // A request may arrive before its matching snapshot. Equal/newer state
+        // is useful; an older wrapped version is ignored.
+        acceptDigest =
+            request->routeVersion == applied->second.routeVersion ||
+            versionNewer(request->routeVersion, applied->second.routeVersion);
+    }
+    else if (sequenceNewer(
+                 request->originSequence, applied->second.originSequence))
+    {
+        acceptDigest = true;
+        invalidateIndirect = true;
+        _neighborState.erase(sender);
+        _crystAssemblies.erase(sender);
+    }
+
+    if (acceptDigest &&
+        _crystDatabase.updateDirectNeighbor(
+            sender, request->originSequence, invalidateIndirect))
+        markRoutingChanged("cryst request direct route");
+
+    // The requester already learned our digest from HELLO, and accepting this
+    // digest establishes its direct route here. Both route changes schedule
+    // snapshots; replying with another request would create a priority ping-pong
+    // that can starve the very snapshots being requested.
     sendCrystPacket();
 }
 
@@ -106,6 +145,23 @@ void DTPK::parseCrystPacket(
         assembly.originSequence != cryst->originSequence ||
         assembly.routeVersion != cryst->routeVersion ||
         assembly.chunkCount != cryst->chunkCount;
+
+    // Do not let an older interleaved snapshot replace a newer in-progress
+    // assembly merely because neither one has been committed yet.
+    if (assembly.chunkCount != 0 && different)
+    {
+        if (cryst->originSequence == assembly.originSequence)
+        {
+            if (cryst->routeVersion != assembly.routeVersion &&
+                !versionNewer(cryst->routeVersion, assembly.routeVersion))
+                return;
+        }
+        else if (!sequenceNewer(
+                     cryst->originSequence, assembly.originSequence))
+        {
+            return;
+        }
+    }
 
     if (different)
     {
@@ -211,15 +267,26 @@ void DTPK::parseSeqRequestPacket(
     forwarded->originalSender = request->originalSender;
     forwarded->destination = request->destination;
     forwarded->requestedSequence = request->requestedSequence;
+    forwarded->flags = request->flags;
     forwarded->hopLimit = static_cast<uint8_t>(request->hopLimit - 1u);
+
+    uint16_t nextHop = BROADCAST;
+    const bool directed =
+        (request->flags & DTPK_SEQ_REQ_FLOOD) == 0 &&
+        _crystDatabase.getRepairNextHop(
+            request->destination,
+            sender,
+            nextHop);
+    if (!directed)
+        forwarded->flags |= DTPK_SEQ_REQ_FLOOD;
 
     addPacketToSendingQueue(
         reinterpret_cast<DTPKPacketUnknown *>(forwarded),
         sizeof(DTPKPacketSeqRequest),
-        BROADCAST,
+        directed ? nextHop : BROADCAST,
         3000,
         0,
-        false,
+        directed,
         false,
         nullptr,
         true);
@@ -256,15 +323,17 @@ void DTPK::parseSingleDataPacket(
 
 bool DTPK::forwardRoutedPacket(const ReceivedPacket &packet)
 {
-    if (packet.dtpkSize < sizeof(DTPKPacketGeneric))
+    if (packet.dtpkSize < sizeof(DTPKPacketHeader))
         return false;
 
     DTPKPacketGeneric *generic =
         reinterpret_cast<DTPKPacketGeneric *>(packet.frame->data);
+    const bool applicationData =
+        generic->type == DATA_SINGLE || generic->type == DATA_FRAGMENT;
 
     if (generic->hopLimit <= 1)
     {
-        if (generic->type == DATA_SINGLE)
+        if (applicationData)
             sendNackPacket(
                 generic->originalSender,
                 packet.frame->mac.sender,
@@ -277,7 +346,7 @@ bool DTPK::forwardRoutedPacket(const ReceivedPacket &packet)
     RoutingRecord *routing = _crystDatabase.getRouting(generic->finalTarget);
     if (!routing)
     {
-        if (generic->type == DATA_SINGLE)
+        if (applicationData)
             sendNackPacket(
                 generic->originalSender,
                 packet.frame->mac.sender,
@@ -294,10 +363,9 @@ bool DTPK::forwardRoutedPacket(const ReceivedPacket &packet)
         return false;
 
     const size_t outgoingSize = packet.dtpkSize;
-    if (outgoingSize < sizeof(DTPKPacketHeader) ||
-        outgoingSize > DATASIZE_LCMM)
+    if (outgoingSize > DATASIZE_LCMM)
     {
-        if (generic->type == DATA_SINGLE)
+        if (applicationData)
             sendNackPacket(
                 generic->originalSender,
                 packet.frame->mac.sender,
@@ -311,11 +379,7 @@ bool DTPK::forwardRoutedPacket(const ReceivedPacket &packet)
         static_cast<DTPKPacketUnknown *>(malloc(outgoingSize));
     if (!forwarded)
         return false;
-
-    memcpy(
-        forwarded,
-        packet.frame->data,
-        outgoingSize);
+    memcpy(forwarded, packet.frame->data, outgoingSize);
 
     DTPKPacketGeneric *out =
         reinterpret_cast<DTPKPacketGeneric *>(forwarded);
@@ -326,6 +390,9 @@ bool DTPK::forwardRoutedPacket(const ReceivedPacket &packet)
                      generic->sourceSequence,
                      generic->id);
 
+    const bool priority =
+        generic->type == ACK || generic->type == NACK_NOTFOUND ||
+        generic->type == FRAGMENT_STATUS || generic->type == FRAGMENT_QUERY;
     addPacketToSendingQueue(
         forwarded,
         outgoingSize,
@@ -335,7 +402,7 @@ bool DTPK::forwardRoutedPacket(const ReceivedPacket &packet)
         true,
         false,
         nullptr,
-        generic->type == ACK || generic->type == NACK_NOTFOUND);
+        priority);
     return true;
 }
 
@@ -344,14 +411,15 @@ void DTPK::receivingDeamon()
     if (_packetReceived.empty())
         return;
 
-    auto packet = _packetReceived.front();
+    ReceivedPacket packet = _packetReceived.front();
     _packetReceived.pop();
 
     DTPKPacketUnknown *dtpk =
         packet.frame
             ? reinterpret_cast<DTPKPacketUnknown *>(packet.frame->data)
             : nullptr;
-    if (!dtpk || packet.dtpkSize < sizeof(DTPKPacketUnknown))
+    if (!dtpk || packet.dtpkSize < sizeof(DTPKPacketUnknown) ||
+        !dtpkWireVersionSupported(static_cast<uint8_t>(dtpk->type)))
     {
         free(packet.frame);
         return;
@@ -375,15 +443,16 @@ void DTPK::receivingDeamon()
         break;
 
     case DATA_SINGLE:
+    case DATA_FRAGMENT:
+    case FRAGMENT_STATUS:
+    case FRAGMENT_QUERY:
     case ACK:
     case NACK_NOTFOUND:
     {
-        if (packet.dtpkSize < sizeof(DTPKPacketGeneric))
+        if (packet.dtpkSize < sizeof(DTPKPacketHeader))
             break;
-
         DTPKPacketGeneric *generic =
             reinterpret_cast<DTPKPacketGeneric *>(dtpk);
-
         if (generic->finalTarget != MAC::getInstance()->getId())
         {
             forwardRoutedPacket(packet);
@@ -393,6 +462,21 @@ void DTPK::receivingDeamon()
         if (generic->type == DATA_SINGLE)
         {
             parseSingleDataPacket(packet);
+            break;
+        }
+        if (generic->type == DATA_FRAGMENT)
+        {
+            parseFragmentPacket(packet);
+            break;
+        }
+        if (generic->type == FRAGMENT_STATUS)
+        {
+            parseFragmentStatusPacket(packet);
+            break;
+        }
+        if (generic->type == FRAGMENT_QUERY)
+        {
+            parseFragmentQueryPacket(packet);
             break;
         }
 

@@ -113,7 +113,7 @@ def test_feasible_profile_recovers_when_only_remaining_path_is_longer():
     assert sim.nodes[1].routes[4].next_hop == 3
 
 
-def test_newer_feasible_generation_beats_shorter_stale_route():
+def test_metric_selects_shorter_route_among_feasible_generations():
     sim = Simulator(seed=71, profile=Profile.crystallized_v2())
     for node_id in (1, 2, 3, 4):
         sim.add_node(node_id)
@@ -131,6 +131,12 @@ def test_newer_feasible_generation_beats_shorter_stale_route():
     node.routes_by_neighbor[3] = {
         4: AdvertisedRoute(4, 3, 4, 2),
     }
+    node.rebuild_routes()
+    assert node.routes[4].next_hop == 2
+    assert node.routes[4].distance == 2
+    assert node.routes[4].sequence == 1
+
+    del node.routes_by_neighbor[2]
     node.rebuild_routes()
     assert node.routes[4].next_hop == 3
     assert node.routes[4].distance == 4

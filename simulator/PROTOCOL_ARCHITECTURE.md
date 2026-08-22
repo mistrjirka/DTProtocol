@@ -134,6 +134,15 @@ sending a success ACK. The current key is:
 ACK and NACK frames echo the same incarnation, so a delayed response from a
 previous boot cannot complete a new waiter with the same packet ID.
 
+## Multipart data plane
+
+Large application messages remain one DTPK identity while being carried by a
+sequence of 230-byte fragments. Per-hop LCMM reliability protects each fragment;
+a destination bitmap and one final E2E ACK provide selective message-level
+repair. Fragmentation therefore does not create one independent E2E transaction
+per piece and does not expose partial data to the application. See
+[`../MULTIPART_PROTOCOL.md`](../MULTIPART_PROTOCOL.md).
+
 ## Control-plane flow
 
 The four control messages have separate jobs and should not be collapsed merely
@@ -147,9 +156,9 @@ flowchart TD
     C[CRYST\nchunked complete neighbour snapshot]
     ASM[Transactional chunk assembly]
     DB[Replace that neighbour's contribution]
-    SEL[Freshest feasible route selection]
+    SEL[Lowest-metric feasible route selection]
     BLOCK{Known destination exists\nbut all candidates blocked?}
-    SEQ[SEQ_REQ\npersistent exponential-backoff flood]
+    SEQ[SEQ_REQ\ncandidate-guided reliable repair\n+ periodic flood escape]
     ORIGIN[Destination advances generation]
     ADV[HELLO + CRYST advertise new generation]
     HARD[120 s with no valid frame]
@@ -185,8 +194,10 @@ Important distinctions:
   route database.
 - **SEQ_REQ is the liveness counterpart of feasibility.** Feasibility can safely
   reject a longer same-generation route; the destination must then originate a
-  newer generation. Requests now retry with bounded exponential backoff until a
-  fresh route is learned or all knowledge of that destination disappears.
+  newer generation. Normal retries follow the freshest known candidate with a
+  reliable unicast. Every eighth retry deliberately floods, escaping stale
+  candidate cycles. Backoff remains bounded until fresh state is learned or all
+  knowledge of that destination disappears.
 
 ## State ownership
 
@@ -226,11 +237,14 @@ Measured host-layout changes during this pass:
 
 ## Reliability findings from the architecture review
 
-### 1. Freshness must dominate metric
+### 1. Freshness gates feasibility; it is not a route metric
 
-A shorter route from an older destination generation was able to beat a longer
-route from a newer generation. Selection now compares generation first and
-metric only within one generation.
+A destination generation determines whether a candidate may safely be used.
+Once candidates pass that feasibility predicate, ordinary metric selection must
+choose the shortest route. Preferring a newer generation merely because it is
+newer can keep a longer path selected or oscillate between fresh announcements.
+Repair therefore requests newer state only when feasibility blocks every known
+candidate; forwarding still selects the lowest-metric feasible candidate.
 
 ### 2. Failed probes cannot prove death
 
@@ -329,29 +343,29 @@ Removing those fields would save two bytes from every such control frame:
 This is a straightforward change, but it is wire-incompatible and therefore
 belongs behind an explicit protocol version transition.
 
-#### Investigate removing `NeighborRecordV2.from`
+#### Five-byte feasibility-only route record
 
-The `from`/`via` field is used only for split horizon. Removing it changes each
-route record from **7 to 5 bytes**:
+The v3 wire candidate removes `NeighborRecordV2.from`. That field existed only
+for split horizon; feasibility remains the route-loop safety invariant. Each
+advertised route therefore changes from **7 to 5 bytes**:
 
 - records per 255-byte frame: **33 -> 46**;
 - modeled 100-route snapshot: approximately **796 -> 566 radio bytes**;
 - reduction: approximately **29%**.
 
-Evidence so far for feasibility without split horizon:
+Pre-change evidence without split horizon included:
 
-- 351 exhaustive lossless initial/cut/heal cases through four nodes: no failure;
+- 351 exhaustive lossless initial/cut/heal cases through four nodes;
 - all **728 connected five-node graphs**, covering **9,008** deterministic
-  initial/cut/heal cases: no failure;
-- 500 random 5-10 node cases with 0-15% loss, cut and heal: no failure after the
-  persistent generation-repair fix;
-- no routing loops were observed.
+  initial/cut/heal cases;
+- 500 random 5-10 node cases with 0-15% loss, cut and heal;
+- no observed routing loop or final convergence failure.
 
-This is encouraging but not a proof. Keep the field until the real-C++ backend
-and a small formal model agree. The critical
-property is not merely “no loop observed”; it is that every accepted same-
-generation successor satisfies the feasibility condition under every message
-ordering.
+Those results are evidence, not a proof, and must be rerun after each repair or
+chunking change. The critical property is not merely “no loop observed”; every
+accepted same-generation successor must satisfy the feasibility condition under
+every relevant message ordering. The bounded optimization/model-checking work
+therefore remains part of the acceptance gate for this wire change.
 
 ### C. Do not prune these
 

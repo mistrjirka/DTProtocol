@@ -141,3 +141,18 @@ def test_real_cpp_transient_direct_fade_does_not_commit_false_withdrawal():
         net.run(150_000)
         assert net.routes(2).get(3) == (3, 1)
         assert net.routes(1).get(3) == (2, 2)
+
+
+def test_real_cpp_routes_cross_more_than_32_hops():
+    """The real C++ route core must represent paths beyond the old 32-hop cap."""
+    with CppNetwork(seed=32_101, tick_ms=100) as net:
+        for node in range(1, 41):
+            net.add_node(node)
+        for node in range(1, 40):
+            net.add_link(node, node + 1, latency_ms=0, jitter_ms=0)
+        net.run(1_000_000)
+        for node in range(1, 40):
+            assert net.routes(node).get(40) == (
+                node + 1,
+                40 - node,
+            ), (node, net.routes(node).get(40))

@@ -77,19 +77,21 @@ Sanitizers are also exercised in CI. On the reference implementation that job is
 
 ## What is modeled
 
-- CRYST full-vector advertisements and the current split-horizon rule;
-- crystallization quiet-period sessions and session garbage collection;
-- route selection by minimum hop count;
-- data forwarding, end-to-end DTPK ACK/NACK, and per-hop LCMM-style retries;
-- packet/ACK loss, latency/jitter, partitions/healing, node failures/reboots;
+- versioned v3 CRYST snapshots with five-byte route records and transactional chunk assembly;
+- sequence/feasibility route selection without split-horizon wire state;
+- single-frame and selective-repair multipart DATA, end-to-end ACK/NACK, and per-hop LCMM retries;
+- independent or Gilbert-Elliott burst packet/ACK loss, latency/jitter, partitions/healing and reboot;
 - continuous moving-node geometry over the complete RF airtime;
+- separate decode, interference and CCA visibility ranges;
 - documented LoRa airtime and the 255-byte packet ceiling;
 - RSSI CCA timing, 25-250 ms randomized backoff, collisions, hidden terminals and half-duplex;
-- important current implementation defects as Python profile switches.
+- important historical implementation defects as Python profile switches.
 
-The main remaining RF realism gaps are received-power/capture/preamble-lock and an asynchronous C++-subprocess CCA handshake. See `SIMULATOR_VALIDATION.md`; do not use the C++ backend as the quantitative contention-capacity oracle yet.
+The main remaining RF realism gaps are calibrated received power/path loss, capture and preamble lock, mixed channels/SFs, and an asynchronous C++-subprocess CCA handshake. See `SIMULATOR_VALIDATION.md`; use the timed Python backend—not C++ contention—as the quantitative MAC-policy reference.
 
 For the protocol-level dependency graphs, state ownership, pruning analysis and the staged simplification plan, see [`PROTOCOL_ARCHITECTURE.md`](PROTOCOL_ARCHITECTURE.md).
+
+Application payloads larger than one LoRa frame use the selective-repeat multipart layer documented in [`../MULTIPART_PROTOCOL.md`](../MULTIPART_PROTOCOL.md).
 
 ## Correctness properties checked by `audit()`
 

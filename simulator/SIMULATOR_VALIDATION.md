@@ -134,24 +134,32 @@ lose a packet that began during carrier sensing.
 | continuous motion during frame | **Exact for piecewise-linear trajectories** | analytic whole-frame range check | not timestep sampled |
 | link/node failure ordering | **Exact simulator invariant** | environment event wins at equal timestamp over PHY/protocol | deterministic replay |
 | half-duplex | **Conservative abstraction** | a radio not RX-ready cannot receive | correct direction, omits analog acquisition details |
-| hidden terminals | **Modeled topologically** | nodes only CCA-sense reachable transmitters | good for qualitative hidden-terminal tests |
-| RSSI threshold in dBm | **Missing** | reachable energy is binary-above-threshold | requires received-power/noise-floor layer |
-| capture effect | **Missing** | any audible overlap corrupts | pessimistic; dense capacity is underestimated |
-| preamble lock / late interferer | **Missing** | all overlap is treated equivalently | needed with capture model |
+| hidden terminals | **Modeled topologically** | decode, interference and CCA reach are independently configurable | represents audible-undecodable and hidden-interferer cases |
+| temporal fading | **Optional bounded model** | independent loss or directional/ACK-specific Gilbert-Elliott states | supports reproducible loss bursts without claiming a deployment fit |
+| RSSI threshold in dBm | **Missing** | CCA reach is an explicit binary threshold region | requires received-power/noise-floor calibration for dBm claims |
+| capture effect | **Missing** | any in-range interfering overlap corrupts | pessimistic; dense capacity is underestimated |
+| preamble lock / late interferer | **Missing** | all interfering overlap is treated equivalently | needed with a received-power capture model |
 | cross-SF interference | **Missing** | one global SF/BW | no quantitative mixed-SF claims |
 | multiple RF channels | **Missing** | one shared abstract channel | add before channel-allocation studies |
-| path loss / SNR / sensitivity | **Missing by default** | range + independent packet-loss probability | deployment-specific; do not invent coefficients |
+| path loss / SNR / sensitivity | **Missing by default** | explicit decode/interference/CCA ranges + selectable loss process | deployment-specific; do not invent coefficients |
 | CRC/BER | **Intentional abstraction** | bad frame is dropped as a whole | routing reliability only, not BER studies |
 | oscillator/frequency error | **Missing** | none | cumulative auto-correction was intentionally removed from production |
 
-Because capture and dBm thresholds are missing, a dense-contention run is currently a
+Because capture and dBm thresholds are missing, a dense-contention run remains a
 **conservative qualitative stress test**, not a calibrated prediction of packets/s or
-maximum network density.
+maximum network density. The new three-range model is nevertheless stricter than a
+single connectivity radius: a transmitter may be undecodable, still interfere, and
+remain below another node's CCA reach.
 
-A realistic next RF layer should be optional and explicit: per-direction received
+Loss may be independent or use an explicit two-state Gilbert-Elliott process per
+direction and separately for DATA/ACK sampling. The parameters are scenario inputs;
+the simulator does not pretend that one default transition matrix represents a real
+field deployment.
+
+A realistic next RF layer should remain optional and explicit: per-direction received
 power (or a user-selected path-loss model), receiver noise floor/sensitivity, CCA
-threshold, and a configurable capture/preamble-lock rule. The existing deterministic
-link abstraction should remain available when deployment RF parameters are unknown.
+threshold, and a configurable capture/preamble-lock rule. The deterministic range
+abstraction remains useful when deployment RF parameters are unknown.
 
 ## C++ busy-CCA accuracy boundary
 
@@ -186,7 +194,7 @@ a neighbor disappeared**. Deleting a direct neighbor then deletes all its indire
 contribution; a subsequent HELLO restores only the direct route until a full CRYST is
 reacquired, causing a withdrawal/relearn wave.
 
-Current v2 behavior treats probe failure as suspicion only. Valid traffic/probe success
+Current v3 behavior treats probe failure as suspicion only. Valid traffic/probe success
 refreshes liveness; authoritative topology removal uses a much longer hard inactivity
 bound (currently 120 s). In earlier controlled scale runs this stabilized 64 nodes and
 allowed a 96-node line to reach exact routing by 1200 s and remain correct through

@@ -36,21 +36,40 @@ bool DTPK::versionNewer(uint32_t a, uint32_t b)
 
 bool DTPK::isControlType(DTPKPacketType type)
 {
+    // Fragment data is allowed through the local E2E gate: it is one part of
+    // the already-active logical message, not a second application transaction.
     return type == CRYST || type == HELLO || type == CRYST_REQ ||
-           type == SEQ_REQ || type == ACK || type == NACK_NOTFOUND;
+           type == SEQ_REQ || type == ACK || type == NACK_NOTFOUND ||
+           type == DATA_FRAGMENT || type == FRAGMENT_STATUS ||
+           type == FRAGMENT_QUERY;
 }
 
 bool DTPK::hasOutstandingEndToEndAck() const
 {
+    if (_multipartSend.active)
+        return true;
     return std::any_of(
         _packetWaiting.begin(),
         _packetWaiting.end(),
         [](const DTPKPacketWaiting &waiting) { return !waiting.gotAck; });
 }
 
+bool DTPK::hasKnownDirectNeighbor() const
+{
+    // _lastHeard contains only directly received neighbours and entries are
+    // removed by the normal hard-liveness expiry. Reusing that ownership avoids
+    // a second, arbitrary "recent" timeout for mobile cadence.
+    return !_lastHeard.empty();
+}
+
 uint32_t DTPK::effectiveHelloPeriodMs() const
 {
-    uint32_t period = _mobileHint ? MOBILE_HELLO_PERIOD_MS : HELLO_PERIOD_MS;
+    uint32_t period = HELLO_PERIOD_MS;
+    if (_mobileHint)
+        period = hasKnownDirectNeighbor()
+                     ? MOBILE_HELLO_PERIOD_MS
+                     : MOBILE_DISCOVERY_HELLO_PERIOD_MS;
+
     const uint8_t duty = MAC::getInstance()->getFallbackDutyCyclePercent();
     if (duty > 0 && duty <= 1)
         period = std::max<uint32_t>(period, 60000u);
@@ -90,7 +109,10 @@ void DTPK::setPacketReceivedCallback(PacketReceivedCallback callback)
 
 uint16_t DTPK::nextPacketId()
 {
-    return _packetCounter++;
+    ++_packetCounter;
+    if (_packetCounter == 0)
+        ++_packetCounter;
+    return _packetCounter;
 }
 
 bool DTPK::hasSeenData(uint16_t originalSender, uint16_t sourceSequence,
@@ -208,11 +230,11 @@ void DTPK::expireNeighbours()
         _crystAssemblies.erase(neighbor);
 
         // Remove stale outstanding LCMM-id mappings to this neighbor.
-        for (auto it = _livenessProbeByLcmmId.begin();
-             it != _livenessProbeByLcmmId.end();)
+        for (auto it = _directAckNeighborByLcmmId.begin();
+             it != _directAckNeighborByLcmmId.end();)
         {
             if (it->second == neighbor)
-                it = _livenessProbeByLcmmId.erase(it);
+                it = _directAckNeighborByLcmmId.erase(it);
             else
                 ++it;
         }
@@ -298,10 +320,20 @@ void DTPK::retrySequenceRequests()
                 retryDelay;
         if (due)
         {
-            sendSeqRequest(destination, pending.requestedSequence);
+            // Candidate-guided reliable unicast is the normal repair path. A
+            // periodic flood remains an explicit escape from stale candidate
+            // cycles or missing local contributions.
+            const bool flood =
+                ((static_cast<uint32_t>(pending.attempts) + 1u) % 8u) == 0u;
+            sendSeqRequest(
+                destination,
+                pending.requestedSequence,
+                flood);
             pending.lastSent = _currentTime;
-            if (pending.attempts < 0xffu)
+            if (pending.attempts < 0xffffu)
                 ++pending.attempts;
+            else
+                pending.attempts = 0;
         }
         ++it;
     }
@@ -311,8 +343,8 @@ void DTPK::addPacketToSendingQueue(
     DTPKPacketUnknown *packet,
     size_t size,
     uint16_t target,
-    int16_t timeout,
-    int16_t timeLeftToSend,
+    int32_t timeout,
+    int32_t timeLeftToSend,
     bool lcmmAck,
     bool dtpkAck,
     PacketAckCallback callback,
@@ -329,7 +361,15 @@ void DTPK::addPacketToSendingQueue(
         return;
     }
 
-    DTPKPacketRequest request{
+    uint8_t queueClass = TX_NORMAL;
+    if (packet->type == ACK || packet->type == NACK_NOTFOUND ||
+        packet->type == FRAGMENT_STATUS)
+        queueClass = TX_RESPONSE;
+    else if (priority || packet->type == CRYST_REQ ||
+             packet->type == SEQ_REQ || packet->type == FRAGMENT_QUERY)
+        queueClass = TX_REPAIR;
+
+    _packetRequests.push_back(DTPKPacketRequest{
         packet,
         size,
         target,
@@ -337,13 +377,8 @@ void DTPK::addPacketToSendingQueue(
         timeLeftToSend,
         lcmmAck,
         dtpkAck,
-        callback};
-
-    if (priority || packet->type == ACK || packet->type == NACK_NOTFOUND ||
-        packet->type == CRYST_REQ || packet->type == SEQ_REQ)
-        _packetRequests.insert(_packetRequests.begin(), request);
-    else
-        _packetRequests.push_back(request);
+        callback,
+        queueClass});
 }
 
 void DTPK::sendingDeamon()
@@ -352,84 +387,124 @@ void DTPK::sendingDeamon()
         return;
 
     const uint32_t elapsed = _currentTime - _lastTick;
+    for (DTPKPacketRequest &request : _packetRequests)
+    {
+        if (request.timeLeftToSend <= 0)
+            continue;
+        request.timeLeftToSend =
+            elapsed >= static_cast<uint32_t>(request.timeLeftToSend)
+                ? 0
+                : request.timeLeftToSend - static_cast<int32_t>(elapsed);
+    }
+
+    if (LCMM::getInstance()->isSending())
+        return;
+
+    const size_t none = _packetRequests.size();
+    size_t response = none;
+    size_t repair = none;
+    size_t normal = none;
     for (size_t i = 0; i < _packetRequests.size(); ++i)
     {
-        DTPKPacketRequest &request = _packetRequests[i];
-
+        const DTPKPacketRequest &request = _packetRequests[i];
         if (request.timeLeftToSend > 0)
-        {
-            request.timeLeftToSend =
-                elapsed >= static_cast<uint32_t>(request.timeLeftToSend)
-                    ? 0
-                    : request.timeLeftToSend - static_cast<int32_t>(elapsed);
-        }
-
-        const DTPKPacketType type = request.packet->type;
-        if (request.timeLeftToSend > 0 ||
-            LCMM::getInstance()->isSending() ||
-            (hasOutstandingEndToEndAck() && !isControlType(type)))
             continue;
+        const DTPKPacketType type = request.packet->type;
+        if (hasOutstandingEndToEndAck() && !isControlType(type))
+            continue;
+        if (request.queueClass == TX_RESPONSE && response == none)
+            response = i;
+        else if (request.queueClass == TX_REPAIR && repair == none)
+            repair = i;
+        else if (request.queueClass == TX_NORMAL && normal == none)
+            normal = i;
+    }
 
-        const uint16_t lcmmId = LCMM::getInstance()->sendPacketSingle(
-            request.lcmmAck,
-            request.target,
-            reinterpret_cast<unsigned char *>(request.packet),
-            static_cast<uint8_t>(request.size),
-            DTPK::receiveAck,
-            request.timeout > 0
-                ? static_cast<uint32_t>(std::max<int32_t>(1, request.timeout / 3))
-                : 1u,
-            3);
+    size_t selected = none;
+    if (response != none)
+        selected = response;
+    else if (repair != none && (normal == none || _repairBurst < MAX_REPAIR_BURST))
+        selected = repair;
+    else if (normal != none)
+        selected = normal;
+    else if (repair != none)
+        selected = repair;
+    if (selected == none)
+        return;
 
-        if (lcmmId == 0)
+    DTPKPacketRequest &request = _packetRequests[selected];
+    const uint16_t lcmmId = LCMM::getInstance()->sendPacketSingle(
+        request.lcmmAck,
+        request.target,
+        reinterpret_cast<unsigned char *>(request.packet),
+        static_cast<uint8_t>(request.size),
+        DTPK::receiveAck,
+        request.timeout > 0
+            ? static_cast<uint32_t>(std::max<int32_t>(1, request.timeout / 3))
+            : 1u,
+        5);
+
+    if (lcmmId == 0)
+    {
+        const uint8_t sendResult = LCMM::getInstance()->getLastSendResult();
+        const bool fatal =
+            sendResult == MAC_SEND_ALLOC_FAILED ||
+            sendResult == MAC_SEND_TOO_LARGE ||
+            sendResult == MAC_SEND_RADIO_ERROR;
+
+        if (!fatal)
         {
-            const uint8_t sendResult = LCMM::getInstance()->getLastSendResult();
-            const bool fatal =
-                sendResult == MAC_SEND_ALLOC_FAILED ||
-                sendResult == MAC_SEND_TOO_LARGE ||
-                sendResult == MAC_SEND_RADIO_ERROR;
-
-            if (!fatal)
-            {
-                const uint32_t wait = MAC::getInstance()->getTransmitWaitMs();
-                const uint32_t bounded = std::min<uint32_t>(
-                    wait > 0 ? wait : 1u,
-                    0x7fffffffu);
-                request.timeLeftToSend = static_cast<int32_t>(bounded);
-                return;
-            }
-
-            if (request.callback)
-                request.callback(0, 0);
-            free(request.packet);
-            _packetRequests.erase(
-                _packetRequests.begin() + static_cast<long>(i));
+            const uint32_t wait = MAC::getInstance()->getTransmitWaitMs();
+            const uint32_t bounded = std::min<uint32_t>(
+                wait > 0 ? wait : 1u,
+                0x7fffffffu);
+            request.timeLeftToSend = static_cast<int32_t>(bounded);
             return;
         }
 
-        if (type == CRYST_REQ && request.lcmmAck &&
-            request.target != BROADCAST)
-            _livenessProbeByLcmmId[lcmmId] = request.target;
-
-        if (request.dtpkAck)
-        {
-            const DTPKPacketGeneric *generic =
-                reinterpret_cast<const DTPKPacketGeneric *>(request.packet);
-            DTPKPacketWaiting waiting{};
-            waiting.id = request.packet->id;
-            waiting.sourceSequence = generic->sourceSequence;
-            waiting.target = generic->finalTarget;
-            waiting.timeout =
-                request.timeout > 0 ? static_cast<uint32_t>(request.timeout) : 1u;
-            waiting.timeLeft = request.timeout > 0 ? request.timeout : 1;
-            waiting.gotAck = false;
-            waiting.success = false;
-            waiting.callback = request.callback;
-            _packetWaiting.push_back(waiting);
-        }
-
+        if (request.callback)
+            request.callback(0, 0);
         free(request.packet);
-        _packetRequests.erase(_packetRequests.begin() + static_cast<long>(i));
+        _packetRequests.erase(
+            _packetRequests.begin() + static_cast<long>(selected));
         return;
     }
+
+    if (request.queueClass == TX_REPAIR)
+    {
+        if (_repairBurst < 0xffu)
+            ++_repairBurst;
+    }
+    else if (request.queueClass == TX_NORMAL)
+    {
+        _repairBurst = 0;
+    }
+
+    if (request.lcmmAck && request.target != BROADCAST)
+        _directAckNeighborByLcmmId[lcmmId] = request.target;
+    if (_multipartSend.active &&
+        (request.packet->type == DATA_FRAGMENT ||
+         request.packet->type == FRAGMENT_QUERY))
+        _multipartLcmmIds[lcmmId] = 1;
+
+    if (request.dtpkAck)
+    {
+        const DTPKPacketGeneric *generic =
+            reinterpret_cast<const DTPKPacketGeneric *>(request.packet);
+        DTPKPacketWaiting waiting{};
+        waiting.id = request.packet->id;
+        waiting.sourceSequence = generic->sourceSequence;
+        waiting.target = generic->finalTarget;
+        waiting.timeout =
+            request.timeout > 0 ? static_cast<uint32_t>(request.timeout) : 1u;
+        waiting.timeLeft = request.timeout > 0 ? request.timeout : 1;
+        waiting.gotAck = false;
+        waiting.success = false;
+        waiting.callback = request.callback;
+        _packetWaiting.push_back(waiting);
+    }
+
+    free(request.packet);
+    _packetRequests.erase(
+        _packetRequests.begin() + static_cast<long>(selected));
 }

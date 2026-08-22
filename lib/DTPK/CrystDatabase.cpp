@@ -23,6 +23,72 @@ bool CrystDatabase::hasKnownDestination(uint16_t id) const
     return false;
 }
 
+bool CrystDatabase::getRepairNextHop(uint16_t destination,
+                                     uint16_t avoidedRouter,
+                                     uint16_t &result) const
+{
+    std::vector<Candidate> candidates;
+    for (const auto &neighborEntry : routesByNeighbor)
+    {
+        if (neighborEntry.first == avoidedRouter)
+            continue;
+        for (const Candidate &candidate : neighborEntry.second)
+        {
+            if (candidate.destination == destination &&
+                candidate.distance < DTPK_ROUTE_INFINITY)
+                candidates.push_back(candidate);
+        }
+    }
+    if (candidates.empty())
+        return false;
+
+    // Prefer an ordinary feasible successor. Only if none exists may repair
+    // traverse an unfeasible candidate: the request itself cannot create a
+    // selected-route loop, and its purpose is to reach the origin for a newer
+    // destination generation.
+    std::vector<Candidate> feasible;
+    for (const Candidate &candidate : candidates)
+    {
+        if (candidateFeasible(candidate))
+            feasible.push_back(candidate);
+    }
+    if (!feasible.empty())
+    {
+        std::sort(
+            feasible.begin(),
+            feasible.end(),
+            [](const Candidate &a, const Candidate &b) {
+                if (a.distance != b.distance)
+                    return a.distance < b.distance;
+                return a.router < b.router;
+            });
+        result = feasible.front().router;
+        return true;
+    }
+
+    uint16_t newest = candidates.front().sequence;
+    for (const Candidate &candidate : candidates)
+    {
+        if (sequenceNewer(candidate.sequence, newest))
+            newest = candidate.sequence;
+    }
+    std::sort(
+        candidates.begin(),
+        candidates.end(),
+        [newest](const Candidate &a, const Candidate &b) {
+            const bool aFresh = a.sequence == newest;
+            const bool bFresh = b.sequence == newest;
+            if (aFresh != bFresh)
+                return aFresh;
+            if (a.distance != b.distance)
+                return a.distance < b.distance;
+            return a.router < b.router;
+        });
+
+    result = candidates.front().router;
+    return true;
+}
+
 bool CrystDatabase::sequenceNewer(uint16_t a, uint16_t b)
 {
     if (a == b)
@@ -122,18 +188,10 @@ bool CrystDatabase::rebuildCache()
                 candidate.sequence};
 
             auto existing = nextCache.find(candidate.destination);
-            const bool newerGeneration =
-                existing != nextCache.end() &&
-                sequenceNewer(candidateRoute.sequence, existing->second.sequence);
-            const bool sameGenerationBetterMetric =
-                existing != nextCache.end() &&
-                candidateRoute.sequence == existing->second.sequence &&
-                (candidateRoute.distance < existing->second.distance ||
-                 (candidateRoute.distance == existing->second.distance &&
-                  candidateRoute.router < existing->second.router));
             if (existing == nextCache.end() ||
-                newerGeneration ||
-                sameGenerationBetterMetric)
+                candidateRoute.distance < existing->second.distance ||
+                (candidateRoute.distance == existing->second.distance &&
+                 candidateRoute.router < existing->second.router))
             {
                 nextCache[candidate.destination] = candidateRoute;
             }
@@ -217,7 +275,7 @@ bool CrystDatabase::updateFromCrystPacket(uint16_t from,
     for (size_t i = 0; i < count; ++i)
     {
         const NeighborRecordV2 &record = records[i];
-        if (record.id == myId || record.id == from || record.from == myId)
+        if (record.id == myId || record.id == from)
             continue;
         if (record.distance >= DTPK_ROUTE_INFINITY - 1)
             continue;
@@ -298,7 +356,6 @@ std::vector<NeighborRecordV2> CrystDatabase::getListOfRoutesV2() const
         const RoutingRecord &route = entry.second;
         records.push_back({
             entry.first,
-            route.router,
             route.sequence,
             route.distance});
     }

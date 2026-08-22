@@ -34,6 +34,7 @@ public:
         bool lcmmAck;
         bool dtpkAck;
         PacketAckCallback callback;
+        uint8_t queueClass;
     };
 
     struct DTPKPacketWaiting
@@ -56,11 +57,26 @@ public:
 
     void setPacketReceivedCallback(PacketReceivedCallback callback);
     uint16_t sendPacket(uint16_t target, unsigned char *packet, size_t size,
-                        int16_t timeout, bool isAck = false,
+                        int32_t timeout, bool isAck = false,
                         PacketAckCallback callback = nullptr);
     void loop();
     std::vector<NeighborRecord> getNeighbours();
     bool isMobileHintEnabled() const { return _mobileHint; }
+
+    static constexpr size_t maximumSinglePayloadSize()
+    {
+        return DATASIZE_LCMM - sizeof(DTPKPacketGeneric);
+    }
+    static constexpr size_t fragmentPayloadSize()
+    {
+        return DATASIZE_LCMM - sizeof(DTPKPacketFragment);
+    }
+    static constexpr size_t maximumMessageSize()
+    {
+        return DTPK_MAX_MESSAGE_SIZE < fragmentPayloadSize() * 255u
+                   ? DTPK_MAX_MESSAGE_SIZE
+                   : fragmentPayloadSize() * 255u;
+    }
 
 private:
     static DTPK *dtpk;
@@ -69,6 +85,7 @@ private:
 
     static constexpr uint32_t HELLO_PERIOD_MS = 10000;
     static constexpr uint32_t MOBILE_HELLO_PERIOD_MS = 4000;
+    static constexpr uint32_t MOBILE_DISCOVERY_HELLO_PERIOD_MS = 1000;
     static constexpr uint32_t HELLO_JITTER_MS = 2000;
 
     // Missing several HELLOs is only suspicion. Larger half-duplex networks
@@ -84,9 +101,21 @@ private:
     static constexpr uint32_t CRYST_ASSEMBLY_EXPIRY_MS = 30000;
     static constexpr uint32_t SEQ_REQ_RETRY_MIN_MS = 5000;
     static constexpr uint32_t SEQ_REQ_RETRY_MAX_MS = 60000;
-    static constexpr uint16_t MAX_CRYST_CHUNKS = 256;
+    static constexpr uint16_t MAX_CRYST_CHUNKS = 16;
     static constexpr size_t RECENT_DATA_CACHE_SIZE = 64;
     static constexpr size_t RECENT_SEQ_REQ_CACHE_SIZE = 64;
+    static constexpr uint8_t MAX_REPAIR_BURST = 4;
+    static constexpr uint8_t MAX_FRAGMENT_COUNT = 255;
+    static constexpr uint32_t FRAGMENT_QUERY_INTERVAL_MS = 5000;
+    static constexpr uint32_t FRAGMENT_ASSEMBLY_EXPIRY_MS = 120000;
+    static constexpr uint32_t FRAGMENT_TIMEOUT_PER_PART_MS = 5000;
+    static constexpr size_t FRAGMENT_BITMAP_BYTES =
+        (MAX_FRAGMENT_COUNT + 7u) / 8u;
+    static_assert(DTPK_MAX_FRAGMENT_ASSEMBLIES > 0,
+                  "at least one fragment assembly slot is required");
+    static constexpr uint8_t TX_NORMAL = 0;
+    static constexpr uint8_t TX_REPAIR = 1;
+    static constexpr uint8_t TX_RESPONSE = 2;
 
     // Strict duty limiting is optional, but when enabled its legal off-time may
     // exceed the normal hard timeout. It may only lengthen hard expiry.
@@ -115,8 +144,12 @@ private:
 
     struct NeighborState
     {
-        uint16_t originSequence = 0;
-        uint32_t routeVersion = 0;
+        uint16_t originSequence;
+        uint32_t routeVersion;
+
+        NeighborState() : originSequence(0), routeVersion(0) {}
+        NeighborState(uint16_t sequence, uint32_t version)
+            : originSequence(sequence), routeVersion(version) {}
     };
 
     struct CrystAssembly
@@ -131,15 +164,57 @@ private:
 
     struct PendingSeqRequest
     {
-        uint16_t requestedSequence = 0;
-        uint32_t lastSent = 0;
-        uint8_t attempts = 0;
+        uint16_t requestedSequence;
+        uint32_t lastSent;
+        uint16_t attempts;
+
+        PendingSeqRequest()
+            : requestedSequence(0), lastSent(0), attempts(0) {}
+        PendingSeqRequest(uint16_t sequence, uint32_t sent, uint16_t count)
+            : requestedSequence(sequence), lastSent(sent), attempts(count) {}
+    };
+
+    struct MultipartSend
+    {
+        bool active = false;
+        uint16_t id = 0;
+        uint16_t sourceSequence = 0;
+        uint16_t target = 0;
+        uint16_t totalSize = 0;
+        uint8_t fragmentCount = 0;
+        uint8_t nextInitialFragment = 0;
+        uint32_t nextQueryAt = 0;
+        uint16_t nextQueryId = 1;
+        uint16_t lastStatusQueryId = UINT16_MAX;
+        uint8_t *payload = nullptr;
+        std::array<uint8_t, MAX_FRAGMENT_COUNT> retransmit{};
+    };
+
+    struct FragmentAssembly
+    {
+        bool active = false;
+        uint16_t id = 0;
+        uint16_t sourceSequence = 0;
+        uint16_t originalSender = 0;
+        uint16_t totalSize = 0;
+        uint16_t lastHop = 0;
+        uint8_t flags = 0;
+        uint8_t fragmentCount = 0;
+        uint8_t receivedCount = 0;
+        uint32_t lastUpdate = 0;
+        uint32_t lastStatus = 0;
+        uint8_t *packetBuffer = nullptr;
+        std::array<uint8_t, FRAGMENT_BITMAP_BYTES> received{};
     };
 
     struct ReceivedPacket
     {
-        LCMMPacketDataReceive *frame = nullptr;
-        size_t dtpkSize = 0;
+        LCMMPacketDataReceive *frame;
+        size_t dtpkSize;
+
+        ReceivedPacket() : frame(nullptr), dtpkSize(0) {}
+        ReceivedPacket(LCMMPacketDataReceive *value, size_t size)
+            : frame(value), dtpkSize(size) {}
     };
 
     std::array<PacketIdentity, RECENT_DATA_CACHE_SIZE> _recentData{};
@@ -157,6 +232,7 @@ private:
     bool _mobileHint;
 
     std::vector<DTPKPacketRequest> _packetRequests;
+    uint8_t _repairBurst = 0;
     std::vector<DTPKPacketWaiting> _packetWaiting;
     std::queue<ReceivedPacket> _packetReceived;
     CrystDatabase _crystDatabase;
@@ -166,12 +242,19 @@ private:
 
     std::unordered_map<uint16_t, uint32_t> _lastHeard;
     std::unordered_map<uint16_t, uint32_t> _lastLivenessProbe;
-    // LCMM packet id -> direct neighbor. A successful hop ACK is itself proof
-    // of liveness even if the subsequent CRYST response is lost.
-    std::unordered_map<uint16_t, uint16_t> _livenessProbeByLcmmId;
+    // LCMM packet id -> direct next hop. Every successful reliable-unicast ACK
+    // is positive bidirectional liveness evidence, not only explicit probes.
+    std::unordered_map<uint16_t, uint16_t> _directAckNeighborByLcmmId;
+    // Source-side fragment/query LCMM transactions. Their completion starts
+    // the downstream end-to-end status wait; queue time is too early on a busy
+    // multi-hop path.
+    std::unordered_map<uint16_t, uint8_t> _multipartLcmmIds;
     std::unordered_map<uint16_t, NeighborState> _neighborState;
     std::unordered_map<uint16_t, CrystAssembly> _crystAssemblies;
     std::unordered_map<uint16_t, PendingSeqRequest> _pendingSeqRequests;
+    MultipartSend _multipartSend;
+    std::array<FragmentAssembly, DTPK_MAX_FRAGMENT_ASSEMBLIES>
+        _fragmentAssemblies{};
 
     DTPK(uint16_t originSequence, bool mobileHint);
 
@@ -190,6 +273,7 @@ private:
     bool hasOutstandingEndToEndAck() const;
     uint16_t nextPacketId();
     uint32_t effectiveHelloPeriodMs() const;
+    bool hasKnownDirectNeighbor() const;
 
     void markRoutingChanged(const char *reason);
     void noteHeard(uint16_t neighbor);
@@ -197,12 +281,30 @@ private:
     void expireAssemblies();
     void processSequenceRequests();
     void retrySequenceRequests();
+    void maintainFragmentAssemblies();
+    void pumpMultipartSend();
+    void clearMultipartSend();
+    uint8_t fragmentCountForSize(size_t size) const;
+    size_t expectedFragmentBytes(uint16_t totalSize, uint8_t index) const;
+    uint32_t multipartQueryDelayMs();
+    bool queueMultipartFragment(uint8_t index);
+    bool queueFragmentQuery();
+    FragmentAssembly *findFragmentAssembly(
+        uint16_t originalSender, uint16_t sourceSequence, uint16_t id);
+    FragmentAssembly *allocateFragmentAssembly(
+        uint16_t originalSender, uint16_t sourceSequence, uint16_t id,
+        uint16_t totalSize, uint8_t flags, uint16_t lastHop);
+    void resetFragmentAssembly(FragmentAssembly &assembly);
+    void sendFragmentStatus(
+        uint16_t originalSender, uint16_t sourceSequence, uint16_t id,
+        uint8_t fragmentCount, const uint8_t *received, uint16_t lastHop,
+        uint16_t queryId);
 
     void addPacketToSendingQueue(DTPKPacketUnknown *packet,
                                  size_t size,
                                  uint16_t target,
-                                 int16_t timeout,
-                                 int16_t timeLeftToSend,
+                                 int32_t timeout,
+                                 int32_t timeLeftToSend,
                                  bool lcmmAck = false,
                                  bool dtpkAck = false,
                                  PacketAckCallback callback = nullptr,
@@ -212,7 +314,8 @@ private:
     void queueCrystSnapshot();
     void sendHello();
     void sendCrystRequest(uint16_t neighbor);
-    void sendSeqRequest(uint16_t destination, uint16_t requestedSequence);
+    void sendSeqRequest(uint16_t destination, uint16_t requestedSequence,
+                        bool flood);
     void sendNackPacket(uint16_t target, uint16_t from, uint16_t id,
                         uint16_t sourceSequence,
                         uint16_t failedDestination);
@@ -224,6 +327,9 @@ private:
     void parseCrystRequestPacket(const ReceivedPacket &packet);
     void parseSeqRequestPacket(const ReceivedPacket &packet);
     void parseSingleDataPacket(const ReceivedPacket &packet);
+    void parseFragmentPacket(const ReceivedPacket &packet);
+    void parseFragmentStatusPacket(const ReceivedPacket &packet);
+    void parseFragmentQueryPacket(const ReceivedPacket &packet);
     bool forwardRoutedPacket(const ReceivedPacket &packet);
 
     void receivingDeamon();

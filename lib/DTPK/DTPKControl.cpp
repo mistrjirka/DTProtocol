@@ -18,24 +18,35 @@ void DTPK::timeoutDeamon()
 
         if (waiting.gotAck)
         {
-            if (waiting.callback)
-            {
-                const uint16_t ping = waiting.success
-                    ? static_cast<uint16_t>(
-                          waiting.timeout -
-                          static_cast<uint32_t>(
-                              std::max<int32_t>(waiting.timeLeft, 0)))
-                    : 0;
-                waiting.callback(waiting.success ? 1 : 0, ping);
-            }
+            const bool multipart =
+                _multipartSend.active && waiting.id == _multipartSend.id &&
+                waiting.sourceSequence == _multipartSend.sourceSequence;
+            const uint16_t ping = waiting.success
+                ? static_cast<uint16_t>(std::min<uint32_t>(
+                      waiting.timeout - static_cast<uint32_t>(
+                          std::max<int32_t>(waiting.timeLeft, 0)),
+                      UINT16_MAX))
+                : 0;
+            PacketAckCallback callback = waiting.callback;
+            const bool success = waiting.success;
+            if (multipart)
+                clearMultipartSend();
+            if (callback)
+                callback(success ? 1 : 0, ping);
             remove.push_back(i);
             continue;
         }
 
         if (waiting.timeLeft <= 0)
         {
-            if (waiting.callback)
-                waiting.callback(0, 0);
+            const bool multipart =
+                _multipartSend.active && waiting.id == _multipartSend.id &&
+                waiting.sourceSequence == _multipartSend.sourceSequence;
+            PacketAckCallback callback = waiting.callback;
+            if (multipart)
+                clearMultipartSend();
+            if (callback)
+                callback(0, 0);
             remove.push_back(i);
             continue;
         }
@@ -63,17 +74,16 @@ void DTPK::sendCrystPacket()
 
 void DTPK::queueCrystSnapshot()
 {
-    // A newly generated state version supersedes queued HELLO and all unsent
-    // chunks from older CRYST snapshots. The one chunk already handed to LCMM,
-    // if any, is allowed to finish and the newer snapshot repairs it afterward.
+    // A newly generated state version supersedes all unsent chunks from older
+    // CRYST snapshots. Preserve queued HELLO: liveness must not depend on a
+    // churn-heavy multi-chunk snapshot ever reaching the head of the queue.
     auto end = std::remove_if(
         _packetRequests.begin(),
         _packetRequests.end(),
         [](DTPKPacketRequest &request) {
             if (!request.packet)
                 return false;
-            const DTPKPacketType type = request.packet->type;
-            if (type != HELLO && type != CRYST)
+            if (request.packet->type != CRYST)
                 return false;
             free(request.packet);
             request.packet = nullptr;
@@ -114,7 +124,6 @@ void DTPK::queueCrystSnapshot()
             continue;
 
         packet->type = CRYST;
-        packet->id = nextPacketId();
         packet->originSequence = _originSequence;
         packet->routeVersion = _routeVersion;
         packet->chunkIndex = chunk;
@@ -137,13 +146,12 @@ void DTPK::queueCrystSnapshot()
 
 void DTPK::sendHello()
 {
-    if (MAC::getInstance()->getTransmitWaitMs() > 0)
-        return;
-
+    // Queue one replaceable HELLO even while the radio is busy or duty-limited.
+    // The normal scheduler defers it; dropping the timer event can phase-lock a
+    // busy node into silence for many beacon periods.
     for (const DTPKPacketRequest &request : _packetRequests)
     {
-        if (request.packet &&
-            (request.packet->type == HELLO || request.packet->type == CRYST))
+        if (request.packet && request.packet->type == HELLO)
             return;
     }
 
@@ -153,7 +161,6 @@ void DTPK::sendHello()
         return;
 
     packet->type = HELLO;
-    packet->id = nextPacketId();
     packet->originSequence = _originSequence;
     packet->routeVersion = _routeVersion;
 
@@ -186,22 +193,35 @@ void DTPK::sendCrystRequest(uint16_t neighbor)
         return;
 
     packet->type = CRYST_REQ;
-    packet->id = nextPacketId();
+    packet->originSequence = _originSequence;
+    packet->routeVersion = _routeVersion;
 
     addPacketToSendingQueue(
         reinterpret_cast<DTPKPacketUnknown *>(packet),
         sizeof(DTPKPacketCrystRequest),
         neighbor,
         3000,
-        0,
+        static_cast<int32_t>(random(25, 501)),
         true,
         false,
         nullptr,
         true);
 }
 
-void DTPK::sendSeqRequest(uint16_t destination, uint16_t requestedSequence)
+void DTPK::sendSeqRequest(uint16_t destination,
+                          uint16_t requestedSequence,
+                          bool flood)
 {
+    const uint16_t normalizedSequence =
+        requestedSequence == 0 ? 1 : requestedSequence;
+    uint16_t nextHop = BROADCAST;
+    const bool directed =
+        !flood &&
+        _crystDatabase.getRepairNextHop(
+            destination,
+            BROADCAST,
+            nextHop);
+
     for (DTPKPacketRequest &queued : _packetRequests)
     {
         if (!queued.packet || queued.packet->type != SEQ_REQ)
@@ -210,20 +230,30 @@ void DTPK::sendSeqRequest(uint16_t destination, uint16_t requestedSequence)
             reinterpret_cast<DTPKPacketSeqRequest *>(queued.packet);
         if (existing->destination != destination)
             continue;
-        if (!sequenceNewer(requestedSequence, existing->requestedSequence))
+        if (sequenceNewer(existing->requestedSequence, normalizedSequence))
             return;
 
-        existing->id = nextPacketId();
-        existing->requestedSequence = requestedSequence == 0
-                                          ? 1
-                                          : requestedSequence;
-        rememberSeqRequest(
-            existing->originalSender,
-            existing->id,
-            existing->destination,
-            existing->requestedSequence);
+        if (sequenceNewer(normalizedSequence, existing->requestedSequence))
+        {
+            existing->id = nextPacketId();
+            existing->requestedSequence = normalizedSequence;
+            rememberSeqRequest(
+                existing->originalSender,
+                existing->id,
+                existing->destination,
+                existing->requestedSequence);
+        }
+
+        // A later flood escape or changed best candidate must update the
+        // queued request rather than being hidden by coalescing.
+        existing->flags = directed ? 0 : DTPK_SEQ_REQ_FLOOD;
+        existing->hopLimit = DTPK_DEFAULT_HOP_LIMIT;
+        queued.target = directed ? nextHop : BROADCAST;
+        queued.lcmmAck = directed;
+        queued.timeLeftToSend = 0;
         return;
     }
+
     DTPKPacketSeqRequest *packet =
         static_cast<DTPKPacketSeqRequest *>(malloc(sizeof(DTPKPacketSeqRequest)));
     if (!packet)
@@ -233,7 +263,8 @@ void DTPK::sendSeqRequest(uint16_t destination, uint16_t requestedSequence)
     packet->id = nextPacketId();
     packet->originalSender = MAC::getInstance()->getId();
     packet->destination = destination;
-    packet->requestedSequence = requestedSequence == 0 ? 1 : requestedSequence;
+    packet->requestedSequence = normalizedSequence;
+    packet->flags = directed ? 0 : DTPK_SEQ_REQ_FLOOD;
     packet->hopLimit = DTPK_DEFAULT_HOP_LIMIT;
 
     rememberSeqRequest(
@@ -245,10 +276,10 @@ void DTPK::sendSeqRequest(uint16_t destination, uint16_t requestedSequence)
     addPacketToSendingQueue(
         reinterpret_cast<DTPKPacketUnknown *>(packet),
         sizeof(DTPKPacketSeqRequest),
-        BROADCAST,
+        directed ? nextHop : BROADCAST,
         3000,
         0,
-        false,
+        directed,
         false,
         nullptr,
         true);

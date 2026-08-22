@@ -101,6 +101,8 @@ class TimedV2Node(MobileAwareNode):
             original_sender=self.id,
             final_target=neighbor,
             wire_dtpk_size=DTPK_CRYST_REQ_SIZE,
+            sender_sequence=self.origin_sequence,
+            route_version=self.route_version,
         )
         self.sim.metrics.cryst_req_tx += 1
         self.enqueue(
@@ -150,6 +152,7 @@ class TimedV2Node(MobileAwareNode):
             if changed_best:
                 self.schedule_cryst("neighbor_expired")
 
+        self._expire_fragment_assemblies()
         self.sim.schedule(
             self.MAINTENANCE_PERIOD_MS,
             self._expiry_tick,
@@ -187,6 +190,11 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
         """LCMM timeout argument used by production for this local hop."""
         if packet.kind == "CRYST_REQ":
             request_timeout = 3000
+        elif (
+            packet.kind == "DATA_FRAGMENT"
+            and packet.original_sender == sender_id
+        ):
+            request_timeout = 10_000
         elif packet.kind == "DATA" and packet.original_sender == sender_id:
             request_timeout = self._source_request_timeout_ms.get(
                 (int(sender_id), int(packet.packet_id) & 0xFFFF),
@@ -259,6 +267,7 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
                 request_start
                 + self._production_hop_timeout_base_ms(sender_id, packet)
                 + math.ceil(self.airtime_ms(frame_bytes))
+                + self.rng.uniform(25.0, 250.0)
             )
             self._hop_deadline_ms[
                 self._deadline_key(sender_id, packet)
@@ -315,7 +324,9 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
                 other_link is not None
                 and other_link.up
                 and self.node_up.get(other_sender, False)
-                and self._ever_in_range(other_sender, receiver, left, right)
+                and self._ever_in_range(
+                    other_sender, receiver, left, right, "interference"
+                )
             ):
                 return False
         return True
@@ -451,19 +462,17 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
             ):
                 self._mark_post_read_rearm(receiver_id)
 
-        wrapped_complete = on_complete
-        if original_packet.kind == "CRYST_REQ":
-            # Production DTPK maps every direct reliable CRYST_REQ LCMM id back
-            # to its neighbor. A successful link ACK alone is valid liveness
-            # evidence even before the requested CRYST broadcast arrives.
-            def wrapped_complete(success: bool):
-                if success:
-                    requester = self.nodes.get(sender_id)
-                    if requester is not None:
-                        requester.last_heard[receiver_id] = self.now
-                        if isinstance(requester, TimedV2Node):
-                            requester.last_liveness_probe.pop(receiver_id, None)
-                on_complete(success)
+        # Production DTPK records every direct reliable LCMM transaction by
+        # its next hop. A successful link ACK is bidirectional liveness evidence
+        # regardless of whether the payload is DATA, ACK/NACK or control.
+        def wrapped_complete(success: bool):
+            if success:
+                requester = self.nodes.get(sender_id)
+                if requester is not None:
+                    requester.last_heard[receiver_id] = self.now
+                    if isinstance(requester, TimedV2Node):
+                        requester.last_liveness_probe.pop(receiver_id, None)
+            on_complete(success)
 
         return super()._start_ack_tx(
             receiver_id,

@@ -22,6 +22,9 @@ public:
 
     RoutingRecord *getRouting(uint16_t id);
     bool hasKnownDestination(uint16_t id) const;
+    bool getRepairNextHop(uint16_t destination,
+                          uint16_t avoidedRouter,
+                          uint16_t &result) const;
 
     // A HELLO proves the direct neighbour alive. If `invalidateIndirect` is
     // true (new incarnation / no full-state knowledge), all old indirect

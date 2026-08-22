@@ -1,0 +1,10 @@
+.venv/
+.venv-*/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+simulator/__pycache__/
+simulator/tests/__pycache__/
+simulator/cpp/build/
+simulator/cpp/build-*/
+simulator/results/
