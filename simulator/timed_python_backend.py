@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-"""Small receive-state timing overlay for SharedPythonNetwork.
+"""Receive-state timing/fidelity overlay for SharedPythonNetwork.
 
-SharedPythonNetwork already models production RSSI CCA, TX setup, airtime,
-RX-buffer SPI reads and successful link-ACK ordering. The remaining hardware
-interval is the public RadioLib ``startReceive()`` call made by production
-``MAC::loop()`` after an RX callback returns *without* starting a transmission.
-This wrapper keeps the audited ~320 us RadioLib-6/SX1262 lower/typical interval
-visible to the shared RF scheduler.
+SharedPythonNetwork models production RSSI CCA, TX setup, airtime, RX-buffer SPI
+reads and successful link-ACK ordering. This wrapper keeps the final RadioLib
+``startReceive()`` interval visible after callbacks and tightens the RX_DONE
+semantics used by CCA: a frame completion only behaves like a hardware RX_DONE
+when the current pessimistic no-capture medium could actually have decoded it.
 """
 
 from radio_timing import rx_rearm_after_read_ms
@@ -21,6 +20,71 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
         node.radio_busy_until = max(
             float(node.radio_busy_until), self.now + rx_rearm_after_read_ms()
         )
+
+    def _medium_tx_decodable_without_capture(self, tx: dict, receiver: int) -> bool:
+        """Whether this abstract RF frame could have produced RX_DONE.
+
+        This intentionally uses the simulator's current pessimistic collision
+        model: any audible overlap corrupts the frame. It is still more faithful
+        than the old shortcut that converted every reachable frame end into
+        RX_DONE, including collided frames and frames whose preamble began while
+        the receiver was transmitting/re-arming.
+        """
+        sender = int(tx["sender"])
+        if sender == receiver:
+            return False
+        start = float(tx["start"])
+        end = float(tx["end"])
+        link = self.get_link(sender, receiver)
+        if (
+            link is None
+            or not link.up
+            or not self.node_up.get(sender, False)
+            or not self.node_up.get(receiver, False)
+            or not self.stays_in_range(sender, receiver, start, end)
+        ):
+            return False
+
+        node = self.nodes.get(receiver)
+        if node is None or not node.up or node.crashed:
+            return False
+        # SX1262 must be in RX when the desired preamble starts. radio_busy_until
+        # records TX/read/re-arm intervals in the timed Python backend.
+        if float(node.radio_busy_until) > start + 1e-9:
+            return False
+
+        for other in self._medium_tx:
+            if other is tx:
+                continue
+            left = max(start, float(other["start"]))
+            right = min(end, float(other["end"]))
+            if left >= right:
+                continue
+            other_sender = int(other["sender"])
+            if other_sender == receiver:
+                return False
+            other_link = self.get_link(other_sender, receiver)
+            if (
+                other_link is not None
+                and other_link.up
+                and self.node_up.get(other_sender, False)
+                and self._ever_in_range(other_sender, receiver, left, right)
+            ):
+                return False
+        return True
+
+    def _rx_completion_during_cca(
+        self, receiver: int, cca_start_ms: float, cca_end_ms: float
+    ) -> bool:
+        if not self.radio_contention:
+            return False
+        for tx in self._medium_tx:
+            end = float(tx["end"])
+            if not (float(cca_start_ms) < end <= float(cca_end_ms)):
+                continue
+            if self._medium_tx_decodable_without_capture(tx, receiver):
+                return True
+        return False
 
     def _deliver_after_read(
         self,
