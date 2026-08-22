@@ -230,6 +230,7 @@ private:
   MACPacket *createPacket(uint16_t sender, uint16_t target,
                           unsigned char *data, uint8_t size);
   static void setFlag(void);
+  static bool irqPending();
   void setFrequencyAndListen(uint16_t channel);
   void setFrequency(uint16_t channel);
   bool transmissionAuthorized();
