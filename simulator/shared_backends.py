@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import DefaultDict, List, Optional, Tuple
 
 from cpp_sim_adapter import CppSimNetwork
-from model import MAC_OVERHEAD, MAX_PACKET_SIZE, NEIGHBOR_RECORD_SIZE
+from model import LCMM_OVERHEAD, MAC_OVERHEAD, MAX_PACKET_SIZE, NEIGHBOR_RECORD_SIZE
 from simulator import Simulator
 
 
@@ -145,6 +145,8 @@ class SharedPythonNetwork(KeyedEnvironmentMixin, Simulator):
         self._init_shared_environment(radio_contention=radio_contention)
 
     def _frame_bytes(self, packet):
+        if packet.kind == "CRYST" and packet.wire_dtpk_size:
+            return MAC_OVERHEAD + LCMM_OVERHEAD + int(packet.wire_dtpk_size)
         base = super()._frame_bytes(packet)
         if packet.kind != "CRYST":
             return base
