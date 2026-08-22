@@ -60,6 +60,18 @@ int main(int argc, char **argv) {
     assert(radio.coding_rate == 7);
     assert(mac->getNoiseFloorOfChannel(expected_channels) == 255);
 
+    // SF9/BW125 full-frame airtime makes the 1% profile legally silent for
+    // about 170 s after a large transmission. Liveness must expand accordingly;
+    // 10% profiles remain safely inside the original 30 s timeout.
+    const uint32_t neighborExpiry =
+        mac->recommendedNeighborExpiryMs(30'000, 12'000, 1'000);
+    if (expected_duty == 1) {
+        assert(neighborExpiry > 180'000);
+        assert(neighborExpiry < 190'000);
+    } else {
+        assert(neighborExpiry == 30'000);
+    }
+
     const unsigned char payload[] = {1, 2, 3};
 
     mac->setMode(SENDING, true);
@@ -81,9 +93,6 @@ int main(int argc, char **argv) {
     assert(mac->getMode() == SENDING);
     assert(radio.dio1_action != nullptr);
 
-    // TX completion is classified by the SX1262 IRQ bit. Deliberately perturb
-    // software state before servicing the IRQ: the old implementation would
-    // infer the wrong event (or ignore it), while v2 must still finish TX.
     const int finishBefore = radio.finish_transmit_calls;
     radio.irq_flags = RADIOLIB_SX126X_IRQ_TX_DONE;
     radio.dio1_action();
@@ -92,20 +101,15 @@ int main(int argc, char **argv) {
     assert(radio.finish_transmit_calls == finishBefore + 1);
     assert(mac->getMode() == RECEIVING);
 
-    // RX_DONE is also hardware-classified. A zero-payload MAC header is enough
-    // to exercise readData; with no callback the MAC owns/frees it afterwards.
     const int readsBefore = radio.read_data_calls;
     radio.packet_length = sizeof(MACHeader);
     radio.irq_flags = RADIOLIB_SX126X_IRQ_RX_DONE;
     radio.dio1_action();
     mac->setMode(IDLE, true);
-    // setMode(IDLE) leaves the radio IRQ status intact in the host stub.
     mac->loop();
     assert(radio.read_data_calls == readsBefore + 1);
     assert(mac->getMode() == RECEIVING);
 
-    // A CAD wakeup is not packet reception. It must be explicitly cleared and
-    // must not call readData just because software happens to say RECEIVING.
     const int clearBefore = radio.clear_irq_calls;
     const int readsBeforeCad = radio.read_data_calls;
     radio.irq_flags = RADIOLIB_SX126X_IRQ_CAD_DONE;
