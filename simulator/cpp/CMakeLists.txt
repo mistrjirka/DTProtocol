@@ -37,6 +37,32 @@ target_compile_options(dtprotocol_host_node PRIVATE
 target_compile_definitions(dtprotocol_host_node PRIVATE HOST_SIM=1)
 
 # -----------------------------------------------------------------------------
+# LCMM contract against the same fake MAC used by the full host node. This
+# specifically verifies that regulatory/carrier denials preserve retry budget
+# while fatal radio errors terminate instead of being retried forever.
+# -----------------------------------------------------------------------------
+add_executable(dtprotocol_lcmm_contract
+    lcmm_contract_tests.cpp
+    host/host_runtime.cpp
+    ${REPO_ROOT}/lib/lcmm/lcmm.cpp
+    ${REPO_ROOT}/lib/mathextension/mathextension.cpp
+)
+target_compile_features(dtprotocol_lcmm_contract PRIVATE cxx_std_17)
+set_target_properties(dtprotocol_lcmm_contract PROPERTIES CXX_EXTENSIONS ON)
+target_include_directories(dtprotocol_lcmm_contract BEFORE PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/host
+    ${REPO_ROOT}
+    ${REPO_ROOT}/include
+)
+target_compile_options(dtprotocol_lcmm_contract PRIVATE
+    -include${CMAKE_CURRENT_SOURCE_DIR}/host/mac.h
+    -include${REPO_ROOT}/include/mathextension.h
+    -Wall -Wextra -Wconversion -Wno-unused-parameter
+)
+target_compile_definitions(dtprotocol_lcmm_contract PRIVATE HOST_SIM=1)
+add_test(NAME lcmm_mac_error_contract COMMAND dtprotocol_lcmm_contract)
+
+# -----------------------------------------------------------------------------
 # Compile and execute the *production* MAC implementation against a tiny
 # RadioLib/SX1262 stub. This catches API/default/type/state errors that the fake
 # MAC used by dtprotocol_host_node deliberately cannot see.
@@ -93,7 +119,11 @@ target_compile_definitions(dtprotocol_math_contract PRIVATE HOST_SIM=1)
 add_test(NAME embedded_math_contract COMMAND dtprotocol_math_contract)
 
 if(DTP_HOST_SANITIZERS)
-    foreach(target dtprotocol_host_node dtprotocol_mac_contract dtprotocol_math_contract)
+    foreach(target
+            dtprotocol_host_node
+            dtprotocol_lcmm_contract
+            dtprotocol_mac_contract
+            dtprotocol_math_contract)
         target_compile_options(${target} PRIVATE
             -fsanitize=address,undefined -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE -fsanitize=address,undefined)
