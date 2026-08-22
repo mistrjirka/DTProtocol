@@ -7,9 +7,9 @@ They are deliberately kept in one place so the Python protocol adapter, timing
 regressions and documentation use the same assumptions.
 
 The SPI byte counts below are an approximation of the public RadioLib 6.0
-startTransmit()/startReceive() command sequence. They include command/data bytes
-but not MCU/HAL software overhead, so they should be read as a conservative
-wire-time model rather than cycle-accurate emulation.
+startTransmit()/startReceive()/readData() command sequence. They include
+command/data bytes but not MCU/HAL software overhead, so they should be read as
+a conservative wire-time model rather than cycle-accurate emulation.
 """
 
 # RadioLib 6.0 BuildOpt.h default for ordinary Arduino platforms.
@@ -34,6 +34,11 @@ RSSI_SPI_BYTES_PER_SAMPLE = 3
 # read/write/GetPacketType and SetTx. The payload/frame bytes themselves are
 # added separately below.
 TX_SETUP_FIXED_SPI_BYTES = 50
+
+# RX_DONE processing before MAC can hand a packet to LCMM: IRQ/length queries,
+# ReadBuffer command/offset, buffer reset and IRQ clear. The received frame bytes
+# are added to this fixed command traffic.
+RX_READ_FIXED_SPI_BYTES = 14
 
 # Approximate public startReceive path after TX completion: finishTransmit IRQ
 # clear + standby, RX IRQ mapping, buffer base, IRQ clear, packet type/params and
@@ -67,6 +72,12 @@ def tx_startup_ms(frame_bytes: int, spi_hz: int = RADIOLIB6_DEFAULT_SPI_HZ) -> f
     """Approximate startTransmit host/SPI setup plus PA/radio transition."""
     spi_bytes = TX_SETUP_FIXED_SPI_BYTES + max(0, int(frame_bytes))
     return spi_wire_time_ms(spi_bytes, spi_hz) + SX1262_STBY_RC_TO_TX_MS
+
+
+def rx_packet_read_ms(frame_bytes: int, spi_hz: int = RADIOLIB6_DEFAULT_SPI_HZ) -> float:
+    """Approximate RX_DONE -> MAC/LCMM packet-available SPI latency."""
+    spi_bytes = RX_READ_FIXED_SPI_BYTES + max(0, int(frame_bytes))
+    return spi_wire_time_ms(spi_bytes, spi_hz)
 
 
 def rx_rearm_ms(spi_hz: int = RADIOLIB6_DEFAULT_SPI_HZ) -> float:
