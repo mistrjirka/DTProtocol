@@ -67,7 +67,7 @@ public:
 
 private:
     static DTPK *dtpk;
-    static void receivePacket(LCMMPacketDataReceive *packet, uint16_t size);
+    static void receivePacket(LCMMPacketDataReceive *packet, uint32_t size);
     static void receiveAck(uint16_t id, bool success);
 
     static constexpr uint32_t HELLO_PERIOD_MS = 10000;
