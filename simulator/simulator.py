@@ -1,12 +1,17 @@
 from __future__ import annotations
-import heapq
-import math
+
 import random
 from collections import deque
 from typing import Callable, Dict, List, Optional, Tuple
+
+from environment import EnvironmentKernel
 from model import *
 from node import Node
-class Simulator:
+
+
+class Simulator(EnvironmentKernel):
+    """Python protocol adapter running on the shared RF/environment kernel."""
+
     def __init__(
         self,
         seed: int = 1,
@@ -15,107 +20,71 @@ class Simulator:
         bandwidth_hz: int = 125_000,
         coding_rate_denominator: int = 7,
     ):
-        self.rng = random.Random(seed)
-        self.seed = seed
+        super().__init__(
+            seed,
+            sf=sf,
+            bandwidth_hz=bandwidth_hz,
+            coding_rate_denominator=coding_rate_denominator,
+        )
+        # Protocol timing/jitter randomness is independent of the environment.
+        self.rng = random.Random(seed ^ 0xD7A5_71C0)
         self.profile = profile or Profile.current()
-        self.sf = sf
-        self.bandwidth_hz = bandwidth_hz
-        self.cr_den = coding_rate_denominator
-        self.now = 0.0
-        self._seq = 0
-        self._events: List[Tuple[float, int, Callable, tuple]] = []
         self.nodes: Dict[int, Node] = {}
-        self.links: Dict[frozenset[int], Link] = {}
         self.metrics = Metrics()
-        self.trace: List[dict] = []
 
-    def log(self, event: str, **fields) -> None:
-        self.trace.append({"t_ms": round(self.now, 3), "event": event, **fields})
-
-    def schedule(self, delay_ms: float, fn: Callable, *args) -> None:
-        self._seq += 1
-        heapq.heappush(self._events, (self.now + max(0.0, delay_ms), self._seq, fn, args))
-
-    def schedule_at(self, when_ms: float, fn: Callable, *args) -> None:
-        self._seq += 1
-        heapq.heappush(self._events, (float(when_ms), self._seq, fn, args))
-
-    def run(self, until_ms: float) -> None:
-        while self._events and self._events[0][0] <= until_ms:
-            t, _, fn, args = heapq.heappop(self._events)
-            self.now = t
-            fn(*args)
-        self.now = float(until_ms)
-
-    def add_node(self, node_id: int, start: bool = True) -> "Node":
+    def add_node(
+        self,
+        node_id: int,
+        start: bool = True,
+        *,
+        position: Tuple[float, float] = (0.0, 0.0),
+    ) -> "Node":
         node = Node(self, node_id)
         self.nodes[node_id] = node
+        # Physical environment exists immediately; protocol startup is still an
+        # event so all nodes begin deterministically at t=0.
+        self.register_node(node_id, up=True, position=position)
         if start:
-            self.schedule(0, node.start)
+            self.schedule(0, node.start, priority=self.PROTOCOL_PRIORITY)
         return node
 
-    def add_link(
-        self,
-        a: int,
-        b: int,
-        *,
-        loss: float = 0.0,
-        ack_loss: Optional[float] = None,
-        latency_ms: float = 25.0,
-        jitter_ms: float = 5.0,
-        up: bool = True,
-    ) -> None:
-        self.links[frozenset((a, b))] = Link(a, b, loss, ack_loss, latency_ms, jitter_ms, up)
-
-    def set_link(self, a: int, b: int, up: bool) -> None:
-        link = self.links[frozenset((a, b))]
-        link.up = up
-        self.log("link", a=a, b=b, up=up)
-
-    def reboot_node(self, node_id: int, downtime_ms: float = 500.0) -> None:
-        node = self.nodes[node_id]
+    def _on_environment_node_down(self, node_id: int) -> None:
+        node = self.nodes.get(node_id)
+        if node is None:
+            return
         node.up = False
         node.generation += 1
         node.reset_runtime()
-        self.log("node_down", node=node_id)
-        self.schedule(downtime_ms, node.start)
+
+    def _on_environment_node_up(self, node_id: int) -> None:
+        node = self.nodes.get(node_id)
+        if node is not None:
+            node.start()
+
+    def reboot_node(self, node_id: int, downtime_ms: float = 500.0) -> None:
+        self.set_node_up(node_id, False, reason="reboot")
+        self.schedule(
+            downtime_ms,
+            self.set_node_up,
+            node_id,
+            True,
+            priority=self.ENV_PRIORITY,
+        )
 
     def neighbors(self, node_id: int, only_up: bool = True) -> List[int]:
-        out = []
-        for link in self.links.values():
-            if node_id not in (link.a, link.b):
-                continue
-            if only_up and not link.up:
-                continue
-            other = link.other(node_id)
-            if only_up and (not self.nodes[node_id].up or not self.nodes[other].up):
-                continue
-            out.append(other)
-        return out
-
-    def get_link(self, a: int, b: int) -> Optional[Link]:
-        return self.links.get(frozenset((a, b)))
-
-    def _jittered_latency(self, link: Link) -> float:
-        if link.jitter_ms <= 0:
-            return link.latency_ms
-        return max(0.0, self.rng.gauss(link.latency_ms, link.jitter_ms))
-
-    def airtime_ms(self, payload_bytes: int) -> float:
-        # LoRa explicit-header airtime approximation, CRC enabled, preamble 8.
-        pl = max(0, payload_bytes)
-        sf = self.sf
-        bw = self.bandwidth_hz
-        de = 1 if sf >= 11 and bw == 125_000 else 0
-        ih = 0
-        crc = 1
-        cr = max(1, self.cr_den - 4)  # 4/5 -> 1, 4/7 -> 3
-        tsym = (2**sf) / bw
-        tpreamble = (8 + 4.25) * tsym
-        denom = 4 * (sf - 2 * de)
-        num = 8 * pl - 4 * sf + 28 + 16 * crc - 20 * ih
-        payload_sym = 8 + max(math.ceil(num / denom) * (cr + 4), 0)
-        return (tpreamble + payload_sym * tsym) * 1000.0
+        out = super().neighbors(node_id, only_up=only_up)
+        if not only_up:
+            return out
+        return [
+            other
+            for other in out
+            if other in self.nodes
+            and self.nodes[other].up
+            and not self.nodes[other].crashed
+            and node_id in self.nodes
+            and self.nodes[node_id].up
+            and not self.nodes[node_id].crashed
+        ]
 
     def _frame_bytes(self, packet: Packet) -> int:
         if packet.kind == "CRYST":
@@ -126,6 +95,13 @@ class Simulator:
             dtpk = DTPK_GENERIC_HEADER + packet.payload_size
         return MAC_OVERHEAD + LCMM_OVERHEAD + dtpk
 
+    # ------------------------------------------------------------------
+    # Python-model radio/LCMM bridge.
+    #
+    # C++ LCMM creates actual ACK frames itself.  The abstract Python backend
+    # keeps LCMM semantic, but both DATA and ACK airtime traverse the exact same
+    # EnvironmentKernel validation (motion, epochs, link state, loss, timing).
+    # ------------------------------------------------------------------
     def transmit(
         self,
         sender_id: int,
@@ -136,7 +112,11 @@ class Simulator:
         attempt: int = 1,
     ) -> None:
         sender = self.nodes[sender_id]
-        if not sender.up or sender.crashed:
+        if (
+            not sender.up
+            or sender.crashed
+            or not self.node_up.get(sender_id, False)
+        ):
             self.schedule(0, on_complete, False)
             return
 
@@ -147,112 +127,446 @@ class Simulator:
             self.schedule(0, on_complete, False)
             return
 
-        # MAC::sendData currently returns success even when state==SENDING.
         if self.now < sender.radio_busy_until:
             if self.profile.mac_busy_silent_drop:
                 self.metrics.silent_busy_drops += 1
                 self.log("busy_silent_drop", node=sender_id, kind=packet.kind, target=target)
                 if reliable:
-                    self.schedule(sender.link_retry_timeout_ms(packet), self._retry_or_finish,
-                                  sender_id, target, packet, reliable, on_complete, attempt)
+                    self.schedule(
+                        sender.link_retry_timeout_ms(packet),
+                        self._retry_or_finish,
+                        sender_id,
+                        target,
+                        packet,
+                        reliable,
+                        on_complete,
+                        attempt,
+                    )
                 else:
                     self.schedule(0, on_complete, True)
                 return
-            delay = sender.radio_busy_until - self.now
-            self.schedule(delay, self.transmit, sender_id, target, packet, reliable, on_complete, attempt)
+            self.schedule(
+                sender.radio_busy_until - self.now,
+                self.transmit,
+                sender_id,
+                target,
+                packet,
+                reliable,
+                on_complete,
+                attempt,
+            )
             return
 
         airtime = self.airtime_ms(frame_bytes)
-        sender.radio_busy_until = self.now + airtime
+        rf_start = self.now
+        rf_end = rf_start + airtime
+        sender.radio_busy_until = rf_end
         self.metrics.radio_data_frames += 1
         self.metrics.bytes_on_air += frame_bytes
+        self.rf_metrics.tx_frames += 1
+
         if target is None:
             self.metrics.broadcasts += 1
             if packet.kind == "CRYST":
                 self.metrics.cryst_tx += 1
             self.log("tx_broadcast", node=sender_id, kind=packet.kind, bytes=frame_bytes)
-            for nb in self.neighbors(sender_id):
-                link = self.get_link(sender_id, nb)
-                assert link is not None
-                if self.rng.random() < link.loss:
-                    self.metrics.link_loss_drops += 1
+
+            for receiver in self.linked_nodes(sender_id):
+                self.rf_metrics.rf_receivers_considered += 1
+                if not self.frame_start_valid(sender_id, receiver):
                     continue
-                delay = airtime + self._jittered_latency(link)
-                self.schedule(delay, self._deliver, nb, sender_id, packet.clone(), False, None)
-            self.schedule(0 if self.profile.noack_releases_lcmm_immediately else airtime, on_complete, True)
+                if self.sample_link_loss(sender_id, receiver):
+                    self.metrics.link_loss_drops += 1
+                    self.rf_metrics.rf_loss_drops += 1
+                    continue
+                link = self.get_link(sender_id, receiver)
+                assert link is not None
+                epochs = self.capture_frame_epochs(sender_id, receiver)
+                self.schedule_at(
+                    rf_end,
+                    self._python_rf_complete,
+                    sender_id,
+                    receiver,
+                    packet.clone(),
+                    False,
+                    None,
+                    rf_start,
+                    rf_end,
+                    *epochs,
+                    self.jittered_latency(link),
+                    priority=self.RADIO_PRIORITY,
+                )
+
+            self.schedule(
+                0 if self.profile.noack_releases_lcmm_immediately else airtime,
+                on_complete,
+                True,
+                priority=self.RADIO_PRIORITY,
+            )
             return
 
         self.metrics.unicast_attempts += 1
-        link = self.get_link(sender_id, target)
-        if link is None or not link.up or not self.nodes[target].up:
+        if not self.frame_start_valid(sender_id, target):
             self.log("tx_no_link", node=sender_id, target=target, kind=packet.kind, attempt=attempt)
             if reliable:
-                self.schedule(sender.link_retry_timeout_ms(packet), self._retry_or_finish,
-                              sender_id, target, packet, reliable, on_complete, attempt)
+                self.schedule(
+                    sender.link_retry_timeout_ms(packet),
+                    self._retry_or_finish,
+                    sender_id,
+                    target,
+                    packet,
+                    reliable,
+                    on_complete,
+                    attempt,
+                )
             else:
-                self.schedule(0 if self.profile.noack_releases_lcmm_immediately else airtime, on_complete, True)
+                self.schedule(
+                    0 if self.profile.noack_releases_lcmm_immediately else airtime,
+                    on_complete,
+                    True,
+                )
             return
 
-        data_lost = self.rng.random() < link.loss
-        self.log("tx_unicast", node=sender_id, target=target, kind=packet.kind,
-                 reliable=reliable, attempt=attempt, lost=data_lost)
-        if data_lost:
+        if self.sample_link_loss(sender_id, target):
             self.metrics.link_loss_drops += 1
+            self.rf_metrics.rf_loss_drops += 1
+            self.log(
+                "tx_unicast",
+                node=sender_id,
+                target=target,
+                kind=packet.kind,
+                reliable=reliable,
+                attempt=attempt,
+                lost=True,
+            )
             if reliable:
-                self.schedule(sender.link_retry_timeout_ms(packet), self._retry_or_finish,
-                              sender_id, target, packet, reliable, on_complete, attempt)
+                self.schedule(
+                    sender.link_retry_timeout_ms(packet),
+                    self._retry_or_finish,
+                    sender_id,
+                    target,
+                    packet,
+                    reliable,
+                    on_complete,
+                    attempt,
+                )
             else:
-                self.schedule(0 if self.profile.noack_releases_lcmm_immediately else airtime, on_complete, True)
+                self.schedule(
+                    0 if self.profile.noack_releases_lcmm_immediately else airtime,
+                    on_complete,
+                    True,
+                )
             return
 
-        delay = airtime + self._jittered_latency(link)
-        if reliable:
-            self.schedule(delay, self._deliver, target, sender_id, packet.clone(), True,
-                          (sender_id, target, packet, on_complete, attempt))
-        else:
-            self.schedule(delay, self._deliver, target, sender_id, packet.clone(), False, None)
-            self.schedule(0 if self.profile.noack_releases_lcmm_immediately else airtime, on_complete, True)
+        self.log(
+            "tx_unicast",
+            node=sender_id,
+            target=target,
+            kind=packet.kind,
+            reliable=reliable,
+            attempt=attempt,
+            lost=False,
+        )
+        link = self.get_link(sender_id, target)
+        assert link is not None
+        epochs = self.capture_frame_epochs(sender_id, target)
+        ack_context = (
+            sender_id,
+            target,
+            packet,
+            on_complete,
+            attempt,
+        ) if reliable else None
+        self.schedule_at(
+            rf_end,
+            self._python_rf_complete,
+            sender_id,
+            target,
+            packet.clone(),
+            reliable,
+            ack_context,
+            rf_start,
+            rf_end,
+            *epochs,
+            self.jittered_latency(link),
+            priority=self.RADIO_PRIORITY,
+        )
+        if not reliable:
+            self.schedule(
+                0 if self.profile.noack_releases_lcmm_immediately else airtime,
+                on_complete,
+                True,
+                priority=self.RADIO_PRIORITY,
+            )
 
-    def _deliver(self, receiver_id: int, previous_hop: int, packet: Packet,
-                 reliable: bool, ack_context) -> None:
+    def _python_rf_complete(
+        self,
+        sender_id: int,
+        receiver_id: int,
+        packet: Packet,
+        reliable: bool,
+        ack_context,
+        rf_start: float,
+        rf_end: float,
+        sender_epoch: int,
+        receiver_epoch: int,
+        link_epoch: int,
+        latency_ms: float,
+    ) -> None:
+        valid, reason = self.frame_path_valid(
+            sender_id,
+            receiver_id,
+            rf_start,
+            rf_end,
+            sender_epoch,
+            receiver_epoch,
+            link_epoch,
+        )
+        if not valid:
+            if reason == "range":
+                self.rf_metrics.rf_range_drops += 1
+            else:
+                self.rf_metrics.rf_epoch_drops += 1
+            if reliable and ack_context is not None:
+                sender, target, original, on_complete, attempt = ack_context
+                self.schedule(
+                    self.nodes[sender].link_retry_timeout_ms(original),
+                    self._retry_or_finish,
+                    sender,
+                    target,
+                    original,
+                    True,
+                    on_complete,
+                    attempt,
+                )
+            return
+
+        self.schedule(
+            latency_ms,
+            self._deliver,
+            receiver_id,
+            sender_id,
+            packet,
+            reliable,
+            ack_context,
+            receiver_epoch,
+            priority=self.RADIO_PRIORITY,
+        )
+
+    def _deliver(
+        self,
+        receiver_id: int,
+        previous_hop: int,
+        packet: Packet,
+        reliable: bool,
+        ack_context,
+        receiver_epoch: Optional[int] = None,
+    ) -> None:
         receiver = self.nodes[receiver_id]
-        if not receiver.up or receiver.crashed:
+        if (
+            not receiver.up
+            or receiver.crashed
+            or not self.node_up.get(receiver_id, False)
+            or (
+                receiver_epoch is not None
+                and self.node_epoch.get(receiver_id, 0) != receiver_epoch
+            )
+        ):
+            self.rf_metrics.firmware_epoch_drops += 1
             return
-        if reliable:
-            sender_id, target, original_packet, on_complete, attempt = ack_context
-            link = self.get_link(sender_id, target)
-            if link is None or not link.up:
-                return
-            # LCMM receiver sends link ACK first; upper layer is delivered after TX completion.
-            ack_bytes = MAC_OVERHEAD + 1 + 2  # approximate MAC + LCMM ACK type/id
-            ack_airtime = self.airtime_ms(ack_bytes)
-            self.metrics.radio_link_ack_frames += 1
-            self.metrics.bytes_on_air += ack_bytes
-            ack_loss = link.ack_loss if link.ack_loss is not None else link.loss
-            lost = self.rng.random() < ack_loss
-            upper_delay = ack_airtime
-            self.schedule(upper_delay, receiver.receive, packet, previous_hop)
-            if lost:
-                self.metrics.link_loss_drops += 1
-                self.schedule(receiver.link_retry_timeout_ms(packet), self._retry_or_finish,
-                              sender_id, target, original_packet, True, on_complete, attempt)
-            else:
-                ack_delay = ack_airtime + self._jittered_latency(link)
-                self.schedule(ack_delay, on_complete, True)
-        else:
-            receiver.receive(packet, previous_hop)
 
-    def _retry_or_finish(self, sender_id: int, target: Optional[int], packet: Packet,
-                         reliable: bool, on_complete: Callable[[bool], None], attempt: int) -> None:
+        self.rf_metrics.rf_delivered += 1
+        if not reliable:
+            receiver.receive(packet, previous_hop)
+            return
+
+        sender_id, target, original_packet, on_complete, attempt = ack_context
+        link = self.get_link(receiver_id, sender_id)
+        if link is None:
+            self.schedule(
+                receiver.link_retry_timeout_ms(packet),
+                self._retry_or_finish,
+                sender_id,
+                target,
+                original_packet,
+                True,
+                on_complete,
+                attempt,
+            )
+            return
+
+        # LCMM receiver transmits its link ACK first; the DTPK payload is handed
+        # upward at TX completion even if that ACK is lost on the reverse path.
+        ack_bytes = MAC_OVERHEAD + 1 + 2
+        ack_airtime = self.airtime_ms(ack_bytes)
+        ack_start = self.now
+        ack_end = ack_start + ack_airtime
+        self.metrics.radio_link_ack_frames += 1
+        self.metrics.bytes_on_air += ack_bytes
+        self.rf_metrics.tx_frames += 1
+
+        ack_epochs = self.capture_frame_epochs(receiver_id, sender_id)
+        lost = self.sample_link_loss(receiver_id, sender_id, ack=True)
+        if lost:
+            self.metrics.link_loss_drops += 1
+            self.rf_metrics.rf_loss_drops += 1
+
+        self.schedule_at(
+            ack_end,
+            self._python_ack_rf_complete,
+            receiver_id,
+            sender_id,
+            packet,
+            previous_hop,
+            original_packet,
+            target,
+            on_complete,
+            attempt,
+            ack_start,
+            ack_end,
+            *ack_epochs,
+            lost,
+            self.jittered_latency(link),
+            priority=self.RADIO_PRIORITY,
+        )
+
+    def _python_ack_rf_complete(
+        self,
+        receiver_id: int,
+        sender_id: int,
+        packet: Packet,
+        previous_hop: int,
+        original_packet: Packet,
+        target: int,
+        on_complete: Callable[[bool], None],
+        attempt: int,
+        ack_start: float,
+        ack_end: float,
+        ack_sender_epoch: int,
+        ack_receiver_epoch: int,
+        link_epoch: int,
+        random_lost: bool,
+        latency_ms: float,
+    ) -> None:
+        # The upper layer at the receiver only executes if that device survived
+        # its ACK transmission to TX-complete.
+        receiver_alive = (
+            self.node_up.get(receiver_id, False)
+            and self.node_epoch.get(receiver_id, 0) == ack_sender_epoch
+            and self.nodes[receiver_id].up
+            and not self.nodes[receiver_id].crashed
+        )
+        if receiver_alive:
+            self.nodes[receiver_id].receive(packet, previous_hop)
+
+        valid, reason = self.frame_path_valid(
+            receiver_id,
+            sender_id,
+            ack_start,
+            ack_end,
+            ack_sender_epoch,
+            ack_receiver_epoch,
+            link_epoch,
+        )
+        if not valid:
+            if reason == "range":
+                self.rf_metrics.rf_range_drops += 1
+            else:
+                self.rf_metrics.rf_epoch_drops += 1
+
+        if random_lost or not valid:
+            self.schedule(
+                self.nodes[sender_id].link_retry_timeout_ms(original_packet),
+                self._retry_or_finish,
+                sender_id,
+                target,
+                original_packet,
+                True,
+                on_complete,
+                attempt,
+            )
+            return
+
+        self.schedule(
+            latency_ms,
+            on_complete,
+            True,
+            priority=self.RADIO_PRIORITY,
+        )
+
+    def _retry_or_finish(
+        self,
+        sender_id: int,
+        target: Optional[int],
+        packet: Packet,
+        reliable: bool,
+        on_complete: Callable[[bool], None],
+        attempt: int,
+    ) -> None:
         if attempt >= self.profile.max_lcmm_attempts:
             on_complete(False)
         else:
-            self.transmit(sender_id, target, packet, reliable, on_complete, attempt + 1)
+            self.transmit(
+                sender_id,
+                target,
+                packet,
+                reliable,
+                on_complete,
+                attempt + 1,
+            )
 
+    # ------------------------------------------------------------------
+    # Common network-adapter surface
+    # ------------------------------------------------------------------
+    def routes(self, node_id: int) -> Dict[int, Tuple[int, int]]:
+        node = self.nodes.get(node_id)
+        if node is None or not node.up or node.crashed:
+            return {}
+        return {
+            dest: (route.next_hop, route.distance)
+            for dest, route in node.routes.items()
+        }
+
+    def send(
+        self,
+        node_id: int,
+        target: int,
+        payload: bytes = b"hello",
+        timeout_ms: int = 10000,
+        e2e_ack: bool = True,
+    ) -> int:
+        node = self.nodes.get(node_id)
+        if node is None:
+            return 0
+        packet_id = node.send_data(
+            target,
+            payload_size=len(payload),
+            e2e_ack=e2e_ack,
+            timeout_ms=timeout_ms,
+        )
+        return 0 if packet_id is None else packet_id
+
+    def close(self) -> None:
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
+    # ------------------------------------------------------------------
+    # Correctness/audit helpers
+    # ------------------------------------------------------------------
     def shortest_distances(self) -> Dict[int, Dict[int, int]]:
         result: Dict[int, Dict[int, int]] = {}
         for source in self.nodes:
-            if not self.nodes[source].up:
+            node = self.nodes[source]
+            if (
+                not node.up
+                or node.crashed
+                or not self.node_up.get(source, False)
+            ):
                 result[source] = {}
                 continue
             dist = {source: 0}
@@ -271,7 +585,7 @@ class Simulator:
         missing, stale, wrong_distance, loops = [], [], [], []
         stretch_values = []
         for node_id, node in self.nodes.items():
-            if not node.up or node.crashed:
+            if not node.up or node.crashed or not self.node_up.get(node_id, False):
                 continue
             for dest, d in truth[node_id].items():
                 if dest == node_id:
@@ -297,11 +611,20 @@ class Simulator:
             "stale": stale,
             "wrong_distance": wrong_distance,
             "loops": loops,
-            "mean_stretch": (sum(stretch_values) / len(stretch_values)) if stretch_values else None,
+            "mean_stretch": (
+                sum(stretch_values) / len(stretch_values)
+                if stretch_values
+                else None
+            ),
             "correct": not (missing or stale or wrong_distance or loops),
         }
 
-    def follow_route(self, start: int, dest: int, max_steps: Optional[int] = None) -> Tuple[List[int], str]:
+    def follow_route(
+        self,
+        start: int,
+        dest: int,
+        max_steps: Optional[int] = None,
+    ) -> Tuple[List[int], str]:
         max_steps = max_steps or (len(self.nodes) + 2)
         path = [start]
         seen = {start}
@@ -310,14 +633,23 @@ class Simulator:
             if cur == dest:
                 return path, "ok"
             node = self.nodes.get(cur)
-            if node is None or not node.up or node.crashed:
+            if (
+                node is None
+                or not node.up
+                or node.crashed
+                or not self.node_up.get(cur, False)
+            ):
                 return path, "dead"
             route = node.routes.get(dest)
             if route is None:
                 return path, "missing"
             nxt = route.next_hop
             link = self.get_link(cur, nxt)
-            if link is None or not link.up:
+            if (
+                link is None
+                or not link.up
+                or not self.in_range_now(cur, nxt)
+            ):
                 path.append(nxt)
                 return path, "broken"
             if nxt in seen:
@@ -335,8 +667,12 @@ class Simulator:
             "time_ms": self.now,
             "audit": self.audit(),
             "metrics": self.metrics.__dict__.copy(),
+            "rf_metrics": self.rf_metrics.__dict__.copy(),
             "routes": {
-                nid: {d: {"next": r.next_hop, "distance": r.distance} for d, r in sorted(n.routes.items())}
+                nid: {
+                    d: {"next": r.next_hop, "distance": r.distance}
+                    for d, r in sorted(n.routes.items())
+                }
                 for nid, n in sorted(self.nodes.items())
             },
             "crashed": [nid for nid, n in self.nodes.items() if n.crashed],
