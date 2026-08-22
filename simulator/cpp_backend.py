@@ -139,6 +139,34 @@ class CppNodeProcess:
     def phy_done(self, now_ms: float, token: int) -> List[Tx]:
         return self.command(f"PHYDONE {int(now_ms)} {token}")
 
+    def send_and_collect(
+        self,
+        now_ms: float,
+        target: int,
+        payload: bytes = b"x",
+        timeout_ms: int = 10000,
+        e2e_ack: bool = True,
+    ) -> Tuple[int, List[Tx]]:
+        """Start an application send and return RF work emitted in that turn.
+
+        The host runner services ``DTPK::loop()`` immediately after SEND, just
+        like application code returning to the MCU main loop.  That can make
+        the fake MAC emit a TX before the next periodic TICK, so the adapter
+        must not discard the command's TX records.
+        """
+        before = len(self.events)
+        data = payload.hex() if payload else "-"
+        txs = self.command(
+            f"SEND {int(now_ms)} {target} {timeout_ms} {1 if e2e_ack else 0} {data}"
+        )
+        for kind, values in reversed(self.events[before:]):
+            if kind == "SENDID":
+                return int(values[0]), txs
+        for kind, values in reversed(self.events):
+            if kind == "SENDID":
+                return int(values[0]), txs
+        return 0, txs
+
     def send(
         self,
         now_ms: float,
@@ -147,18 +175,10 @@ class CppNodeProcess:
         timeout_ms: int = 10000,
         e2e_ack: bool = True,
     ) -> int:
-        before = len(self.events)
-        data = payload.hex() if payload else "-"
-        self.command(
-            f"SEND {int(now_ms)} {target} {timeout_ms} {1 if e2e_ack else 0} {data}"
+        packet_id, _txs = self.send_and_collect(
+            now_ms, target, payload, timeout_ms, e2e_ack
         )
-        for kind, values in reversed(self.events[before:]):
-            if kind == "SENDID":
-                return int(values[0])
-        for kind, values in reversed(self.events):
-            if kind == "SENDID":
-                return int(values[0])
-        return 0
+        return packet_id
 
     def routes(self, now_ms: float) -> Dict[int, Tuple[int, int]]:
         before = len(self.events)
@@ -469,13 +489,15 @@ class CppNetwork(EnvironmentKernel):
     ) -> int:
         if not self.node_up.get(node_id, False):
             return 0
-        return self.nodes[node_id].send(
+        packet_id, txs = self.nodes[node_id].send_and_collect(
             self.now,
             target,
             payload,
             timeout_ms,
             e2e_ack,
         )
+        self._handle_txs(node_id, txs, self.now)
+        return packet_id
 
     def app_acks(self, node_id: int) -> List[Tuple[int, int]]:
         node = self.nodes.get(node_id)

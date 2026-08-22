@@ -63,6 +63,8 @@ class CppSimNetwork(CppNetwork):
              timeout_ms: int = 10000, e2e_ack: bool = True) -> int:
         if not self.node_up.get(node_id, False):
             return 0
-        return self.nodes[node_id].send(
+        packet_id, txs = self.nodes[node_id].send_and_collect(
             self._local_time(node_id), target, payload, timeout_ms, e2e_ack
         )
+        self._handle_txs(node_id, txs, self.now)
+        return packet_id

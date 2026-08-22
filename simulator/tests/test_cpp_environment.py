@@ -29,11 +29,17 @@ def test_real_cpp_reboot_resets_mcu_millis_epoch():
     with MovingCppNetwork(seed=88, tick_ms=50) as net:
         net.add_node(1)
         net.run(30_000)
-        before = net.rf_metrics.tx_frames
-        assert before >= 1
+        assert net.rf_metrics.tx_frames >= 1
         net.fail_node_at(40_000, 1)
         net.recover_node_at(50_000, 1)
-        net.run(50_150)
+        # Capture the baseline after the failure event: the old node is allowed
+        # to transmit normally between 30 s and 40 s.
+        net.run(40_000)
+        before = net.rf_metrics.tx_frames
+        # Initial HELLO is randomized no earlier than 100 ms and CRYST no
+        # earlier than 200 ms after boot.  At +50 ms, any new TX would therefore
+        # prove that the pre-reboot/global millis epoch leaked into firmware.
+        net.run(50_050)
         assert net.rf_metrics.tx_frames == before
         net.run(71_000)
         assert net.rf_metrics.tx_frames > before

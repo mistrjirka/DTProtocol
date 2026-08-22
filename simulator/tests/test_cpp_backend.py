@@ -108,7 +108,10 @@ def test_real_cpp_cryst_v2_seq_request_recovers_longer_only_path():
         # The old two-hop route disappears. The only surviving route is longer
         # and is initially infeasible under the old destination generation.
         net.set_link(2, 4, False)
-        net.run(110_000)
+        # With conservative liveness probing, direct-neighbor withdrawal and
+        # the subsequent SEQ_REQ repair are intentionally not instantaneous.
+        # The route should still converge well before hard expiry.
+        net.run(130_000)
 
         assert net.routes(1).get(4) == (3, 3), net.routes(1)
         assert net.routes(3).get(4) == (5, 2), net.routes(3)

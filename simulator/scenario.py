@@ -184,7 +184,15 @@ class Scenario:
             radio_contention=raw.get("radio_contention", False),
             radio_profile=raw.get("radio_profile", "unconstrained"),
             strict_duty_cycle=raw.get("strict_duty_cycle", False),
-            nodes=[NodeSpec(**x) for x in raw.get("nodes", [])],
+            nodes=[
+                NodeSpec(
+                    node_id=x["node_id"],
+                    position=tuple(x.get("position", (0.0, 0.0))),
+                    k_limit=x.get("k_limit", 20),
+                    mobile_hint=x.get("mobile_hint", False),
+                )
+                for x in raw.get("nodes", [])
+            ],
             links=[LinkSpec(**x) for x in raw.get("links", [])],
             trajectories={
                 int(k): [tuple(p) for p in v]
