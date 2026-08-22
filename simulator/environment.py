@@ -46,6 +46,8 @@ class RfMetrics:
     rf_range_drops: int = 0
     rf_epoch_drops: int = 0
     firmware_epoch_drops: int = 0
+    regulatory_deferrals: int = 0
+    regulatory_airtime_ms: float = 0.0
 
 
 class EnvironmentKernel:
@@ -53,7 +55,8 @@ class EnvironmentKernel:
 
     The Python theoretical model and the real-C++ subprocess backend both use
     this event queue, topology, trajectories, node/link epochs, airtime model,
-    and environment RNG.  Protocol code is deliberately outside this class.
+    environment RNG and optional regulatory TX policy. Protocol code is
+    deliberately outside this class.
 
     Priority convention for events at the same timestamp:
       0  environment changes (power/link failures, recovery)
@@ -75,13 +78,21 @@ class EnvironmentKernel:
         sf: int = 9,
         bandwidth_hz: int = 125_000,
         coding_rate_denominator: int = 7,
+        duty_cycle_percent: float = 0.0,
     ) -> None:
         self.seed = seed
-        # Environment randomness is intentionally separate from protocol RNG.
         self.env_rng = random.Random(seed ^ 0xE17A_5EED)
         self.sf = sf
         self.bandwidth_hz = bandwidth_hz
         self.cr_den = coding_rate_denominator
+
+        duty = float(duty_cycle_percent)
+        if duty < 0.0 or duty > 100.0:
+            raise ValueError("duty_cycle_percent must be between 0 and 100")
+        self.duty_cycle_percent = duty
+        # Regulatory availability is a property of the RF environment, not of
+        # volatile firmware state. It therefore survives simulated reboots.
+        self._tx_policy_until: Dict[int, float] = {}
 
         self.now = 0.0
         self._seq = 0
@@ -92,7 +103,6 @@ class EnvironmentKernel:
         self.node_epoch: Dict[int, int] = {}
         self.trajectories: Dict[int, List[Waypoint]] = {}
 
-        # Backward-compatible view used by early simulator tests.
         self.link_max_range: Dict[frozenset[int], Optional[float]] = {}
         self.drop_next: Dict[Tuple[int, int], int] = {}
         self.rf_metrics = RfMetrics()
@@ -138,6 +148,41 @@ class EnvironmentKernel:
         self.run_events(until_ms)
 
     # ------------------------------------------------------------------
+    # Shared non-blocking regulatory TX policy
+    # ------------------------------------------------------------------
+    def transmit_wait_ms(self, node_id: int, at_ms: Optional[float] = None) -> float:
+        if self.duty_cycle_percent <= 0.0:
+            return 0.0
+        at = self.now if at_ms is None else float(at_ms)
+        return max(0.0, self._tx_policy_until.get(node_id, 0.0) - at)
+
+    def account_transmission(
+        self,
+        node_id: int,
+        start_ms: float,
+        end_ms: float,
+    ) -> None:
+        if self.duty_cycle_percent <= 0.0:
+            return
+        airtime = max(0.0, float(end_ms) - float(start_ms))
+        if airtime <= 0.0:
+            return
+        period = airtime * (100.0 / self.duty_cycle_percent)
+        next_allowed = float(start_ms) + period
+        self._tx_policy_until[node_id] = max(
+            self._tx_policy_until.get(node_id, 0.0), next_allowed
+        )
+        self.rf_metrics.regulatory_airtime_ms += airtime
+
+    def note_regulatory_deferral(self, node_id: int) -> None:
+        self.rf_metrics.regulatory_deferrals += 1
+        self.log(
+            "regulatory_defer",
+            node=node_id,
+            wait_ms=round(self.transmit_wait_ms(node_id), 3),
+        )
+
+    # ------------------------------------------------------------------
     # Nodes and failures
     # ------------------------------------------------------------------
     def register_node(
@@ -149,6 +194,7 @@ class EnvironmentKernel:
     ) -> None:
         self.node_up[node_id] = bool(up)
         self.node_epoch.setdefault(node_id, 0)
+        self._tx_policy_until.setdefault(node_id, 0.0)
         self.trajectories.setdefault(
             node_id,
             [Waypoint(0.0, float(position[0]), float(position[1]))],
@@ -222,7 +268,6 @@ class EnvironmentKernel:
     def get_link(self, a: int, b: int) -> Optional[RadioLink]:
         return self.links.get(frozenset((a, b)))
 
-    # Compatibility alias used by the C++ backend.
     def _link(self, a: int, b: int) -> Optional[RadioLink]:
         return self.get_link(a, b)
 
@@ -350,8 +395,6 @@ class EnvironmentKernel:
         times.update(self._trajectory_breakpoints(a, start_ms, end_ms))
         times.update(self._trajectory_breakpoints(b, start_ms, end_ms))
         limit_sq = limit * limit
-        # Relative position is linear between breakpoints. Squared separation is
-        # convex, so its maximum on each segment occurs at an endpoint.
         return all(self._distance_sq(a, b, t) <= limit_sq + 1e-12 for t in times)
 
     def in_range_now(self, a: int, b: int, at_ms: Optional[float] = None) -> bool:
