@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from typing import Dict, List, Literal, Optional, Sequence, Tuple
+from typing import Dict, List, Literal, Optional, Tuple
 
-from cpp_backend import CppNetwork
-from environment import Waypoint
 from model import Profile
-from simulator import Simulator
+from shared_backends import SharedCppNetwork, SharedPythonNetwork
 
 
 BackendName = Literal["python", "cpp"]
@@ -59,14 +57,10 @@ class AppSendEvent:
 
 @dataclass
 class Scenario:
-    """Backend-independent experiment definition.
-
-    All topology, continuous trajectories, environmental failures and app demand
-    are defined before protocol execution.  `build("python")` and `build("cpp")`
-    then attach different node implementations to the same physical experiment.
-    """
+    """Backend-independent experiment definition."""
 
     seed: int = 1
+    radio_contention: bool = False
     nodes: List[NodeSpec] = field(default_factory=list)
     links: List[LinkSpec] = field(default_factory=list)
     trajectories: Dict[int, List[Tuple[float, float, float]]] = field(default_factory=dict)
@@ -82,10 +76,13 @@ class Scenario:
         binary: Optional[str] = None,
         tick_ms: float = 50.0,
     ):
+        common = {"seed": self.seed, "radio_contention": self.radio_contention}
         if backend == "python":
-            network = Simulator(seed=self.seed, profile=profile or Profile.current())
+            network = SharedPythonNetwork(
+                profile=profile or Profile.current(), **common
+            )
         elif backend == "cpp":
-            network = CppNetwork(seed=self.seed, binary=binary, tick_ms=tick_ms)
+            network = SharedCppNetwork(binary=binary, tick_ms=tick_ms, **common)
         else:
             raise ValueError(f"unknown backend {backend!r}")
 
@@ -113,8 +110,6 @@ class Scenario:
 
         for node_id, points in self.trajectories.items():
             network.set_trajectory(node_id, points)
-
-        # Environment events always have priority over radio/protocol callbacks.
         for event in self.link_events:
             network.set_link_at(event.t_ms, event.a, event.b, event.up)
         for event in self.node_events:
@@ -122,20 +117,17 @@ class Scenario:
                 network.recover_node_at(event.t_ms, event.node_id)
             else:
                 network.fail_node_at(event.t_ms, event.node_id)
-
         for event in self.app_events:
-            payload = bytes.fromhex(event.payload_hex)
             network.schedule_at(
                 event.t_ms,
                 network.send,
                 event.sender,
                 event.target,
-                payload,
+                bytes.fromhex(event.payload_hex),
                 event.timeout_ms,
                 event.e2e_ack,
                 priority=network.PROTOCOL_PRIORITY,
             )
-
         return network
 
     def to_json(self, *, indent: int = 2) -> str:
@@ -146,9 +138,13 @@ class Scenario:
         raw = json.loads(text)
         return Scenario(
             seed=raw.get("seed", 1),
+            radio_contention=raw.get("radio_contention", False),
             nodes=[NodeSpec(**x) for x in raw.get("nodes", [])],
             links=[LinkSpec(**x) for x in raw.get("links", [])],
-            trajectories={int(k): [tuple(p) for p in v] for k, v in raw.get("trajectories", {}).items()},
+            trajectories={
+                int(k): [tuple(p) for p in v]
+                for k, v in raw.get("trajectories", {}).items()
+            },
             link_events=[LinkStateEvent(**x) for x in raw.get("link_events", [])],
             node_events=[NodeStateEvent(**x) for x in raw.get("node_events", [])],
             app_events=[AppSendEvent(**x) for x in raw.get("app_events", [])],
@@ -165,8 +161,9 @@ class Scenario:
         jitter_ms: float = 0.0,
         spacing: float = 1.0,
         max_range: Optional[float] = None,
+        radio_contention: bool = False,
     ) -> "Scenario":
-        scenario = Scenario(seed=seed)
+        scenario = Scenario(seed=seed, radio_contention=radio_contention)
         scenario.nodes = [
             NodeSpec(i, (float(i - 1) * spacing, 0.0))
             for i in range(1, n + 1)
@@ -187,7 +184,4 @@ class Scenario:
 
 
 def route_snapshot(network) -> Dict[int, Dict[int, Tuple[int, int]]]:
-    return {
-        node_id: network.routes(node_id)
-        for node_id in sorted(network.nodes)
-    }
+    return {node_id: network.routes(node_id) for node_id in sorted(network.nodes)}
