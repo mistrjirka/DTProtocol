@@ -176,6 +176,16 @@ void DTPK::sendHello()
 
 void DTPK::sendCrystRequest(uint16_t neighbor)
 {
+    // HELLO repair and liveness probing share the same reliable request. Keep
+    // at most one unsent request per neighbor so a congested queue cannot turn
+    // suspicion into a CRYST_REQ burst.
+    for (const DTPKPacketRequest &queued : _packetRequests)
+    {
+        if (queued.packet && queued.packet->type == CRYST_REQ &&
+            queued.target == neighbor)
+            return;
+    }
+
     DTPKPacketCrystRequest *packet =
         static_cast<DTPKPacketCrystRequest *>(
             malloc(sizeof(DTPKPacketCrystRequest)));
