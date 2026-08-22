@@ -15,6 +15,9 @@ add_executable(dtprotocol_host_node
     runner.cpp
     host/host_runtime.cpp
     ${REPO_ROOT}/lib/DTPK/DTPK.cpp
+    ${REPO_ROOT}/lib/DTPK/DTPKApi.cpp
+    ${REPO_ROOT}/lib/DTPK/DTPKControl.cpp
+    ${REPO_ROOT}/lib/DTPK/DTPKReceive.cpp
     ${REPO_ROOT}/lib/DTPK/CrystDatabase.cpp
     ${REPO_ROOT}/lib/lcmm/lcmm.cpp
     ${REPO_ROOT}/lib/mathextension/mathextension.cpp
