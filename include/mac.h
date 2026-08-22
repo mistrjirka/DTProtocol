@@ -42,8 +42,14 @@ enum State
 
 enum class MACRegion : uint8_t
 {
+  // 433.05-434.79 MHz, 10% duty-cycle fallback.
   EU433,
+  // 868.0-868.6 MHz, conventional 868.1/868.3/868.5 channels, 1% fallback.
   EU868,
+  // Czech/EU g6 high-duty profile: the whole 869.4-869.65 MHz band may be one
+  // high-speed-data channel. 869.525 MHz/BW125 fits inside it; fallback duty is
+  // 10%. Kept explicit so applications choose the regulatory trade-off.
+  EU869_HIGH_DUTY,
 };
 
 enum MACSendResult : uint8_t
@@ -92,9 +98,6 @@ public:
       int default_power = DEFAULT_POWER,
       int default_coding_rate = DEFAULT_CODING_RATE);
 
-  // Region-aware initializer. EU868 uses 868.1/868.3/868.5 MHz and a
-  // conservative conducted-power clamp; antenna gain still has to be included
-  // when checking the legal e.r.p. budget.
   static void initialize(
       SX1262 &loramodule,
       int id,
@@ -113,10 +116,11 @@ public:
   int getNoiseFloorOfChannel(uint8_t channel_num);
   uint8_t getNumberOfChannels();
   MACRegion getRegion() const { return region; }
+  uint8_t getFallbackDutyCyclePercent() const { return dutyCyclePercent; }
 
   // Time until MAC policy permits another send. This is deliberately
-  // non-blocking: callers can keep servicing routing/RX while EU868 duty cycle
-  // or randomized carrier-sense backoff is active.
+  // non-blocking: callers can keep servicing routing/RX while duty cycle or
+  // randomized carrier-sense backoff is active.
   uint32_t getTransmitWaitMs() const;
 
   void handlePacket();
@@ -131,22 +135,22 @@ public:
   void setTransmitDone(TransmitDone callback);
 
 private:
-  // Written by the radio ISR and consumed by loop(). `volatile` prevents the
-  // compiler from caching the flag across the ISR boundary. There is only one
-  // outstanding SX126x operation at a time in this MAC state machine.
   static volatile bool operationDone;
   static MAC *mac;
   static State state;
 
   static const double EU433_CHANNELS[];
   static const double EU868_CHANNELS[];
+  static const double EU869_HIGH_DUTY_CHANNELS[];
   static const uint8_t EU433_CHANNEL_COUNT;
   static const uint8_t EU868_CHANNEL_COUNT;
+  static const uint8_t EU869_HIGH_DUTY_CHANNEL_COUNT;
 
   const double *channels;
   uint8_t channelCount;
   MACRegion region;
   int maxConductedPowerDbm;
+  uint8_t dutyCyclePercent;
 
   // Largest current profile has 13 channels. Keep fixed storage to avoid heap
   // allocation in radio calibration.
@@ -163,8 +167,6 @@ private:
   PacketReceivedCallback RXCallback;
   PacketReceivedCallback RXAlienCallback;
 
-  // Carrier-sense and regulatory scheduling are timestamps, never blocking
-  // sleeps. All comparisons use wrap-safe unsigned millis arithmetic.
   uint32_t carrierBackoffUntil;
   uint32_t dutyCycleUntil;
 
