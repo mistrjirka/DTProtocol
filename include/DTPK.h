@@ -52,7 +52,10 @@ public:
     };
 
     static DTPK *getInstance();
-    static void initialize(uint8_t KLimit = 20, uint16_t originSequence = 1);
+    static void initialize(
+        uint8_t KLimit = 20,
+        uint16_t originSequence = 1,
+        bool mobileHint = false);
 
     void setPacketReceivedCallback(PacketReceivedCallback callback);
     uint16_t sendPacket(uint16_t target, unsigned char *packet, size_t size,
@@ -60,6 +63,7 @@ public:
                         PacketAckCallback callback = nullptr);
     void loop();
     std::vector<NeighborRecord> getNeighbours();
+    bool isMobileHintEnabled() const { return _mobileHint; }
 
     static bool isAckPacket(DTPKPacketType type)
     {
@@ -72,6 +76,7 @@ private:
     static void receiveAck(uint16_t id, bool success);
 
     static constexpr uint32_t HELLO_PERIOD_MS = 10000;
+    static constexpr uint32_t MOBILE_HELLO_PERIOD_MS = 4000;
     static constexpr uint32_t HELLO_JITTER_MS = 2000;
     static constexpr uint32_t BASE_NEIGHBOR_EXPIRY_MS = 30000;
     static constexpr uint32_t MAINTENANCE_PERIOD_MS = 1000;
@@ -84,10 +89,9 @@ private:
     static constexpr size_t RECENT_DATA_CACHE_SIZE = 64;
     static constexpr size_t RECENT_SEQ_REQ_CACHE_SIZE = 64;
 
-    // Keep the old name used by expireNeighbours(), but make it an instance
-    // value derived from the selected MAC profile. At 10% this remains 30 s;
-    // at 1%/SF9 it expands enough to survive the legal off-time after a
-    // full-size CRYST/data frame.
+    // Practical/default MAC has no duty throttle, so this remains 30 s. If an
+    // application explicitly enables strict duty limiting before DTPK starts,
+    // this helper keeps that optional mode from breaking liveness.
     uint32_t NEIGHBOR_EXPIRY_MS =
         MAC::getInstance()->recommendedNeighborExpiryMs(
             BASE_NEIGHBOR_EXPIRY_MS,
@@ -148,6 +152,7 @@ private:
     uint32_t _routeVersion;
     int32_t _helloRemaining;
     int32_t _maintenanceRemaining;
+    bool _mobileHint;
 
     std::vector<DTPKPacketRequest> _packetRequests;
     std::vector<DTPKPacketWaiting> _packetWaiting;
@@ -163,7 +168,7 @@ private:
     std::unordered_map<uint16_t, CrystAssembly> _crystAssemblies;
     std::unordered_map<uint16_t, PendingSeqRequest> _pendingSeqRequests;
 
-    DTPK(uint8_t KLimit, uint16_t originSequence);
+    DTPK(uint8_t KLimit, uint16_t originSequence, bool mobileHint);
 
     bool hasSeenData(uint16_t originalSender, uint16_t id) const;
     void rememberData(uint16_t originalSender, uint16_t id);
@@ -176,6 +181,7 @@ private:
     static bool versionNewer(uint32_t a, uint32_t b);
     static bool isControlType(DTPKPacketType type);
     uint16_t nextPacketId();
+    uint32_t effectiveHelloPeriodMs() const;
 
     void markRoutingChanged(const char *reason);
     void noteHeard(uint16_t neighbor);
