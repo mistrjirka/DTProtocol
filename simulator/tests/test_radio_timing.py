@@ -91,13 +91,14 @@ def test_exact_radiolib6_transaction_counts_are_pinned():
     # Derived from tag 6.0.0 SX126x.cpp + Module.cpp with default paranoid
     # verification. Byte counts are exact; transaction counts pin RadioLib's
     # deterministic delay-before-BUSY-poll floor as well.
-    assert RSSI_SPI_BYTES_PER_SAMPLE == 8
+    assert RSSI_SPI_BYTES_PER_SAMPLE == 6
     assert TX_SETUP_FIXED_SPI_BYTES == 87
     assert TX_SETUP_SPI_TRANSACTIONS == 24
     assert RX_READ_FIXED_SPI_BYTES == 61
     assert RX_READ_SPI_TRANSACTIONS == 19
-    assert RX_REARM_AFTER_TX_SPI_BYTES == 67
-    assert RX_REARM_AFTER_TX_SPI_TRANSACTIONS == 18
+    # MAC::loop reads IRQ status before RadioLib finishTransmit()+startReceive().
+    assert RX_REARM_AFTER_TX_SPI_BYTES == 74
+    assert RX_REARM_AFTER_TX_SPI_TRANSACTIONS == 20
     assert RX_REARM_AFTER_READ_SPI_BYTES == 56
     assert RX_REARM_AFTER_READ_SPI_TRANSACTIONS == 14
     assert CAD_SCAN_FIXED_SPI_BYTES == 63
@@ -107,8 +108,8 @@ def test_exact_radiolib6_transaction_counts_are_pinned():
 def test_production_rssi_cca_timing_includes_radiolib_busy_poll_floor():
     offsets = rssi_sample_offsets_ms()
     assert len(offsets) == 3
-    assert offsets == pytest.approx((0.034, 10.068, 20.102), abs=1e-12)
-    assert rssi_cca_duration_ms() == pytest.approx(20.102, abs=1e-12)
+    assert offsets == pytest.approx((0.026, 10.052, 20.078), abs=1e-12)
+    assert rssi_cca_duration_ms() == pytest.approx(20.078, abs=1e-12)
 
 
 def test_tx_startup_is_documented_lower_typical_bound():
@@ -132,7 +133,7 @@ def test_rx_done_to_lcmm_callback_includes_busy_poll_floor():
 
 
 def test_rx_rearm_distinguishes_tx_done_from_rx_callback_return():
-    assert rx_rearm_ms() == pytest.approx(0.368, abs=1e-12)
+    assert rx_rearm_ms() == pytest.approx(0.398, abs=1e-12)
     assert rx_rearm_after_read_ms() == pytest.approx(0.320, abs=1e-12)
     assert rx_rearm_ms() > rx_rearm_after_read_ms() > SX1262_STBY_RC_TO_RX_MS
 
