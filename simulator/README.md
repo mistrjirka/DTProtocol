@@ -89,6 +89,8 @@ Sanitizers are also exercised in CI. On the reference implementation that job is
 
 The main remaining RF realism gaps are received-power/capture/preamble-lock and an asynchronous C++-subprocess CCA handshake. See `SIMULATOR_VALIDATION.md`; do not use the C++ backend as the quantitative contention-capacity oracle yet.
 
+For the protocol-level dependency graphs, state ownership, pruning analysis and the staged simplification plan, see [`PROTOCOL_ARCHITECTURE.md`](PROTOCOL_ARCHITECTURE.md).
+
 ## Correctness properties checked by `audit()`
 
 For a stable physical graph:

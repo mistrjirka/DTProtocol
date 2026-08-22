@@ -1,20 +1,7 @@
-```mermaid
-stateDiagram-v2
-    [*] --> NormalOperation
-    NormalOperation --> CrystallizationSessionActive : startCrystalizationSession()
-    CrystallizationSessionActive --> NormalOperation : endCrystalizationSession()
+# DTPK flow diagrams
 
-    state NormalOperation {
-        [*] --> Idle
-        Idle --> CacheBuilding : addRouting(), changeMap()
-        CacheBuilding --> Idle : buildCache() completes
-    }
+The old diagram in this location described the removed pre-v2 crystallization
+session state machine. Current layer, data-plane, control-plane and dependency
+diagrams are maintained in:
 
-    state CrystallizationSessionActive {
-        [*] --> SessionActive
-        SessionActive --> UpdatingRecords : updateFromCrystPacket()
-        UpdatingRecords --> SessionActive : Records updated
-        SessionActive --> SessionActive : addRouting(), removeRouting()
-    }
-
-```
+[`simulator/PROTOCOL_ARCHITECTURE.md`](../../simulator/PROTOCOL_ARCHITECTURE.md)
