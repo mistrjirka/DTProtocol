@@ -513,6 +513,8 @@ class Node:
                 and self.multipart_send["id"] == req.packet.packet_id
                 and self.multipart_send["source_sequence"]
                 == req.packet.sender_sequence
+                and req.packet.original_sender == self.id
+                and req.packet.final_target == self.multipart_send["target"]
             ):
                 self._schedule_multipart_query(self._multipart_query_delay_ms())
             if req.dtpk_ack and success:
@@ -1289,7 +1291,7 @@ class Node:
         hops = max(1, route.distance if route is not None else 1)
         return float(
             DTPK_FRAGMENT_QUERY_INTERVAL_MS
-            + hops * DTPK_FRAGMENT_TIMEOUT_PER_HOP_MS * 2
+            + (2 * hops - 1) * DTPK_FRAGMENT_RELAY_HOP_BUDGET_MS
         )
 
     def _schedule_multipart_query(self, delay_ms: float) -> None:
@@ -1634,11 +1636,12 @@ class Node:
             self.sim.metrics.oversize_drops += 1
             return None
         requested = timeout_ms or self.profile.e2e_timeout_ms
+        hops = max(1, route.distance)
         minimum = (
             15_000
-            + (count + 1)
-            * max(1, route.distance)
-            * DTPK_FRAGMENT_TIMEOUT_PER_HOP_MS
+            + DTPK_FRAGMENT_QUERY_INTERVAL_MS
+            + (count + 1) * DTPK_FRAGMENT_SOURCE_HOP_BUDGET_MS
+            + (2 * hops + 1) * DTPK_FRAGMENT_RELAY_HOP_BUDGET_MS
         )
         effective_timeout = max(requested, minimum)
         self.multipart_send = {

@@ -171,10 +171,14 @@ uint16_t DTPK::sendPacket(
     _multipartSend.retransmit.fill(0);
 
     const uint64_t routeHops = std::max<uint64_t>(1u, routing->distance);
+    // Source fragments are serialized by LCMM. Relays pipeline the stream, so
+    // route distance contributes fill/drain and ACK latency rather than
+    // multiplying every fragment. Include one complete selective-repair round.
     const uint64_t minimumTimeout =
-        15000ull +
-        (static_cast<uint64_t>(count) + 1ull) * routeHops *
-            FRAGMENT_TIMEOUT_PER_PART_MS;
+        15000ull + FRAGMENT_QUERY_INTERVAL_MS +
+        (static_cast<uint64_t>(count) + 1ull) *
+            FRAGMENT_SOURCE_HOP_BUDGET_MS +
+        (routeHops * 2ull + 1ull) * FRAGMENT_RELAY_HOP_BUDGET_MS;
     const uint32_t requested = timeout > 0 ? static_cast<uint32_t>(timeout) : 1u;
     const uint32_t effectiveTimeout = static_cast<uint32_t>(std::min<uint64_t>(
         std::max<uint64_t>(requested, minimumTimeout),

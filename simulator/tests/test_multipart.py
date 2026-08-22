@@ -161,3 +161,25 @@ def test_real_cpp_multipart_rejects_above_configured_memory_cap():
             timeout_ms=120_000,
             e2e_ack=True,
         ) == 0
+
+
+def test_real_cpp_multipart_delivers_configured_16k_maximum():
+    payload = _payload(16 * 1024)
+    with FragmentTraceNetwork(seed=70_005, tick_ms=50) as net:
+        net.add_node(1)
+        net.add_node(2)
+        net.add_link(1, 2, latency_ms=0, jitter_ms=0)
+        net.run(60_000)
+
+        # Deliberately request an unrealistically short timeout. DTPK raises the
+        # logical-message deadline to cover the stream plus one repair round.
+        packet_id = net.send(1, 2, payload, timeout_ms=1_000, e2e_ack=True)
+        net.run(250_000)
+
+        assert packet_id != 0
+        assert _received_payloads(net, 2) == [payload]
+        assert sum(result == 1 for result, _ping in net.app_acks(1)) == 1
+        assert _distinct_fragment_sends(net, (1, 2)) == {
+            index: 1 for index in range(72)
+        }
+        assert max(size for *_prefix, size in net.fragment_frames) <= 247

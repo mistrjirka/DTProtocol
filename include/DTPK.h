@@ -108,7 +108,11 @@ private:
     static constexpr uint8_t MAX_FRAGMENT_COUNT = 255;
     static constexpr uint32_t FRAGMENT_QUERY_INTERVAL_MS = 5000;
     static constexpr uint32_t FRAGMENT_ASSEMBLY_EXPIRY_MS = 120000;
-    static constexpr uint32_t FRAGMENT_TIMEOUT_PER_PART_MS = 5000;
+    // DTPK gives a source fragment a 10 s request budget and relayed packets a
+    // 5 s request budget; LCMM divides that into five retry attempts. These
+    // conservative wall-clock budgets include retry jitter and airtime.
+    static constexpr uint32_t FRAGMENT_SOURCE_HOP_BUDGET_MS = 20000;
+    static constexpr uint32_t FRAGMENT_RELAY_HOP_BUDGET_MS = 10000;
     static constexpr size_t FRAGMENT_BITMAP_BYTES =
         (MAX_FRAGMENT_COUNT + 7u) / 8u;
     static_assert(DTPK_MAX_FRAGMENT_ASSEMBLIES > 0,

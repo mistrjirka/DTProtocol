@@ -68,9 +68,11 @@ source                     relays                       destination
    duplicate message-level retransmissions.
 
 The source query timer starts when its local LCMM fragment transaction finishes,
-not when that fragment enters the queue. The delay scales with route distance so
-a repaired fragment receives a complete downstream relay-attempt window before
-the next query.
+not when that fragment enters the queue. The delay scales with route distance and
+includes both the remaining downstream fragment path and the returning ACK/status
+path, so a repaired fragment receives a complete relay-attempt window before the
+next query. The logical-message timeout is also raised automatically to cover the
+initial stream plus one full selective-repair round.
 
 ## Memory bounds
 

@@ -485,7 +485,15 @@ void DTPK::sendingDeamon()
     if (_multipartSend.active &&
         (request.packet->type == DATA_FRAGMENT ||
          request.packet->type == FRAGMENT_QUERY))
-        _multipartLcmmIds[lcmmId] = 1;
+    {
+        const DTPKPacketGeneric *multipart =
+            reinterpret_cast<const DTPKPacketGeneric *>(request.packet);
+        if (request.packet->id == _multipartSend.id &&
+            multipart->sourceSequence == _multipartSend.sourceSequence &&
+            multipart->originalSender == MAC::getInstance()->getId() &&
+            multipart->finalTarget == _multipartSend.target)
+            _multipartLcmmIds[lcmmId] = 1;
+    }
 
     if (request.dtpkAck)
     {

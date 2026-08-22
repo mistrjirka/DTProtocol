@@ -52,9 +52,11 @@ uint32_t DTPK::multipartQueryDelayMs()
     // A fragment may consume all five LCMM attempts on each relay before the
     // destination can truthfully report it missing. Poll only after that repair
     // window, otherwise duplicate status rounds create redundant fragments.
+    const uint64_t downstreamTransactions =
+        static_cast<uint64_t>(hops) * 2ull - 1ull;
     const uint64_t delay =
         static_cast<uint64_t>(FRAGMENT_QUERY_INTERVAL_MS) +
-        static_cast<uint64_t>(hops) * FRAGMENT_TIMEOUT_PER_PART_MS * 2ull;
+        downstreamTransactions * FRAGMENT_RELAY_HOP_BUDGET_MS;
     return static_cast<uint32_t>(std::min<uint64_t>(delay, 0x7fffffffu));
 }
 
