@@ -73,7 +73,7 @@ private:
 
     static constexpr uint32_t HELLO_PERIOD_MS = 10000;
     static constexpr uint32_t HELLO_JITTER_MS = 2000;
-    static constexpr uint32_t NEIGHBOR_EXPIRY_MS = 30000;
+    static constexpr uint32_t BASE_NEIGHBOR_EXPIRY_MS = 30000;
     static constexpr uint32_t MAINTENANCE_PERIOD_MS = 1000;
     static constexpr uint32_t CRYST_JITTER_MIN_MS = 200;
     static constexpr uint32_t CRYST_JITTER_MAX_MS = 1500;
@@ -83,6 +83,16 @@ private:
     static constexpr uint16_t MAX_CRYST_CHUNKS = 256;
     static constexpr size_t RECENT_DATA_CACHE_SIZE = 64;
     static constexpr size_t RECENT_SEQ_REQ_CACHE_SIZE = 64;
+
+    // Keep the old name used by expireNeighbours(), but make it an instance
+    // value derived from the selected MAC profile. At 10% this remains 30 s;
+    // at 1%/SF9 it expands enough to survive the legal off-time after a
+    // full-size CRYST/data frame.
+    uint32_t NEIGHBOR_EXPIRY_MS =
+        MAC::getInstance()->recommendedNeighborExpiryMs(
+            BASE_NEIGHBOR_EXPIRY_MS,
+            HELLO_PERIOD_MS + HELLO_JITTER_MS,
+            MAINTENANCE_PERIOD_MS);
 
     struct PacketIdentity
     {
