@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import pathlib
 import subprocess
@@ -15,7 +16,6 @@ def lora_airtime_ms(
     bandwidth_hz: int = 125_000,
     coding_rate_denominator: int = 7,
 ) -> float:
-    """Compatibility wrapper around the shared RF airtime implementation."""
     env = EnvironmentKernel(
         0,
         sf=sf,
@@ -33,12 +33,7 @@ class Tx:
 
 
 class CppNodeProcess:
-    """One real DTProtocol firmware instance in one host process.
-
-    Production DTPK/MAC/LCMM are singleton-heavy, so separate processes are the
-    closest host analogue to physically separate ESP32/Pico devices and give us
-    independent globals, heap state, RNG and reboot lifetime.
-    """
+    """One real DTProtocol firmware instance in one host process."""
 
     def __init__(
         self,
@@ -46,11 +41,16 @@ class CppNodeProcess:
         *,
         seed: int = 1,
         k_limit: int = 20,
+        origin_sequence: int = 1,
+        duty_cycle_percent: float = 0.0,
+        initial_duty_wait_ms: float = 0.0,
         binary: Optional[str] = None,
     ):
         self.node_id = node_id
         self.seed = seed
         self.k_limit = k_limit
+        self.origin_sequence = int(origin_sequence) & 0xFFFF or 1
+        self.duty_cycle_percent = float(duty_cycle_percent)
         self.events: List[Tuple[str, Tuple]] = []
         self.binary = binary or self.default_binary()
         self.proc = subprocess.Popen(
@@ -65,7 +65,12 @@ class CppNodeProcess:
         ready = self.proc.stdout.readline().strip()
         if ready != "READY":
             raise RuntimeError(f"host node failed to start: {ready!r}")
-        self.command(f"INIT {node_id} {k_limit} {seed}")
+        duty = max(0.0, min(100.0, self.duty_cycle_percent))
+        initial_wait = max(0, int(math.ceil(initial_duty_wait_ms)))
+        self.command(
+            f"INIT {node_id} {k_limit} {seed} {self.origin_sequence} "
+            f"{duty:.9f} {initial_wait}"
+        )
 
     @staticmethod
     def default_binary() -> str:
@@ -193,18 +198,31 @@ class CppNetwork(EnvironmentKernel):
         sf: int = 9,
         bandwidth_hz: int = 125_000,
         coding_rate_denominator: int = 7,
+        duty_cycle_percent: float = 0.0,
     ):
         super().__init__(
             seed,
             sf=sf,
             bandwidth_hz=bandwidth_hz,
             coding_rate_denominator=coding_rate_denominator,
+            duty_cycle_percent=duty_cycle_percent,
         )
         self.binary = binary
         self.tick_ms = float(tick_ms)
         self.nodes: Dict[int, CppNodeProcess] = {}
         self._node_config: Dict[int, Tuple[int, int]] = {}
+        self._node_origin_sequence: Dict[int, int] = {}
         self._ticks_scheduled_until = 0.0
+
+    @staticmethod
+    def _initial_origin_sequence(seed: int, node_id: int) -> int:
+        value = (int(seed) ^ (int(node_id) * 0x9E37)) & 0xFFFF
+        return value or 1
+
+    @staticmethod
+    def _next_origin_sequence(value: int) -> int:
+        value = (int(value) + 1) & 0xFFFF
+        return value or 1
 
     def add_node(
         self,
@@ -216,13 +234,18 @@ class CppNetwork(EnvironmentKernel):
     ) -> None:
         actual_seed = self.seed * 1009 + node_id if seed is None else seed
         self._node_config[node_id] = (actual_seed, k_limit)
+        origin = self._initial_origin_sequence(actual_seed, node_id)
+        self._node_origin_sequence[node_id] = origin
+        self.register_node(node_id, up=True, position=position)
         self.nodes[node_id] = CppNodeProcess(
             node_id,
             seed=actual_seed,
             k_limit=k_limit,
+            origin_sequence=origin,
+            duty_cycle_percent=self.duty_cycle_percent,
+            initial_duty_wait_ms=self.transmit_wait_ms(node_id),
             binary=self.binary,
         )
-        self.register_node(node_id, up=True, position=position)
 
     def add_link(
         self,
@@ -257,13 +280,20 @@ class CppNetwork(EnvironmentKernel):
         if config is None:
             return
         base_seed, k_limit = config
-        # Every reboot gets a deterministic but different firmware seed while
-        # environment randomness remains unchanged.
         reboot_seed = base_seed + self.node_epoch.get(node_id, 0)
+        origin = self._next_origin_sequence(
+            self._node_origin_sequence.get(node_id, 1)
+        )
+        self._node_origin_sequence[node_id] = origin
         self.nodes[node_id] = CppNodeProcess(
             node_id,
             seed=reboot_seed,
             k_limit=k_limit,
+            origin_sequence=origin,
+            duty_cycle_percent=self.duty_cycle_percent,
+            # Regulatory off-time belongs to the RF history and must not be
+            # erased merely because the emulated MCU rebooted.
+            initial_duty_wait_ms=self.transmit_wait_ms(node_id),
             binary=self.binary,
         )
 
@@ -275,12 +305,29 @@ class CppNetwork(EnvironmentKernel):
         if not self.node_up.get(sender, False):
             return
 
+        # The host fake MAC is configured with the same duty policy and should
+        # therefore never emit a TX early. Keep this as a safety net against
+        # adapter/numerical drift; it protects the physical trace without
+        # consuming another firmware attempt.
+        wait = self.transmit_wait_ms(sender, at)
+        if wait > 1e-6:
+            self.note_regulatory_deferral(sender)
+            self.schedule_at(
+                at + wait,
+                self._start_tx,
+                sender,
+                tx,
+                at + wait,
+                priority=self.RADIO_PRIORITY,
+            )
+            return
+
         self.rf_metrics.tx_frames += 1
         sender_epoch = self.node_epoch.get(sender, 0)
         airtime = self.airtime_ms(MAC_OVERHEAD + len(tx.payload))
         rf_end = at + airtime
+        self.account_transmission(sender, at, rf_end)
 
-        # TX-complete IRQ belongs to the transmitter even if no receiver hears it.
         self.schedule_at(
             rf_end,
             self._phy_done,
