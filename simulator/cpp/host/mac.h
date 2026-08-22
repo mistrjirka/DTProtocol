@@ -59,8 +59,11 @@ public:
     void setTransmitDone(TransmitDone callback);
     uint32_t getTransmitWaitMs() const;
     uint8_t getFallbackDutyCyclePercent() const;
+    uint32_t recommendedNeighborExpiryMs(
+        uint32_t baseMs,
+        uint32_t maxHelloGapMs,
+        uint32_t schedulerMarginMs = 1000) const;
 
-    // Host-only entry points. The production protocol never calls these.
     bool hostInject(uint16_t sender, uint16_t target,
                     const std::vector<uint8_t> &payload);
     void hostPhyDone(uint64_t token);
