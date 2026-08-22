@@ -8,23 +8,11 @@ BROADCAST = 0
 MAC_OVERHEAD = 8
 LCMM_OVERHEAD = 3
 LCMM_RX_HEADER = MAC_OVERHEAD + LCMM_OVERHEAD
-
-# DTPK wire sizes. Keep these in sync with include/DTPKDefinitions.h.
-# Generic routed v2 prefix:
-#   type:u8, id:u16, originalSender:u16, finalTarget:u16, flags:u8, hopLimit:u8
 DTPK_GENERIC_HEADER = 9
-# Legacy CRYST prefix used only by reference/old profiles: type:u8, id:u16.
 DTPK_CRYST_HEADER = 3
-# protocol-v2 CRYST snapshot prefix:
-#   type:u8, id:u16, originSequence:u16, routeVersion:u32,
-#   chunkIndex:u16, chunkCount:u16
-DTPK_CRYST_V2_HEADER = 13
-# HELLO: type:u8, id:u16, originSequence:u16, routeVersion:u32
+DTPK_CRYST_V2_HEADER = 13  # type:u8,id:u16,origin-seq:u16,route-version:u32,chunk-index:u16,chunk-count:u16
 DTPK_HELLO_SIZE = 9
-# CRYST_REQ: type:u8, id:u16
 DTPK_CRYST_REQ_SIZE = 3
-# SEQ_REQ: type:u8, id:u16, originalSender:u16, destination:u16,
-#          requestedSequence:u16, hopLimit:u8
 DTPK_SEQ_REQ_SIZE = 10
 NEIGHBOR_RECORD_SIZE = 5
 NEIGHBOR_RECORD_V2_SIZE = 7  # dest:u16, via:u16, sequence:u16, metric:u8
@@ -196,17 +184,13 @@ def sequence_newer(a: int, b: int) -> bool:
 
 
 def next_sequence(value: int) -> int:
-    value = (int(value) + 1) & 0xFFFF
-    return value or 1
-
-
-def deep_copy_packet(packet: "Packet") -> "Packet":
-    return copy.deepcopy(packet)
+    value = (value + 1) & 0xFFFF
+    return value if value != 0 else 1
 
 
 @dataclass
 class Packet:
-    kind: str
+    kind: str  # CRYST, HELLO, CRYST_REQ, SEQ_REQ, DATA, ACK, NACK
     packet_id: int
     original_sender: Optional[int] = None
     final_target: Optional[int] = None
@@ -216,19 +200,18 @@ class Packet:
     cryst_record_size: int = NEIGHBOR_RECORD_SIZE
     sender_sequence: int = 0
     route_version: int = 0
-    requested_destination: Optional[int] = None
     requested_sequence: int = 0
-    request_hop_limit: int = 0
+    hop_limit: int = 0
 
     def clone(self) -> "Packet":
-        return deep_copy_packet(self)
+        return copy.copy(self)
 
 
 @dataclass
 class TxRequest:
     packet: Packet
     next_hop: Optional[int]
-    lcmm_ack: bool = False
+    lcmm_ack: bool
     dtpk_ack: bool = False
     timeout_ms: int = 5_000
     priority: bool = False
@@ -238,31 +221,34 @@ class TxRequest:
 class Metrics:
     radio_data_frames: int = 0
     radio_link_ack_frames: int = 0
-    bytes_on_air: int = 0
     broadcasts: int = 0
     unicast_attempts: int = 0
-    link_loss_drops: int = 0
-    silent_busy_drops: int = 0
-    route_changes: int = 0
-    route_misses: int = 0
-    e2e_success: int = 0
-    e2e_failure: int = 0
+    bytes_on_air: int = 0
     delivered_app: int = 0
     duplicate_app: int = 0
-    cryst_tx: int = 0
-    cryst_rx: int = 0
-    hello_tx: int = 0
-    hello_rx: int = 0
-    cryst_req_tx: int = 0
-    cryst_req_rx: int = 0
-    seq_req_tx: int = 0
-    seq_req_rx: int = 0
-    seq_req_satisfied: int = 0
-    feasibility_rejects: int = 0
-    sequence_resets: int = 0
+    e2e_success: int = 0
+    e2e_failure: int = 0
+    nacks: int = 0
+    silent_busy_drops: int = 0
+    link_loss_drops: int = 0
     oversize_drops: int = 0
+    route_misses: int = 0
+    route_changes: int = 0
+    crashes: int = 0
+    loops_observed: int = 0
+    stale_route_observations: int = 0
+    cryst_rx: int = 0
+    cryst_tx: int = 0
+    hello_rx: int = 0
+    hello_tx: int = 0
+    cryst_req_rx: int = 0
+    cryst_req_tx: int = 0
+    seq_req_rx: int = 0
+    seq_req_tx: int = 0
+    seq_req_satisfied: int = 0
+    seq_req_duplicates: int = 0
     max_queue: int = 0
     max_route_entries: int = 0
     max_contributions: int = 0
-    loops_observed: int = 0
-    stale_route_observations: int = 0
+    feasibility_rejects: int = 0
+    sequence_resets: int = 0
