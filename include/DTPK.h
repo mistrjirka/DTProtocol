@@ -1,34 +1,24 @@
 #ifndef DTPK_H
 #define DTPK_H
+
 #include <stdint.h>
+#include <array>
 #include <functional>
+#include <queue>
+#include <unordered_map>
+#include <vector>
+
 #include <mac.h>
 #include <lcmm.h>
-#include "generalsettings.h"
-#include <array>
-#include <vector>
-#include <unordered_map>
-#include <algorithm>
-#include <queue>
 #include <mathextension.h>
 #include <DTPKDefinitions.h>
 #include <CrystDatabase.h>
 
-/**
- * DTPK routing layer.
- *
- * Phase 1 on protocol-v2 makes the current data plane mechanically trustworthy
- * before replacing crystallization semantics. DATA is bounded by a hop limit
- * and a fixed-size replay cache, while ACK/NACK/CRYST control traffic is never
- * blocked by another end-to-end DATA wait.
- */
-
-typedef struct CrystTimeout
+struct CrystTimeout
 {
-    int32_t remaining;
     bool sendingPacket;
     int32_t remainingTimeToSend;
-} CrystTimeout;
+};
 
 class DTPK
 {
@@ -38,7 +28,7 @@ public:
     using PacketAckCallback =
         std::function<void(uint8_t result, uint16_t ping)>;
 
-    typedef struct DTPKPacketRequest
+    struct DTPKPacketRequest
     {
         DTPKPacketUnknown *packet;
         size_t size;
@@ -47,28 +37,28 @@ public:
         int32_t timeLeftToSend;
         bool lcmmAck;
         bool dtpkAck;
-        DTPK::PacketAckCallback callback;
-    } DTPKPacketRequest;
+        PacketAckCallback callback;
+    };
 
-    typedef struct
+    struct DTPKPacketWaiting
     {
         uint16_t id;
         int32_t timeLeft;
         uint32_t timeout;
         bool gotAck;
         bool success;
-        DTPK::PacketAckCallback callback;
-    } DTPKPacketWaiting;
+        PacketAckCallback callback;
+    };
 
     static DTPK *getInstance();
-    static void initialize(uint8_t KLimit = 20);
+    static void initialize(uint8_t KLimit = 20, uint16_t originSequence = 1);
 
     void setPacketReceivedCallback(PacketReceivedCallback callback);
     uint16_t sendPacket(uint16_t target, unsigned char *packet, size_t size,
                         int16_t timeout, bool isAck = false,
                         PacketAckCallback callback = nullptr);
     void loop();
-    vector<NeighborRecord> getNeighbours();
+    std::vector<NeighborRecord> getNeighbours();
 
     static bool isAckPacket(DTPKPacketType type)
     {
@@ -80,6 +70,16 @@ private:
     static void receivePacket(LCMMPacketDataReceive *packet, uint16_t size);
     static void receiveAck(uint16_t id, bool success);
 
+    static constexpr uint32_t HELLO_PERIOD_MS = 10000;
+    static constexpr uint32_t HELLO_JITTER_MS = 2000;
+    static constexpr uint32_t NEIGHBOR_EXPIRY_MS = 30000;
+    static constexpr uint32_t CRYST_JITTER_MIN_MS = 200;
+    static constexpr uint32_t CRYST_JITTER_MAX_MS = 1500;
+    static constexpr uint32_t CRYST_ASSEMBLY_EXPIRY_MS = 30000;
+    static constexpr uint32_t SEQ_REQ_COOLDOWN_MS = 5000;
+    static constexpr size_t RECENT_DATA_CACHE_SIZE = 64;
+    static constexpr size_t RECENT_SEQ_REQ_CACHE_SIZE = 64;
+
     struct PacketIdentity
     {
         uint16_t originalSender = 0;
@@ -87,12 +87,35 @@ private:
         bool valid = false;
     };
 
-    // Fixed-size replay cache avoids heap churn and naturally ages old 16-bit
-    // packet IDs before they can wrap around. It is intentionally DATA-only:
-    // duplicate end-to-end ACK/NACK packets are already harmless/idempotent.
-    static constexpr size_t RECENT_DATA_CACHE_SIZE = 64;
+    struct SeqRequestIdentity
+    {
+        uint16_t originalSender = 0;
+        uint16_t id = 0;
+        uint16_t destination = 0;
+        uint16_t requestedSequence = 0;
+        bool valid = false;
+    };
+
+    struct NeighborState
+    {
+        uint16_t originSequence = 0;
+        uint32_t routeVersion = 0;
+    };
+
+    struct CrystAssembly
+    {
+        uint16_t originSequence = 0;
+        uint32_t routeVersion = 0;
+        uint16_t chunkCount = 0;
+        uint32_t lastUpdate = 0;
+        std::vector<std::vector<NeighborRecordV2>> chunks;
+        std::vector<uint8_t> received;
+    };
+
     std::array<PacketIdentity, RECENT_DATA_CACHE_SIZE> _recentData{};
     size_t _recentDataNext = 0;
+    std::array<SeqRequestIdentity, RECENT_SEQ_REQ_CACHE_SIZE> _recentSeqRequests{};
+    size_t _recentSeqRequestNext = 0;
 
     uint64_t _seed;
     uint32_t _timeOfInit;
@@ -100,21 +123,42 @@ private:
     uint32_t _lastTick;
     uint8_t _Klimit;
     uint16_t _packetCounter;
+    uint16_t _originSequence;
+    uint32_t _routeVersion;
+    int32_t _helloRemaining;
 
-    vector<DTPKPacketRequest> _packetRequests;
-    vector<DTPKPacketWaiting> _packetWaiting;
-    queue<pair<DTPKPacketUnknownReceive *, size_t>> _packetReceived;
+    std::vector<DTPKPacketRequest> _packetRequests;
+    std::vector<DTPKPacketWaiting> _packetWaiting;
+    std::queue<std::pair<DTPKPacketUnknownReceive *, size_t>> _packetReceived;
     CrystDatabase _crystDatabase;
     CrystTimeout _crystTimeout;
     PacketReceivedCallback _recieveCallback;
     bool _waitingForAck;
     uint16_t _currentlySendingId;
 
+    std::unordered_map<uint16_t, uint32_t> _lastHeard;
+    std::unordered_map<uint16_t, NeighborState> _neighborState;
+    std::unordered_map<uint16_t, CrystAssembly> _crystAssemblies;
+    std::unordered_map<uint16_t, uint32_t> _seqRequestLastSent;
+
+    DTPK(uint8_t KLimit, uint16_t originSequence);
+
     bool hasSeenData(uint16_t originalSender, uint16_t id) const;
     void rememberData(uint16_t originalSender, uint16_t id);
+    bool hasSeenSeqRequest(uint16_t originalSender, uint16_t id,
+                           uint16_t destination, uint16_t requestedSequence) const;
+    void rememberSeqRequest(uint16_t originalSender, uint16_t id,
+                            uint16_t destination, uint16_t requestedSequence);
 
-    DTPKPacketCryst *prepareCrystPacket(size_t *size);
-    bool isPacketForMe(DTPKPacketUnknownReceive *packet, size_t size);
+    static bool sequenceNewer(uint16_t a, uint16_t b);
+    static bool isControlType(DTPKPacketType type);
+    uint16_t nextPacketId();
+
+    void markRoutingChanged(const char *reason);
+    void noteHeard(uint16_t neighbor);
+    void expireNeighbours();
+    void expireAssemblies();
+    void processSequenceRequests();
 
     void addPacketToSendingQueue(DTPKPacketUnknown *packet,
                                  size_t size,
@@ -123,27 +167,28 @@ private:
                                  int16_t timeLeftToSend,
                                  bool lcmmAck = false,
                                  bool dtpkAck = false,
-                                 PacketAckCallback callback = nullptr);
-
-    void sendPacketToTarget(DTPKPacketUnknown *packet,
-                            size_t size,
-                            uint16_t target,
-                            int16_t timeout,
-                            bool dtpkAck);
+                                 PacketAckCallback callback = nullptr,
+                                 bool priority = false);
 
     void sendCrystPacket();
+    void queueCrystSnapshot();
+    void sendHello();
+    void sendCrystRequest(uint16_t neighbor);
+    void sendSeqRequest(uint16_t destination, uint16_t requestedSequence);
     void sendNackPacket(uint16_t target, uint16_t from, uint16_t id);
     void sendAckPacket(uint16_t target, uint16_t from, uint16_t id);
 
-    void parseCrystPacket(pair<DTPKPacketUnknownReceive *, size_t> packet);
-    void parseSingleDataPacket(pair<DTPKPacketUnknownReceive *, size_t> packet);
+    void parseCrystPacket(std::pair<DTPKPacketUnknownReceive *, size_t> packet);
+    void parseHelloPacket(std::pair<DTPKPacketUnknownReceive *, size_t> packet);
+    void parseCrystRequestPacket(std::pair<DTPKPacketUnknownReceive *, size_t> packet);
+    void parseSeqRequestPacket(std::pair<DTPKPacketUnknownReceive *, size_t> packet);
+    void parseSingleDataPacket(std::pair<DTPKPacketUnknownReceive *, size_t> packet);
+    bool forwardRoutedPacket(DTPKPacketUnknownReceive *packet, size_t size);
 
     void receivingDeamon();
     void sendingDeamon();
     void timeoutDeamon();
-    void crystDeamon();
-
-    DTPK(uint8_t KLimit);
+    void controlDeamon();
 };
 
 #endif
