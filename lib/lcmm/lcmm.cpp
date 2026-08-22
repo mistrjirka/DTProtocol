@@ -114,8 +114,7 @@ void LCMM::handleDataACK(LCMMPacketDataReceive *packet, uint16_t size)
     MAC::getInstance()->setTransmitDone(dummyFunction);
     LCMM::afterCallbackSent_packet = nullptr;
     LCMM::afterCallbackSent_size = 0;
-    // Do not leak the payload merely because the link ACK could not be queued.
-    // Upper DTPK replay suppression makes the sender's later retry idempotent.
+    // Upper DTPK replay suppression makes a later sender retry idempotent.
     LCMM::getInstance()->dataReceived(packet, size);
   }
 }
@@ -128,8 +127,6 @@ void LCMM::handleACK(LCMMPacketResponseReceive *packet, uint16_t size)
   const size_t payloadBytes = size - sizeof(LCMMPacketResponseReceive);
   const size_t numOfAcknowledgedPackets = payloadBytes / sizeof(uint16_t);
 
-  // Packet IDs are only 16 bits. Matching the immediate-hop sender as well as
-  // the ID prevents an unrelated neighbour's ACK from completing this send.
   if (waitingForACKSingle &&
       numOfAcknowledgedPackets == 1 &&
       ackWaitingSingle.id == packet->packetIds[0] &&
@@ -188,10 +185,13 @@ bool LCMM::timeoutHandler()
       }
       else
       {
-        // Busy means no attempt happened. Restore the attempt and retry from the
-        // cooperative loop rather than silently consuming reliability budget.
+        // MAC policy denial (carrier backoff / duty cycle) means no RF attempt
+        // happened. Restore the reliability attempt and wake when MAC says the
+        // next send can actually be tried rather than spinning every loop.
         LCMM::ackWaitingSingle.attemptsLeft++;
-        LCMM::ackWaitingSingle.timeLeft = 1;
+        const uint32_t macWait = MAC::getInstance()->getTransmitWaitMs();
+        LCMM::ackWaitingSingle.timeLeft =
+            macWait > 0 ? (int)macWait : 1;
       }
     }
     LCMM::getInstance()->lastTick = currTime;
