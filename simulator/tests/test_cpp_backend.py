@@ -69,3 +69,46 @@ def test_real_cpp_three_hop_data_uses_reliable_relays_and_preserves_packet_size(
         net.send(1, 3, b"multi-hop", timeout_ms=15_000, e2e_ack=True)
         net.run(145_000)
         assert any(result == 1 for result, _ in net.app_acks(1)), net.nodes[1].events
+
+
+def test_real_cpp_cryst_v2_clears_triangle_count_to_infinity_partition():
+    """The minimal DV counterexample must not circulate a stale route in C++."""
+    with CppNetwork(seed=104, tick_ms=100) as net:
+        for node in (1, 2, 3, 4):
+            net.add_node(node)
+        for a, b in ((1, 2), (2, 3), (3, 1), (1, 4), (3, 4)):
+            net.add_link(a, b, jitter_ms=0)
+
+        net.run(60_000)
+        assert net.routes(1).get(4) == (4, 1)
+        assert net.routes(2).get(4) is not None
+        assert net.routes(3).get(4) == (4, 1)
+
+        # Only the physical world changes. The firmware discovers the outage
+        # through HELLO expiry and must not count to infinity through 1-2-3.
+        net.set_link(1, 4, False)
+        net.set_link(3, 4, False)
+        net.run(110_000)
+
+        for node in (1, 2, 3):
+            assert 4 not in net.routes(node), (node, net.routes(node))
+
+
+def test_real_cpp_cryst_v2_seq_request_recovers_longer_only_path():
+    """Feasibility safety must not permanently starve a valid longer route."""
+    with CppNetwork(seed=103, tick_ms=100) as net:
+        for node in (1, 2, 3, 4, 5):
+            net.add_node(node)
+        for a, b in ((1, 2), (2, 4), (1, 3), (3, 5), (5, 4)):
+            net.add_link(a, b, jitter_ms=0)
+
+        net.run(60_000)
+        assert net.routes(1).get(4) == (2, 2)
+
+        # The old two-hop route disappears. The only surviving route is longer
+        # and is initially infeasible under the old destination generation.
+        net.set_link(2, 4, False)
+        net.run(110_000)
+
+        assert net.routes(1).get(4) == (3, 3), net.routes(1)
+        assert net.routes(3).get(4) == (5, 2), net.routes(3)
