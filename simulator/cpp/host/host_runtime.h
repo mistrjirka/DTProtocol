@@ -15,6 +15,11 @@ void reset(uint16_t node_id, uint64_t seed = 1);
 void set_time_ms(uint64_t now_ms);
 uint64_t time_ms();
 
+// Force the next MAC::sendData() call to return a specific MACSendResult.
+// wait_ms models a non-blocking carrier/duty policy deadline for transient
+// results. This is host-test infrastructure only.
+void set_next_send_result(uint8_t result, uint32_t wait_ms = 0);
+
 bool pop_tx(TxFrame &frame);
 bool inject_frame(uint16_t sender, uint16_t target,
                   const std::vector<uint8_t> &payload);
