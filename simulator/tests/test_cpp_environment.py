@@ -58,13 +58,17 @@ def test_real_cpp_motion_out_and_back_mid_air_invalidates_first_attempt():
         assert 2 in net.routes(1) and 1 in net.routes(2)
 
         start = net.now
+        # The next firmware tick is at start+50 ms.  Keep the node stationary
+        # through that instant, then move it out of range while the already
+        # started LoRa frame is on air, and return before LCMM's retry.
         net.set_trajectory(
             2,
             [
                 (0, 0, 0),
-                (start, 0, 0),
-                (start + 100, 30, 0),
-                (start + 200, 0, 0),
+                (start + 90, 0, 0),
+                (start + 130, 30, 0),
+                (start + 250, 30, 0),
+                (start + 300, 0, 0),
             ],
         )
         net.send(1, 2, b"motion-inside-one-airframe", timeout_ms=10_000, e2e_ack=True)
