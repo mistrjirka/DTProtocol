@@ -21,14 +21,21 @@ def test_three_nodes_intended_converge():
     assert audit["correct"], audit
 
 
-def test_simultaneous_current_deadlocks_or_times_out():
+def test_simultaneous_current_cannot_make_clean_progress():
     sim = line_topology(2, seed=3, profile=Profile.current())
     sim.run(60_000)
     assert sim.audit()["correct"]
     sim.nodes[1].send_data(2, e2e_ack=True)
     sim.nodes[2].send_data(1, e2e_ack=True)
     sim.run(75_000)
-    assert sim.metrics.e2e_failure >= 1
+
+    # Current DTPK globally gates control traffic while waiting for an end-to-end
+    # ACK. Depending on loop timing its uint32 countdown may either time out or
+    # underflow and remain wedged for a very long time. Neither is clean success.
+    successes = sim.metrics.e2e_success
+    still_waiting = any(node.waiting_e2e for node in sim.nodes.values())
+    assert successes < 2
+    assert sim.metrics.e2e_failure >= 1 or still_waiting
 
 
 def test_simultaneous_intended_succeeds():
@@ -47,7 +54,6 @@ def test_robust_reconnects_after_link_heal():
     assert sim.audit()["correct"]
     sim.set_link(2, 3, False)
     sim.run(125_000)
-    # Expiry should remove cross-partition routes.
     assert not sim.audit()["stale"]
     sim.set_link(2, 3, True)
     sim.run(210_000)
