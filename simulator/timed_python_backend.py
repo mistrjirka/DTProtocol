@@ -3,10 +3,11 @@ from __future__ import annotations
 """Small receive-state timing overlay for SharedPythonNetwork.
 
 SharedPythonNetwork already models production RSSI CCA, TX setup, airtime,
-RX-buffer SPI reads and successful link-ACK ordering.  The remaining hardware
+RX-buffer SPI reads and successful link-ACK ordering. The remaining hardware
 interval is the public RadioLib ``startReceive()`` call made by production
 ``MAC::loop()`` after an RX callback returns *without* starting a transmission.
-This wrapper keeps that ~307 us interval visible to the shared RF scheduler.
+This wrapper keeps the audited ~320 us RadioLib-6/SX1262 lower/typical interval
+visible to the shared RF scheduler.
 """
 
 from radio_timing import rx_rearm_after_read_ms
