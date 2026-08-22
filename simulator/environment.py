@@ -23,8 +23,12 @@ class RadioLink:
     b: int
     loss: float = 0.0
     ack_loss: Optional[float] = None
-    latency_ms: float = 25.0
-    jitter_ms: float = 5.0
+    # This is an optional synthetic delay after RF completion, not LoRa
+    # propagation. Real propagation is microseconds at ordinary LoRa ranges and
+    # is negligible beside the packet airtime, so physical simulations default
+    # to zero. Tests may still inject latency explicitly.
+    latency_ms: float = 0.0
+    jitter_ms: float = 0.0
     up: bool = True
     epoch: int = 0
     max_range: Optional[float] = None
@@ -247,8 +251,8 @@ class EnvironmentKernel:
         *,
         loss: float = 0.0,
         ack_loss: Optional[float] = None,
-        latency_ms: float = 25.0,
-        jitter_ms: float = 5.0,
+        latency_ms: float = 0.0,
+        jitter_ms: float = 0.0,
         up: bool = True,
         max_range: Optional[float] = None,
     ) -> None:
@@ -395,6 +399,10 @@ class EnvironmentKernel:
         times.update(self._trajectory_breakpoints(a, start_ms, end_ms))
         times.update(self._trajectory_breakpoints(b, start_ms, end_ms))
         limit_sq = limit * limit
+        # Relative motion is linear between breakpoints, so squared separation
+        # is convex on each segment. Its maximum on a closed segment is at an
+        # endpoint; checking every breakpoint is therefore exact for the
+        # "remain in range for the whole frame" predicate.
         return all(self._distance_sq(a, b, t) <= limit_sq + 1e-12 for t in times)
 
     def in_range_now(self, a: int, b: int, at_ms: Optional[float] = None) -> bool:
@@ -405,20 +413,51 @@ class EnvironmentKernel:
     # ------------------------------------------------------------------
     # RF helpers shared by Python and C++ adapters
     # ------------------------------------------------------------------
+    def symbol_time_ms(self) -> float:
+        if self.bandwidth_hz <= 0 or self.sf < 5 or self.sf > 12:
+            return 0.0
+        return (2**self.sf) / self.bandwidth_hz * 1000.0
+
+    def cad_duration_ms(self, symbols: float = 4.0, post_symbols: float = 0.5) -> float:
+        """SX126x CAD listening + post-processing duration approximation.
+
+        Semtech describes CAD as scanning the configured number of LoRa symbols
+        followed by roughly half a symbol of correlation/post-processing. This
+        helper models duration only; detection probability belongs to the
+        higher-level RF/capture model.
+        """
+        return max(0.0, float(symbols) + float(post_symbols)) * self.symbol_time_ms()
+
     def airtime_ms(self, payload_bytes: int) -> float:
+        """LoRa time-on-air matching the RadioLib/SX126x equation.
+
+        DTProtocol uses explicit LoRa headers, CRC on, preamble 8 and supplies
+        coding rate as the denominator (5..8). Auto-LDRO follows RadioLib:
+        enable when symbol length is >=16 ms. SF5/6 use the SX126x-specific
+        preamble and payload constants rather than the SF7-12 formula.
+        """
         pl = max(0, int(payload_bytes))
-        sf = self.sf
-        bw = self.bandwidth_hz
-        de = 1 if sf >= 11 and bw == 125_000 else 0
-        ih = 0
-        crc = 1
-        cr = max(1, self.cr_den - 4)
-        tsym = (2**sf) / bw
-        tpreamble = (8 + 4.25) * tsym
-        denom = 4 * (sf - 2 * de)
-        num = 8 * pl - 4 * sf + 28 + 16 * crc - 20 * ih
-        payload_sym = 8 + max(math.ceil(num / denom) * (cr + 4), 0)
-        return (tpreamble + payload_sym * tsym) * 1000.0
+        sf = int(self.sf)
+        bw_hz = int(self.bandwidth_hz)
+        if bw_hz <= 0 or sf < 5 or sf > 12:
+            return 0.0
+
+        symbol_ms = (2**sf) / bw_hz * 1000.0
+        low_data_rate_optimize = symbol_ms >= 16.0
+        preamble_extra = 6.25 if sf <= 6 else 4.25
+        sf_coefficient2 = 0 if sf <= 6 else 8
+        divisor = 4 * (sf - (2 if low_data_rate_optimize else 0))
+
+        # Same constants as MathExtension.timeOnAir(): LoRa CRC contributes 16
+        # bits and explicit-header mode contributes 20 to the numerator.
+        bit_count = 8 * pl + 16 - 4 * sf + sf_coefficient2 + 20
+        bit_count = max(bit_count, 0)
+        pre_coded_symbols = math.ceil(bit_count / divisor)
+        symbols = (
+            8.0 + preamble_extra + 8.0 +
+            pre_coded_symbols * int(self.cr_den)
+        )
+        return symbols * symbol_ms
 
     def jittered_latency(self, link: RadioLink) -> float:
         if link.jitter_ms <= 0:
