@@ -1,18 +1,12 @@
 #ifndef MAC_LAYER_H
+#define MAC_LAYER_H
+
 #include <Arduino.h>
-#include "generalsettings.h"
+#include <RadioLib.h>
 #include <cstdint>
 #include <functional>
-#include <RadioLib.h>
+#include "generalsettings.h"
 #include "mathextension.h"
-#include <stdexcept>
-
-// IRQ masks
-#define IRQ_TX_DONE_MASK           0x08
-#define IRQ_PAYLOAD_CRC_ERROR_MASK 0x20
-#define IRQ_RX_DONE_MASK           0x40
-#define IRQ_CAD_DONE_MASK          0x04
-#define IRQ_CAD_DETECTED_MASK      0x01
 
 #if defined(ESP8266) && !defined(ESP_PLATFORM)
 #define ESP_PLATFORM
@@ -20,26 +14,21 @@
 #if defined(ESP32) && !defined(ESP_PLATFORM)
 #define ESP_PLATFORM
 #endif
-
 #ifdef ESP_PLATFORM
 #define RAM_ATTR ICACHE_RAM_ATTR
 #else
 #define RAM_ATTR
 #endif
 
-#define MAC_LAYER_H
-#define NUM_OF_CHANNELS 15
-#define DEFAULT_CHANNEL 10
 #define DEFAULT_SPREADING_FACTOR 9
 #define DEFAULT_PREAMBLE_LENGTH 8
 #define DEFAULT_SYNC_WORD RADIOLIB_SX126X_SYNC_WORD_PRIVATE
-#define DEFAULT_BANDWIDTH 125.0
+#define DEFAULT_BANDWIDTH 125.0f
 #define DEFAULT_CODING_RATE 7
 #define DEFAULT_SQUELCH 15
-#define DEFAULT_POWER 10 // dBm
+#define DEFAULT_POWER 10
 #define NUMBER_OF_MEASUREMENTS 10
 #define NUMBER_OF_MEASUREMENTS_LBT 3
-
 #define TIME_BETWEENMEASUREMENTS 10
 #define DISCRIMINATE_MEASURMENTS 2
 
@@ -51,7 +40,23 @@ enum State
   SLEEPING
 };
 
-typedef struct  __attribute__((packed))
+enum class MACRegion : uint8_t
+{
+  EU433,
+  EU868,
+};
+
+enum MACSendResult : uint8_t
+{
+  MAC_SEND_OK = 0,
+  MAC_SEND_CHANNEL_BUSY_TIMEOUT = 1,
+  MAC_SEND_ALLOC_FAILED = 2,
+  MAC_SEND_TOO_LARGE = 3,
+  MAC_SEND_RADIO_ERROR = 4,
+  MAC_SEND_BUSY = 5,
+};
+
+typedef struct __attribute__((packed))
 {
   uint32_t crc32;
   uint16_t sender;
@@ -69,36 +74,46 @@ typedef struct __attribute__((packed))
 class MAC
 {
 public:
-  // Callback function type definition
   using PacketReceivedCallback =
       std::function<void(MACPacket *packet, uint16_t size, uint32_t crcCalculated)>;
-  using TransmitDone =
-      std::function<void(void)>;
-  int LORANoiseFloorCalibrate(int channel, bool save = true);
-  void LORANoiseCalibrateAllChannels(bool save /*= true*/);
-  // Function to access the singleton instance
+  using TransmitDone = std::function<void(void)>;
+
   static MAC *getInstance();
-  static void ChannelActivity(bool signal);
+
+  // Backward-compatible initializer. v2 treats it as the EU433 profile.
+  static void initialize(
+      SX1262 &loramodule,
+      int id,
+      int default_channel = 0,
+      int default_spreading_factor = DEFAULT_SPREADING_FACTOR,
+      float default_bandwidth = DEFAULT_BANDWIDTH,
+      int squelch = DEFAULT_SQUELCH,
+      int default_power = DEFAULT_POWER,
+      int default_coding_rate = DEFAULT_CODING_RATE);
+
+  // Region-aware initializer. EU868 uses 868.1/868.3/868.5 MHz and a
+  // conservative conducted-power clamp; antenna gain still has to be included
+  // when checking the legal e.r.p. budget.
+  static void initialize(
+      SX1262 &loramodule,
+      int id,
+      MACRegion region,
+      int default_channel,
+      int default_spreading_factor = DEFAULT_SPREADING_FACTOR,
+      float default_bandwidth = DEFAULT_BANDWIDTH,
+      int squelch = DEFAULT_SQUELCH,
+      int default_power = DEFAULT_POWER,
+      int default_coding_rate = DEFAULT_CODING_RATE);
+
+  int LORANoiseFloorCalibrate(int channel, bool save = true);
+  void LORANoiseCalibrateAllChannels(bool save = true);
   void setRXCallback(PacketReceivedCallback callback);
   void setRXAlienCallback(PacketReceivedCallback callback);
-
   int getNoiseFloorOfChannel(uint8_t channel_num);
   uint8_t getNumberOfChannels();
+  MACRegion getRegion() const { return region; }
 
-
-
-  static void initialize(SX1262 &loramodule, int id,
-             int default_channel = DEFAULT_CHANNEL,
-             int default_spreading_factor = DEFAULT_SPREADING_FACTOR,
-             float default_bandwidth = DEFAULT_SPREADING_FACTOR,
-             int squelch = DEFAULT_SQUELCH,
-             int default_power = DEFAULT_POWER,
-             int default_coding_rate = DEFAULT_CODING_RATE);
-
-  // Function to handle incoming packets or events
   void handlePacket();
-
-  // Function to send packets to the next layer (DTP)
   uint8_t sendData(uint16_t target, unsigned char *data,
                    uint8_t size, uint32_t timeout = 5000);
   void loop();
@@ -109,64 +124,61 @@ public:
   SX1262 &module;
   void setTransmitDone(TransmitDone callback);
 
-
-  // Other member functions as needed
 private:
   static bool operationDone;
   static MAC *mac;
   static State state;
-  double channels[NUM_OF_CHANNELS] = {433.05, 433.175, 433.3, 433.425,
-                                      433.55, 433.675, 433.8, 433.925,
-                                      434.05, 434.175, 434.3, 434.425,
-                                      434.55, 434.675, 434.8};
 
-  int noiseFloor[NUM_OF_CHANNELS];
+  static const double EU433_CHANNELS[];
+  static const double EU868_CHANNELS[];
+  static const uint8_t EU433_CHANNEL_COUNT;
+  static const uint8_t EU868_CHANNEL_COUNT;
+
+  const double *channels;
+  uint8_t channelCount;
+  MACRegion region;
+  int maxConductedPowerDbm;
+
+  // Largest current profile has 13 channels. Keep fixed storage to avoid heap
+  // allocation in radio calibration.
+  int noiseFloor[13];
   uint16_t id;
   int channel;
   int spreading_factor;
-  int bandwidth;
+  float bandwidth;
   int squelch;
   int power;
   int coding_rate;
   double calibratedFrequency;
-  bool readyToReceive;
-  bool packetTransmitting;
   TransmitDone transmitDone;
-  // Private constructor
-
-  MAC(SX1262 &loramodule, int id,
-      int default_channel = DEFAULT_CHANNEL,
-      int default_spreading_factor = DEFAULT_SPREADING_FACTOR,
-      float default_bandwidth = DEFAULT_BANDWIDTH, int squelch = DEFAULT_SQUELCH,
-      int default_power = DEFAULT_POWER,
-      int default_coding_rate = DEFAULT_CODING_RATE);
-
-  // Private destructor
-  ~MAC();
-
-  // Private copy constructor and assignment operator to prevent copying
-  MAC(const MAC &) = delete;
-  
-
-  MAC &operator=(const MAC &) = delete;
-  MACPacket *createPacket(uint16_t sender, uint16_t target, unsigned char *data,
-                          uint8_t size);
-
-  static void setFlag(void);
-  
-  void setFrequencyAndListen(uint16_t);
-  void setFrequency(uint16_t channel);
-
-  
-  bool transmissionAuthorized();
-  bool waitForTransmissionAuthorization(uint32_t timeout);
-  void calibrateBasedOnLastPacket();
-
-  // Private member variables for MAC layer
   PacketReceivedCallback RXCallback;
   PacketReceivedCallback RXAlienCallback;
 
-  // Private helper functions as needed
+  MAC(
+      SX1262 &loramodule,
+      int id,
+      MACRegion region,
+      int default_channel,
+      int default_spreading_factor,
+      float default_bandwidth,
+      int squelch,
+      int default_power,
+      int default_coding_rate);
+  ~MAC();
+  MAC(const MAC &) = delete;
+  MAC &operator=(const MAC &) = delete;
+
+  MACPacket *createPacket(uint16_t sender, uint16_t target,
+                          unsigned char *data, uint8_t size);
+  static void setFlag(void);
+  void setFrequencyAndListen(uint16_t channel);
+  void setFrequency(uint16_t channel);
+  bool transmissionAuthorized();
+  bool waitForTransmissionAuthorization(uint32_t timeout);
+  void calibrateBasedOnLastPacket();
+  bool validChannel(uint16_t channel) const;
+  bool configureRadio(int default_spreading_factor, float default_bandwidth,
+                      int default_power, int default_coding_rate);
 };
 
 #endif // MAC_LAYER_H
