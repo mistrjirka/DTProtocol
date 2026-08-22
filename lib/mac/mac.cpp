@@ -54,7 +54,10 @@ MAC::MAC(
       maxConductedPowerDbm(selectedRegion == MACRegion::EU869_HIGH_DUTY
                                ? 20
                                : (selectedRegion == MACRegion::EU868 ? 13 : 10)),
-      dutyCyclePercent(selectedRegion == MACRegion::EU868 ? 1 : 10),
+      // Region selection does not automatically impose duty throttling. The
+      // strict legal fallback limits are available through
+      // setDutyCycleLimitPercent() when an application explicitly wants them.
+      dutyCyclePercent(0),
       id(static_cast<uint16_t>(nodeId)),
       channel(defaultChannel),
       spreading_factor(defaultSpreadingFactor),
@@ -467,8 +470,6 @@ uint8_t MAC::sendData(
 
 void MAC::loop()
 {
-  // Consume the ISR wake flag atomically with respect to Arduino interrupts.
-  // An IRQ arriving after the clear remains set for the next loop iteration.
   noInterrupts();
   const bool pending = operationDone;
   operationDone = false;
@@ -479,11 +480,9 @@ void MAC::loop()
 
   const uint32_t irq = module.getIrqFlags();
 
-  // DIO1 is shared by TX, RX and synchronous CAD on SX1262. Radio IRQ flags,
-  // not mutable software state, are the source of truth for what completed.
   if ((irq & RADIOLIB_SX126X_IRQ_TX_DONE) != 0)
   {
-    module.finishTransmit(); // RadioLib clears TX IRQ state here.
+    module.finishTransmit();
     setMode(RECEIVING, true);
     if (transmitDone)
       transmitDone();
@@ -492,16 +491,12 @@ void MAC::loop()
 
   if ((irq & RADIOLIB_SX126X_IRQ_RX_DONE) != 0)
   {
-    // readData() consumes/clears RX flags. The callback may immediately begin
-    // an LCMM ACK transmission; only re-arm RX if it did not change to SENDING.
     handlePacket();
     if (getMode() != SENDING)
       setMode(RECEIVING, true);
     return;
   }
 
-  // CAD_DONE/CAD_DETECTED can leave the ISR wake flag set after scanChannel(),
-  // and timeout/error flags should not be mistaken for packet reception.
   if (irq != 0)
     module.clearIrqFlags(irq);
   if (getMode() != SENDING)
