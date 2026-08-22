@@ -311,7 +311,30 @@ void DTPK::sendingDeamon()
             3);
 
         if (lcmmId == 0)
+        {
+            const uint8_t sendResult = LCMM::getInstance()->getLastSendResult();
+            const bool fatal =
+                sendResult == MAC_SEND_ALLOC_FAILED ||
+                sendResult == MAC_SEND_TOO_LARGE ||
+                sendResult == MAC_SEND_RADIO_ERROR;
+
+            if (!fatal)
+            {
+                const uint32_t wait = MAC::getInstance()->getTransmitWaitMs();
+                const uint32_t bounded = std::min<uint32_t>(
+                    wait > 0 ? wait : 1u,
+                    0x7fffffffu);
+                request.timeLeftToSend = static_cast<int32_t>(bounded);
+                return;
+            }
+
+            if (request.callback)
+                request.callback(0, 0);
+            free(request.packet);
+            _packetRequests.erase(
+                _packetRequests.begin() + static_cast<long>(i));
             return;
+        }
 
         if (request.dtpkAck)
         {
@@ -544,8 +567,6 @@ void DTPK::sendNackPacket(uint16_t target, uint16_t from, uint16_t id,
 
     packet->type = NACK_NOTFOUND;
     packet->id = id;
-    // For a NACK, originalSender identifies the destination that could not be
-    // reached. This makes {packet id, intended destination} matching unambiguous.
     packet->originalSender = failedDestination;
     packet->finalTarget = target;
     packet->flags = DTPK_FLAG_NONE;
@@ -614,7 +635,7 @@ void DTPK::parseHelloPacket(
         if (versionNewer(hello->routeVersion, applied->second.routeVersion))
             needSnapshot = true;
         else if (hello->routeVersion != applied->second.routeVersion)
-            return; // stale HELLO
+            return;
     }
     else if (sequenceNewer(
                  hello->originSequence, applied->second.originSequence))
@@ -626,7 +647,7 @@ void DTPK::parseHelloPacket(
     }
     else
     {
-        return; // stale incarnation
+        return;
     }
 
     if (_crystDatabase.updateDirectNeighbor(
@@ -778,8 +799,6 @@ void DTPK::parseSeqRequestPacket(
                 _routeVersion = 1;
             sendHello();
         }
-        // Even an already-satisfied request may come from a node that missed the
-        // current state. Re-send it without inventing a new generation.
         sendCrystPacket();
         return;
     }
