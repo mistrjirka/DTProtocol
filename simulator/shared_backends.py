@@ -15,6 +15,7 @@ from radio_timing import (
     RSSI_CCA_SAMPLES,
     rssi_cca_duration_ms,
     rssi_sample_offsets_ms,
+    rx_packet_read_ms,
     rx_rearm_ms,
     tx_startup_ms,
 )
@@ -136,12 +137,45 @@ class KeyedEnvironmentMixin:
                 return True
         return False
 
+    def _rx_completion_during_cca(
+        self, receiver: int, cca_start_ms: float, cca_end_ms: float
+    ) -> bool:
+        if not self.radio_contention:
+            return False
+        for tx in self._medium_tx:
+            other = int(tx["sender"])
+            if other == receiver:
+                continue
+            end = float(tx["end"])
+            if not (float(cca_start_ms) < end <= float(cca_end_ms)):
+                continue
+            link = self.get_link(other, receiver)
+            if link is None or not link.up:
+                continue
+            if (
+                self.node_up.get(other, False)
+                and self.node_up.get(receiver, False)
+                and self.in_range_now(other, receiver, end)
+            ):
+                # Production MAC checks the shared DIO1/RX_DONE wake flag
+                # between samples. A completed decodable frame therefore aborts
+                # CCA even if its RF energy fell entirely between sample instants.
+                return True
+        return False
+
     def _rssi_cca_busy(self, node_id: int, cca_start_ms: float) -> bool:
-        return any(
-            self._medium_energy_at(node_id, float(cca_start_ms) + offset)
-            for offset in rssi_sample_offsets_ms(
-                RSSI_CCA_SAMPLES, RSSI_CCA_SAMPLE_SPACING_MS
+        offsets = rssi_sample_offsets_ms(
+            RSSI_CCA_SAMPLES, RSSI_CCA_SAMPLE_SPACING_MS
+        )
+        cca_end = float(cca_start_ms) + rssi_cca_duration_ms(
+            RSSI_CCA_SAMPLES, RSSI_CCA_SAMPLE_SPACING_MS
+        )
+        return (
+            any(
+                self._medium_energy_at(node_id, float(cca_start_ms) + offset)
+                for offset in offsets
             )
+            or self._rx_completion_during_cca(node_id, cca_start_ms, cca_end)
         )
 
     def _ever_in_range(self, a: int, b: int, start_ms: float, end_ms: float) -> bool:
@@ -405,8 +439,20 @@ class SharedPythonNetwork(KeyedEnvironmentMixin, Simulator):
             rf_end = self.now + airtime
             self.account_transmission(sender_id, self.now, rf_end)
             self._record_medium_tx(sender_id, self.now, rf_end)
+            completion = on_complete
+            if not reliable:
+                # Production no-ACK LCMM is released by MAC's TX-done callback
+                # only after finishTransmit() and continuous RX have been
+                # restored. Base Simulator fires at RF end, so delay the owner
+                # callback by the modeled re-arm interval.
+                completion = lambda ok: self.schedule(
+                    rx_rearm_ms(),
+                    on_complete,
+                    ok,
+                    priority=self.RADIO_PRIORITY,
+                )
             result = super().transmit(
-                sender_id, target, packet, reliable, on_complete, attempt
+                sender_id, target, packet, reliable, completion, attempt
             )
             sender.radio_busy_until = max(
                 float(sender.radio_busy_until), rf_end + rx_rearm_ms()
@@ -612,13 +658,25 @@ class SharedPythonNetwork(KeyedEnvironmentMixin, Simulator):
             self.metrics.link_loss_drops += 1
             self.rf_metrics.rf_loss_drops += 1
 
+        # Two independent events follow ACK RF completion in production:
+        # 1) the ACK transmitter finishes TX, re-arms RX, then LCMM invokes the
+        #    deferred DTPK data callback;
+        # 2) the original DATA sender receives/reads the ACK and completes its
+        #    waiting LCMM attempt. Do not collapse these into one timestamp.
+        self.schedule_at(
+            ack_end + rx_rearm_ms(),
+            self._deliver_after_ack_tx,
+            receiver_id,
+            previous_hop,
+            packet,
+            ack_epochs[0],
+            priority=self.RADIO_PRIORITY,
+        )
         self.schedule_at(
             ack_end,
-            self._python_ack_rf_complete,
+            self._finish_ack_rf,
             receiver_id,
             sender_id,
-            packet,
-            previous_hop,
             original_packet,
             target,
             on_complete,
@@ -628,11 +686,99 @@ class SharedPythonNetwork(KeyedEnvironmentMixin, Simulator):
             *ack_epochs,
             lost,
             self.jittered_latency(link),
+            ack_bytes,
             priority=self.RADIO_PRIORITY,
         )
 
+    def _deliver_after_ack_tx(
+        self, receiver_id, previous_hop, packet, ack_sender_epoch
+    ) -> None:
+        receiver = self.nodes[receiver_id]
+        if (
+            self.node_up.get(receiver_id, False)
+            and self.node_epoch.get(receiver_id, 0) == ack_sender_epoch
+            and receiver.up
+            and not receiver.crashed
+        ):
+            receiver.receive(packet, previous_hop)
+        else:
+            self.rf_metrics.firmware_epoch_drops += 1
+
+    def _finish_ack_rf(
+        self, receiver_id, sender_id, original_packet, target, on_complete,
+        attempt, ack_start, ack_end, ack_sender_epoch, ack_receiver_epoch,
+        link_epoch, random_lost, latency_ms, ack_bytes
+    ) -> None:
+        valid, reason = self.frame_path_valid(
+            receiver_id,
+            sender_id,
+            ack_start,
+            ack_end,
+            ack_sender_epoch,
+            ack_receiver_epoch,
+            link_epoch,
+        )
+        if not valid:
+            if reason == "range":
+                self.rf_metrics.rf_range_drops += 1
+            else:
+                self.rf_metrics.rf_epoch_drops += 1
+
+        if random_lost or not valid:
+            self.schedule(
+                self.nodes[sender_id].link_retry_timeout_ms(original_packet),
+                self._retry_or_finish,
+                sender_id,
+                target,
+                original_packet,
+                True,
+                on_complete,
+                attempt,
+            )
+            return
+
+        self.schedule(
+            latency_ms + rx_packet_read_ms(ack_bytes),
+            self._complete_ack_receive,
+            sender_id,
+            ack_receiver_epoch,
+            on_complete,
+            priority=self.RADIO_PRIORITY,
+        )
+
+    def _complete_ack_receive(
+        self, sender_id, expected_epoch, on_complete
+    ) -> None:
+        sender = self.nodes[sender_id]
+        if (
+            not self.node_up.get(sender_id, False)
+            or self.node_epoch.get(sender_id, 0) != expected_epoch
+            or not sender.up
+            or sender.crashed
+        ):
+            self.rf_metrics.firmware_epoch_drops += 1
+            return
+        on_complete(True)
+
     def _deliver(self, receiver_id, previous_hop, packet, reliable, ack_context,
                  receiver_epoch=None):
+        # RX_DONE only means the RF frame is complete. RadioLib still reads the
+        # packet buffer, resets buffer pointers and clears IRQ state before MAC
+        # can invoke LCMM. Model that frame-size-dependent SPI interval here.
+        self.schedule(
+            rx_packet_read_ms(self._frame_bytes(packet)),
+            self._deliver_after_read,
+            receiver_id,
+            previous_hop,
+            packet,
+            reliable,
+            ack_context,
+            receiver_epoch,
+            priority=self.RADIO_PRIORITY,
+        )
+
+    def _deliver_after_read(self, receiver_id, previous_hop, packet, reliable, ack_context,
+                            receiver_epoch=None):
         receiver = self.nodes[receiver_id]
         if (
             not receiver.up
