@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import random
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import DefaultDict, List, Optional, Tuple
 
 from cpp_sim_adapter import CppSimNetwork
@@ -142,6 +143,20 @@ class SharedPythonNetwork(KeyedEnvironmentMixin, Simulator):
         if duty < 0.0 or duty > 100.0:
             raise ValueError("duty_cycle_percent must be between 0 and 100")
         self.duty_cycle_percent = duty
+
+        expiry = self.profile.neighbor_expiry_ms
+        if duty > 0.0 and expiry is not None:
+            full_airtime = self.airtime_ms(MAX_PACKET_SIZE)
+            off_time = full_airtime * (100.0 / duty - 1.0)
+            hello_period = float(self.profile.hello_period_ms or 0)
+            hello_gap = hello_period * (1.0 + self.profile.hello_jitter_fraction)
+            safe_expiry = int(math.ceil(off_time + hello_gap + 1000.0))
+            if safe_expiry > expiry:
+                self.profile = replace(
+                    self.profile,
+                    neighbor_expiry_ms=safe_expiry,
+                )
+
         self._init_shared_environment(radio_contention=radio_contention)
 
     def _frame_bytes(self, packet):
