@@ -7,28 +7,165 @@ RF/CCA behavior it models:
 
 * SX1262 continuous-RX semantics and the explicit post-callback RadioLib refresh;
 * RX_DONE only for frames the current no-capture medium could actually decode;
-* production LCMM hop deadlines derived from the local DTPK request timeout/3,
-  rather than the older fixed ~1.65 s theoretical retry delay.
+* production LCMM hop deadlines derived from the local DTPK request timeout/3;
+* v2 liveness maintenance: suspect/probe/repair, but topology withdrawal only
+  after the hard no-valid-packet timeout.
 """
 
 import math
+from typing import Dict
 
+from model import DTPK_CRYST_REQ_SIZE, Packet, TxRequest, next_sequence
 from radio_timing import (
     rssi_cca_duration_ms,
     rx_rearm_after_read_ms,
     tx_startup_ms,
 )
-from shared_backends import SharedPythonNetwork
+from shared_backends import MobileAwareNode, SharedPythonNetwork
 from simulator import Simulator
+
+
+class TimedV2Node(MobileAwareNode):
+    """Python node with the maintenance cadence/invariants of production v2."""
+
+    LIVENESS_SUSPECT_MS = 30_000.0
+    LIVENESS_PROBE_COOLDOWN_MS = 10_000.0
+    MAINTENANCE_PERIOD_MS = 1_000.0
+
+    def __init__(self, sim, node_id: int, *, mobile_hint: bool = False):
+        super().__init__(sim, node_id, mobile_hint=mobile_hint)
+        self.last_liveness_probe: Dict[int, float] = {}
+
+    def reset_runtime(self) -> None:
+        super().reset_runtime()
+        self.last_liveness_probe.clear()
+
+    def link_retry_timeout_ms(self, packet) -> float:
+        helper = getattr(self.sim, "_remaining_hop_timeout_ms", None)
+        if helper is not None:
+            return helper(self.id, packet)
+        return super().link_retry_timeout_ms(packet)
+
+    def start(self) -> None:
+        # Mirrors Node.start(), except production DTPK runs liveness/assembly/
+        # sequence maintenance every 1 s rather than expiry/3.
+        self.up = True
+        self.crashed = False
+        self.generation += 1
+
+        if self.profile.sequence_numbers:
+            self.origin_sequence = next_sequence(self.origin_sequence)
+
+        self.sim.log(
+            "node_up",
+            node=self.id,
+            origin_sequence=self.origin_sequence,
+        )
+        self.schedule_cryst("startup")
+
+        gen = self.generation
+        if self.profile.periodic_cryst_ms:
+            self.sim.schedule(
+                self.profile.periodic_cryst_ms,
+                self._periodic_cryst,
+                gen,
+            )
+        if self.profile.hello_period_ms:
+            first = self.sim.rng.uniform(100, self._effective_hello_period_ms())
+            self.sim.schedule(first, self._periodic_hello, gen)
+        if self.profile.origin_seq_period_ms:
+            self.sim.schedule(
+                self.profile.origin_seq_period_ms,
+                self._origin_sequence_tick,
+                gen,
+            )
+        if self.profile.neighbor_expiry_ms:
+            self.sim.schedule(
+                self.MAINTENANCE_PERIOD_MS,
+                self._expiry_tick,
+                gen,
+            )
+
+    def _queue_liveness_probe(self, neighbor: int) -> None:
+        # C++ sendCrystRequest() coalesces one unsent direct request per
+        # neighbor. Match it so suspicion cannot create a control burst.
+        if any(
+            queued.packet.kind == "CRYST_REQ"
+            and queued.next_hop == neighbor
+            for queued in self.txq
+        ):
+            return
+        request = Packet(
+            "CRYST_REQ",
+            self.next_packet_id(),
+            original_sender=self.id,
+            final_target=neighbor,
+            wire_dtpk_size=DTPK_CRYST_REQ_SIZE,
+        )
+        self.sim.metrics.cryst_req_tx += 1
+        self.enqueue(
+            TxRequest(
+                request,
+                neighbor,
+                lcmm_ack=True,
+                timeout_ms=3_000,
+                priority=True,
+            )
+        )
+
+    def _expiry_tick(self, gen: int) -> None:
+        if gen != self.generation or not self.up or self.crashed:
+            return
+
+        hard_expiry = self._effective_neighbor_expiry_ms()
+        stale = []
+        for neighbor, last in list(self.last_heard.items()):
+            age = self.sim.now - last
+            if age >= hard_expiry:
+                stale.append(neighbor)
+                continue
+            if (
+                self.profile.state_digest_requests
+                and age >= self.LIVENESS_SUSPECT_MS
+            ):
+                last_probe = self.last_liveness_probe.get(neighbor, -1e30)
+                if (
+                    self.sim.now - last_probe
+                    >= self.LIVENESS_PROBE_COOLDOWN_MS
+                ):
+                    self._queue_liveness_probe(neighbor)
+                    self.last_liveness_probe[neighbor] = self.sim.now
+
+        changed_contribution = False
+        for neighbor in stale:
+            self.last_heard.pop(neighbor, None)
+            self.last_liveness_probe.pop(neighbor, None)
+            self.neighbor_cryst_state.pop(neighbor, None)
+            if neighbor in self.routes_by_neighbor:
+                del self.routes_by_neighbor[neighbor]
+                changed_contribution = True
+
+        if changed_contribution:
+            changed_best = self.rebuild_routes()
+            if changed_best:
+                self.schedule_cryst("neighbor_expired")
+
+        self.sim.schedule(
+            self.MAINTENANCE_PERIOD_MS,
+            self._expiry_tick,
+            gen,
+        )
+
+    def receive(self, packet, previous_hop: int) -> None:
+        # Base receive() records every valid direct protocol frame as liveness.
+        super().receive(packet, previous_hop)
+        if previous_hop in self.last_heard:
+            self.last_liveness_probe.pop(previous_hop, None)
 
 
 class TimedSharedPythonNetwork(SharedPythonNetwork):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Source DATA uses the application/DTPK timeout. Relayed DATA and
-        # protocol ACK/NACK use production's fixed 5000 ms request timeout;
-        # CRYST_REQ uses 3000 ms. Keys are 16-bit packet identities and are
-        # naturally overwritten after wrap rather than growing per RF retry.
         self._source_request_timeout_ms: dict[tuple[int, int], int] = {}
         self._hop_deadline_ms: dict[tuple[int, str, int, int], float] = {}
 
@@ -47,25 +184,15 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
         )
 
     def _production_hop_timeout_base_ms(self, sender_id: int, packet) -> int:
-        """LCMM timeout argument used by production for this local hop.
-
-        DTPK passes request.timeout/3 to LCMM::sendPacketSingle(). The C++
-        division is integer division and clamps non-positive values to 1 ms.
-        """
+        """LCMM timeout argument used by production for this local hop."""
         if packet.kind == "CRYST_REQ":
             request_timeout = 3000
-        elif (
-            packet.kind == "DATA"
-            and packet.original_sender == sender_id
-        ):
+        elif packet.kind == "DATA" and packet.original_sender == sender_id:
             request_timeout = self._source_request_timeout_ms.get(
                 (int(sender_id), int(packet.packet_id) & 0xFFFF),
                 int(self.profile.e2e_timeout_ms),
             )
         else:
-            # Relayed DATA and routed ACK/NACK are queued with 5000 ms in the
-            # production DTPK implementation. Other reliable kinds currently
-            # fall through to the same safe production default.
             request_timeout = 5000
         request_timeout = int(request_timeout)
         return max(1, request_timeout // 3 if request_timeout > 0 else 1)
@@ -75,24 +202,27 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
         deadline = self._hop_deadline_ms.get(key)
         if deadline is not None:
             return max(1.0, float(deadline) - float(self.now))
-
-        # Fallback for a direct helper call outside the normal timed TX path.
         frame_bytes = self._frame_bytes(packet)
         return float(
             self._production_hop_timeout_base_ms(sender_id, packet)
             + math.ceil(self.airtime_ms(frame_bytes))
         )
 
-    def add_node(self, node_id: int, *args, **kwargs):
-        node = super().add_node(node_id, *args, **kwargs)
-        # Simulator internals ask the transmitting Node for its LCMM retry
-        # delay. Bind that query to the absolute production-equivalent deadline
-        # maintained by this timed backend.
-        node.link_retry_timeout_ms = (
-            lambda packet, nid=int(node_id): self._remaining_hop_timeout_ms(
-                nid, packet
-            )
-        )
+    def add_node(
+        self,
+        node_id: int,
+        start: bool = True,
+        *,
+        position=(0.0, 0.0),
+        mobile_hint: bool = False,
+    ) -> TimedV2Node:
+        # Recreate SharedPythonNetwork.add_node with the production-maintenance
+        # node type installed before its t=0 start event is scheduled.
+        node = TimedV2Node(self, node_id, mobile_hint=mobile_hint)
+        self.nodes[node_id] = node
+        self.register_node(node_id, up=True, position=position)
+        if start:
+            self.schedule(0, node.start, priority=self.PROTOCOL_PRIORITY)
         return node
 
     def send(
@@ -110,10 +240,6 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
             timeout_ms,
             e2e_ack,
         )
-        # enqueue() schedules pump() for a future event turn, so this mapping is
-        # installed before the first CCA/TX can consume it. Packet id 0 is a
-        # valid Python-model id; storing a failed route-miss entry is harmless
-        # and will be overwritten by the next wrapped id.
         self._source_request_timeout_ms[
             (int(node_id), int(packet_id) & 0xFFFF)
         ] = int(timeout_ms)
@@ -124,9 +250,6 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
     ):
         if reliable:
             frame_bytes = self._frame_bytes(packet)
-            # Production starts its timeout budget before MAC::sendData(); after
-            # sendData returns it subtracts the time spent in CCA/setup. Thus the
-            # absolute deadline is requestStart + hopTimeout + ceil(data airtime).
             request_start = (
                 float(self.now)
                 - rssi_cca_duration_ms()
@@ -156,14 +279,6 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
         )
 
     def _medium_tx_decodable_without_capture(self, tx: dict, receiver: int) -> bool:
-        """Whether this abstract RF frame could have produced RX_DONE.
-
-        This intentionally uses the simulator's current pessimistic collision
-        model: any audible overlap corrupts the frame. It is still more faithful
-        than the old shortcut that converted every reachable frame end into
-        RX_DONE, including collided frames and frames whose preamble began while
-        the receiver was transmitting/re-arming.
-        """
         sender = int(tx["sender"])
         if sender == receiver:
             return False
@@ -182,9 +297,6 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
         node = self.nodes.get(receiver)
         if node is None or not node.up or node.crashed:
             return False
-        # SX1262 must be in RX when the desired preamble starts. The timed
-        # Python radio_busy_until covers TX and explicit restart gaps, not the
-        # host-side packet-buffer read while Rx Continuous remains active.
         if float(node.radio_busy_until) > start + 1e-9:
             return False
 
@@ -230,9 +342,6 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
         ack_context,
         receiver_epoch=None,
     ):
-        # DATA_NOACK / HELLO / CRYST etc. return from LCMM/MAC callback without
-        # beginning a TX, so MAC::loop executes its explicit startReceive()
-        # refresh even though SX1262 Rx Continuous was already active.
         if not reliable:
             receiver = self.nodes[receiver_id]
             if (
@@ -265,8 +374,6 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
         on_complete,
         attempt,
     ) -> None:
-        # If MAC policy already prevents an ACK attempt, production LCMM delivers
-        # DATA upward and MAC::loop performs the explicit RX refresh.
         regulatory_wait = Simulator.transmit_wait_ms(self, receiver_id)
         carrier_wait = max(
             0.0, self._carrier_backoff_until.get(receiver_id, 0.0) - self.now
@@ -321,8 +428,6 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
                 and not receiver.crashed
                 and self.node_up.get(receiver_id, False)
             ):
-                # The busy path delivered DATA upward and returned from the MAC
-                # RX callback without starting an ACK transmission.
                 self._mark_post_read_rearm(receiver_id)
 
     def _start_ack_tx(
@@ -336,9 +441,6 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
         on_complete,
         attempt,
     ) -> None:
-        # A topology object disappearing between DATA RX and ACK start is rare,
-        # but the parent treats it as a failed ACK and delivers DATA upward.
-        # That path also needs the normal post-callback RX refresh.
         missing_link = self.get_link(receiver_id, sender_id) is None
         if missing_link:
             receiver = self.nodes[receiver_id]
@@ -348,6 +450,21 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
                 and self.node_up.get(receiver_id, False)
             ):
                 self._mark_post_read_rearm(receiver_id)
+
+        wrapped_complete = on_complete
+        if original_packet.kind == "CRYST_REQ":
+            # Production DTPK maps every direct reliable CRYST_REQ LCMM id back
+            # to its neighbor. A successful link ACK alone is valid liveness
+            # evidence even before the requested CRYST broadcast arrives.
+            def wrapped_complete(success: bool):
+                if success:
+                    requester = self.nodes.get(sender_id)
+                    if requester is not None:
+                        requester.last_heard[receiver_id] = self.now
+                        if isinstance(requester, TimedV2Node):
+                            requester.last_liveness_probe.pop(receiver_id, None)
+                on_complete(success)
+
         return super()._start_ack_tx(
             receiver_id,
             previous_hop,
@@ -355,7 +472,7 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
             sender_id,
             target,
             original_packet,
-            on_complete,
+            wrapped_complete,
             attempt,
         )
 
@@ -367,12 +484,10 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
             and sender.up
             and not sender.crashed
         ):
-            # LCMM::handleACK runs inside the RX callback. Only after it returns
-            # does MAC::loop execute the explicit continuous-RX refresh.
             self._mark_post_read_rearm(sender_id)
         return super()._complete_ack_receive(
             sender_id, expected_epoch, on_complete
         )
 
 
-__all__ = ["TimedSharedPythonNetwork"]
+__all__ = ["TimedSharedPythonNetwork", "TimedV2Node"]
