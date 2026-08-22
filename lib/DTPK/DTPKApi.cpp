@@ -20,10 +20,8 @@ void DTPK::controlDeamon()
     if (_helloRemaining <= 0)
     {
         sendHello();
-        const uint8_t duty = MAC::getInstance()->getFallbackDutyCyclePercent();
-        const uint32_t helloPeriod =
-            (duty > 0 && duty <= 1) ? 60000u : HELLO_PERIOD_MS;
-        const uint32_t helloJitter = helloPeriod / 5u; // preserve ±20% jitter
+        const uint32_t helloPeriod = effectiveHelloPeriodMs();
+        const uint32_t helloJitter = helloPeriod / 5u; // ±20%
         const long low = static_cast<long>(helloPeriod - helloJitter);
         const long high = static_cast<long>(helloPeriod + helloJitter + 1u);
         _helloRemaining = static_cast<int32_t>(random(low, high));
