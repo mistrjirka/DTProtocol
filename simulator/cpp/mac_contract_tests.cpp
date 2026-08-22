@@ -36,7 +36,6 @@ int main(int argc, char **argv) {
         expected_duty = 10;
     }
 
-    // Intentionally excessive requested power verifies regional conducted caps.
     MAC::initialize(
         radio,
         42,
@@ -63,11 +62,9 @@ int main(int argc, char **argv) {
 
     const unsigned char payload[] = {1, 2, 3};
 
-    // Busy must be observable rather than silently reported as success.
     mac->setMode(SENDING, true);
     assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_BUSY);
 
-    // CAD detects LoRa activity even when RSSI remains below the energy threshold.
     mac->setMode(RECEIVING, true);
     radio.scan_channel_result = RADIOLIB_LORA_DETECTED;
     assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_CHANNEL_BUSY_TIMEOUT);
@@ -75,7 +72,6 @@ int main(int argc, char **argv) {
     delay(mac->getTransmitWaitMs());
     radio.scan_channel_result = RADIOLIB_CHANNEL_FREE;
 
-    // Synchronous RadioLib TX failure must restore RX instead of wedging.
     radio.start_transmit_result = -42;
     assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_RADIO_ERROR);
     assert(mac->getMode() == RECEIVING);
@@ -83,12 +79,43 @@ int main(int argc, char **argv) {
     radio.start_transmit_result = RADIOLIB_ERR_NONE;
     assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_OK);
     assert(mac->getMode() == SENDING);
-
-    // Finish TX and verify the regional duty-cycle policy is non-blocking.
     assert(radio.dio1_action != nullptr);
+
+    // TX completion is classified by the SX1262 IRQ bit. Deliberately perturb
+    // software state before servicing the IRQ: the old implementation would
+    // infer the wrong event (or ignore it), while v2 must still finish TX.
+    const int finishBefore = radio.finish_transmit_calls;
+    radio.irq_flags = RADIOLIB_SX126X_IRQ_TX_DONE;
     radio.dio1_action();
+    mac->setMode(IDLE, true);
     mac->loop();
+    assert(radio.finish_transmit_calls == finishBefore + 1);
     assert(mac->getMode() == RECEIVING);
+
+    // RX_DONE is also hardware-classified. A zero-payload MAC header is enough
+    // to exercise readData; with no callback the MAC owns/frees it afterwards.
+    const int readsBefore = radio.read_data_calls;
+    radio.packet_length = sizeof(MACHeader);
+    radio.irq_flags = RADIOLIB_SX126X_IRQ_RX_DONE;
+    radio.dio1_action();
+    mac->setMode(IDLE, true);
+    // setMode(IDLE) leaves the radio IRQ status intact in the host stub.
+    mac->loop();
+    assert(radio.read_data_calls == readsBefore + 1);
+    assert(mac->getMode() == RECEIVING);
+
+    // A CAD wakeup is not packet reception. It must be explicitly cleared and
+    // must not call readData just because software happens to say RECEIVING.
+    const int clearBefore = radio.clear_irq_calls;
+    const int readsBeforeCad = radio.read_data_calls;
+    radio.irq_flags = RADIOLIB_SX126X_IRQ_CAD_DONE;
+    radio.dio1_action();
+    mac->setMode(RECEIVING, false);
+    mac->loop();
+    assert(radio.clear_irq_calls == clearBefore + 1);
+    assert(radio.read_data_calls == readsBeforeCad);
+    assert(mac->getMode() == RECEIVING);
+
     const uint32_t wait = mac->getTransmitWaitMs();
     assert(wait > 0);
     assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_DUTY_CYCLE);
@@ -96,6 +123,11 @@ int main(int argc, char **argv) {
     delay(wait);
     assert(mac->getTransmitWaitMs() == 0);
     assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_OK);
+
+    radio.irq_flags = RADIOLIB_SX126X_IRQ_TX_DONE;
+    radio.dio1_action();
+    mac->loop();
+    assert(mac->getMode() == RECEIVING);
 
     return 0;
 }
