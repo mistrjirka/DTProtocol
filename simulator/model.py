@@ -10,6 +10,10 @@ LCMM_OVERHEAD = 3
 LCMM_RX_HEADER = MAC_OVERHEAD + LCMM_OVERHEAD
 DTPK_GENERIC_HEADER = 7
 DTPK_CRYST_HEADER = 3
+DTPK_CRYST_V2_HEADER = 7  # type:u8,id:u16,origin-seq:u16,state-version:u16
+DTPK_HELLO_SIZE = 7
+DTPK_CRYST_REQ_SIZE = 7
+DTPK_SEQ_REQ_SIZE = 10
 NEIGHBOR_RECORD_SIZE = 5
 NEIGHBOR_RECORD_V2_SIZE = 7  # dest:u16, via:u16, sequence:u16, metric:u8
 MAX_PACKET_SIZE = 255
@@ -23,15 +27,20 @@ class Profile:
     `current()` mirrors important behavior/bugs in the reference C++ tree.
     `intended()` removes implementation bugs without changing routing theory.
     `robust()` separates liveness from crystallization and adds repair refreshes.
-    `feasible()` adds destination generations + a feasibility condition to make
-    next-hop changes loop-safe while retaining crystallization propagation.
+    `feasible()` adds generations + feasibility but keeps periodic full vectors.
+    `crystallized_v2()` is the low-steady-control candidate: HELLO liveness/state
+    digests + event-triggered CRYST + sequence requests for feasibility liveness.
     """
 
     name: str
     k_limit_ms: int = 20_000
     cryst_jitter_min_ms: int = 200
+    cryst_jitter_max_ms: Optional[int] = None
     periodic_cryst_ms: Optional[int] = None
+    hello_period_ms: Optional[int] = None
+    hello_jitter_fraction: float = 0.0
     propagate_on_route_change: bool = False
+    cryst_missing_self_reply: bool = True
     global_e2e_gate: bool = True
     ack_bypasses_e2e_gate: bool = False
     relay_lcmm_ack: bool = False
@@ -52,6 +61,11 @@ class Profile:
     feasibility_condition: bool = False
     origin_seq_period_ms: Optional[int] = None
     advertise_self_route: bool = False
+
+    state_digest_requests: bool = False
+    seqno_requests: bool = False
+    seqno_request_cooldown_ms: int = 5_000
+    seqno_request_hop_limit: int = 32
 
     @staticmethod
     def current() -> "Profile":
@@ -95,6 +109,28 @@ class Profile:
             sequence_numbers=True,
             feasibility_condition=True,
             advertise_self_route=True,
+        )
+
+    @staticmethod
+    def crystallized_v2() -> "Profile":
+        return replace(
+            Profile.intended(),
+            name="cryst-v2",
+            # Decouple event-propagation jitter from the old 20 s session
+            # timeout. This removes the practical one-hop 0-20s discovery delay.
+            cryst_jitter_max_ms=1_500,
+            periodic_cryst_ms=None,
+            hello_period_ms=10_000,
+            hello_jitter_fraction=0.20,
+            neighbor_expiry_ms=30_000,
+            session_gc_enabled=False,
+            sequence_numbers=True,
+            feasibility_condition=True,
+            origin_seq_period_ms=None,
+            advertise_self_route=False,
+            state_digest_requests=True,
+            seqno_requests=True,
+            cryst_missing_self_reply=False,
         )
 
 
@@ -147,9 +183,14 @@ def sequence_newer(a: int, b: int) -> bool:
     return ((a - b) & 0xFFFF) < 0x8000
 
 
+def next_sequence(value: int) -> int:
+    value = (value + 1) & 0xFFFF
+    return value if value != 0 else 1
+
+
 @dataclass
 class Packet:
-    kind: str  # CRYST, DATA, ACK, NACK
+    kind: str  # CRYST, HELLO, CRYST_REQ, SEQ_REQ, DATA, ACK, NACK
     packet_id: int
     original_sender: Optional[int] = None
     final_target: Optional[int] = None
@@ -157,6 +198,10 @@ class Packet:
     advertisements: Tuple[AdvertisedRoute, ...] = ()
     wire_dtpk_size: int = 0
     cryst_record_size: int = NEIGHBOR_RECORD_SIZE
+    sender_sequence: int = 0
+    route_version: int = 0
+    requested_sequence: int = 0
+    hop_limit: int = 0
 
     def clone(self) -> "Packet":
         return copy.copy(self)
@@ -194,6 +239,14 @@ class Metrics:
     stale_route_observations: int = 0
     cryst_rx: int = 0
     cryst_tx: int = 0
+    hello_rx: int = 0
+    hello_tx: int = 0
+    cryst_req_rx: int = 0
+    cryst_req_tx: int = 0
+    seq_req_rx: int = 0
+    seq_req_tx: int = 0
+    seq_req_satisfied: int = 0
+    seq_req_duplicates: int = 0
     max_queue: int = 0
     max_route_entries: int = 0
     max_contributions: int = 0
