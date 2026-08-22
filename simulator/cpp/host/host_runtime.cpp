@@ -111,6 +111,29 @@ uint8_t MAC::getFallbackDutyCyclePercent() const {
     return static_cast<uint8_t>(std::lround(clamped));
 }
 
+uint32_t MAC::recommendedNeighborExpiryMs(
+    uint32_t baseMs,
+    uint32_t maxHelloGapMs,
+    uint32_t schedulerMarginMs) const {
+    if (g_duty_cycle_percent <= 0.0f)
+        return baseMs;
+
+    const float airtimeMs = MathExtension.timeOnAir(
+        MAX_PACKET_SIZE, 8, 9, 125.0f, 7);
+    if (!(airtimeMs > 0.0f) || !std::isfinite(airtimeMs))
+        return baseMs;
+
+    const double offTimeMs =
+        static_cast<double>(airtimeMs) *
+        (100.0 / static_cast<double>(g_duty_cycle_percent) - 1.0);
+    const double required =
+        offTimeMs + static_cast<double>(maxHelloGapMs) +
+        static_cast<double>(schedulerMarginMs);
+    const uint32_t bounded = static_cast<uint32_t>(std::min<double>(
+        std::ceil(required), static_cast<double>(0x7fffffffu)));
+    return std::max(baseMs, bounded);
+}
+
 void MAC::loop() {}
 
 uint32_t MAC::random() {
