@@ -112,10 +112,27 @@ public:
   int getNoiseFloorOfChannel(uint8_t channel_num);
   uint8_t getNumberOfChannels();
   MACRegion getRegion() const { return region; }
+
+  // Region selection configures frequencies/power only. Regulatory duty-cycle
+  // throttling is intentionally opt-in because the strict fallback limits make
+  // this reliable multi-hop protocol impractically slow. 0 disables it.
+  uint8_t getDutyCycleLimitPercent() const { return dutyCyclePercent; }
   uint8_t getFallbackDutyCyclePercent() const { return dutyCyclePercent; }
+  uint8_t recommendedRegionalDutyCyclePercent() const
+  {
+    return region == MACRegion::EU868 ? 1u : 10u;
+  }
+  void setDutyCycleLimitPercent(uint8_t percent)
+  {
+    dutyCyclePercent = std::min<uint8_t>(percent, 100u);
+    if (dutyCyclePercent == 0)
+      dutyCycleUntil = 0;
+  }
 
   uint32_t getTransmitWaitMs() const;
 
+  // Helper for applications that explicitly enable a duty limit and want to
+  // derive a liveness timeout. DTPK does not call this automatically.
   uint32_t recommendedNeighborExpiryMs(
       uint32_t baseMs,
       uint32_t maxHelloGapMs,
@@ -133,11 +150,6 @@ public:
     if (!(airtimeMs > 0.0f) || !std::isfinite(airtimeMs))
       return baseMs;
 
-    // After a legal full-size transmission a device can remain silent for
-    // airtime*(100/duty - 1). Any packet refreshes liveness, so adding the
-    // maximum normal HELLO gap and one scheduler margin is conservative even
-    // for chunked CRYST/data traffic. Clamp below signed-millis half range so
-    // wrap-safe deadline arithmetic remains valid.
     const double offTimeMs =
         static_cast<double>(airtimeMs) *
         (100.0 / static_cast<double>(dutyCyclePercent) - 1.0);
