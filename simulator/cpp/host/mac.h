@@ -15,6 +15,16 @@ enum State {
     SLEEPING
 };
 
+enum MACSendResult : uint8_t {
+    MAC_SEND_OK = 0,
+    MAC_SEND_CHANNEL_BUSY_TIMEOUT = 1,
+    MAC_SEND_ALLOC_FAILED = 2,
+    MAC_SEND_TOO_LARGE = 3,
+    MAC_SEND_RADIO_ERROR = 4,
+    MAC_SEND_BUSY = 5,
+    MAC_SEND_DUTY_CYCLE = 6,
+};
+
 typedef struct __attribute__((packed)) {
     uint32_t crc32;
     uint16_t sender;
