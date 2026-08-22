@@ -73,7 +73,7 @@ def test_cpp_rf_start_waits_for_clear_cca_and_radio_setup_without_host_binary():
     net.run_events(expected_rx_ready - 1e-6)
 
 
-def test_cpp_receiver_is_not_ready_while_radiolib_reads_rx_buffer():
+def test_cpp_continuous_rx_stays_rf_ready_during_host_buffer_read():
     net = TimedSharedCppNetwork(seed=902, radio_contention=False)
     net.register_node(1, up=True)
     net.register_node(2, up=True)
@@ -102,12 +102,11 @@ def test_cpp_receiver_is_not_ready_while_radiolib_reads_rx_buffer():
     )
 
     expected_read_done = rf_end + rx_packet_read_ms(frame_bytes)
-    assert net._radio_rx_ready_at[2] == pytest.approx(expected_read_done)
-
-    # A new frame beginning before the read finishes cannot be accepted by the
-    # bounded C++ radio model even though its RF path is otherwise valid.
+    # SX1262 Rx Continuous mode automatically searches for the next packet
+    # after RX_DONE. Host SPI reading delays firmware processing, not RF RX.
+    assert net._radio_rx_ready_at[2] == pytest.approx(0.0)
     net.now = expected_read_done - 1e-6
-    assert not net.frame_start_valid(1, 2)
+    assert net.frame_start_valid(1, 2)
     net.now = expected_read_done
     assert net.frame_start_valid(1, 2)
 
