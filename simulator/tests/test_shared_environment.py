@@ -13,7 +13,13 @@ from shared_backends import SharedCppNetwork, SharedPythonNetwork
 
 
 def test_scenario_round_trip_preserves_environment_definition():
-    scenario = Scenario.line(3, seed=77, max_range=15.0, radio_contention=True)
+    scenario = Scenario.line(
+        3,
+        seed=77,
+        max_range=15.0,
+        radio_contention=True,
+        radio_profile="eu869-high-duty",
+    )
     scenario.trajectories[2] = [(0, 1, 0), (1000, 20, 0), (2000, 1, 0)]
     scenario.link_events.append(LinkStateEvent(500, 1, 2, False))
     scenario.link_events.append(LinkStateEvent(750, 1, 2, True))
@@ -21,6 +27,63 @@ def test_scenario_round_trip_preserves_environment_definition():
     scenario.node_events.append(NodeStateEvent(1800, 3, True))
     restored = Scenario.from_json(scenario.to_json())
     assert restored.to_json() == scenario.to_json()
+    assert restored.radio_profile == "eu869-high-duty"
+
+
+def test_named_radio_profiles_apply_expected_duty_policy():
+    eu868 = Scenario.line(1, seed=1, radio_profile="eu868").build(
+        "python", profile=Profile.intended()
+    )
+    eu869 = Scenario.line(1, seed=1, radio_profile="eu869-high-duty").build(
+        "python", profile=Profile.intended()
+    )
+    eu433 = Scenario.line(1, seed=1, radio_profile="eu433").build(
+        "python", profile=Profile.intended()
+    )
+    assert eu868.duty_cycle_percent == 1.0
+    assert eu869.duty_cycle_percent == 10.0
+    assert eu433.duty_cycle_percent == 10.0
+
+
+def test_eu868_total_duty_period_is_ten_times_high_duty_for_same_frame():
+    # Use the shared policy directly so protocol startup traffic cannot affect
+    # the measurement. The total period is airtime / duty_fraction; off-time
+    # alone is 99A vs 9A, so compare wait+airtime rather than only wait.
+    one = SharedPythonNetwork(
+        seed=1,
+        profile=Profile.intended(),
+        duty_cycle_percent=1.0,
+    )
+    ten = SharedPythonNetwork(
+        seed=1,
+        profile=Profile.intended(),
+        duty_cycle_percent=10.0,
+    )
+    for net in (one, ten):
+        net.register_node(1)
+        net.account_transmission(1, 0.0, 100.0)
+        net.now = 100.0
+
+    period_1pct = one.transmit_wait_ms(1) + 100.0
+    period_10pct = ten.transmit_wait_ms(1) + 100.0
+    assert period_1pct == pytest.approx(period_10pct * 10.0)
+    assert period_1pct == pytest.approx(10_000.0)
+    assert period_10pct == pytest.approx(1_000.0)
+
+
+def test_regulatory_tx_history_survives_environment_reboot():
+    net = SharedPythonNetwork(
+        seed=2,
+        profile=Profile.intended(),
+        duty_cycle_percent=10.0,
+    )
+    net.register_node(1)
+    net.account_transmission(1, 0.0, 100.0)
+    net.now = 250.0
+    before = net.transmit_wait_ms(1)
+    net.set_node_up(1, False, reason="test")
+    net.set_node_up(1, True, reason="test")
+    assert net.transmit_wait_ms(1) == pytest.approx(before)
 
 
 def test_python_backend_uses_shared_continuous_motion_kernel():
@@ -145,3 +208,18 @@ def test_same_failure_trace_has_identical_physical_epochs_in_both_backends():
         cpp_link_epoch = cpp_net.get_link(1, 2).epoch
         cpp_node_epoch = cpp_net.node_epoch[2]
     assert (py_link_epoch, py_node_epoch) == (cpp_link_epoch, cpp_node_epoch) == (2, 2)
+
+
+@pytest.mark.skipif(not CppNodeProcess.available(), reason="host C++ node not built")
+def test_cpp_route_incarnation_advances_on_reboot():
+    net = SharedCppNetwork(seed=88)
+    try:
+        net.add_node(1)
+        first = net._node_origin_sequence[1]
+        net.set_node_up(1, False, reason="test-reboot")
+        net.set_node_up(1, True, reason="test-reboot")
+        second = net._node_origin_sequence[1]
+        assert second != first
+        assert second == ((first + 1) & 0xFFFF or 1)
+    finally:
+        net.close()
