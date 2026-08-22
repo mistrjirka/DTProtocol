@@ -9,12 +9,20 @@ sys.path.insert(0, str(SIM_ROOT))
 
 from environment import EnvironmentKernel
 from radio_timing import (
+    CAD_SCAN_FIXED_SPI_BYTES,
     RADIOLIB6_DEFAULT_SPI_HZ,
+    RSSI_SPI_BYTES_PER_SAMPLE,
+    RX_READ_FIXED_SPI_BYTES,
+    RX_REARM_AFTER_READ_SPI_BYTES,
+    RX_REARM_AFTER_TX_SPI_BYTES,
     SX1262_STBY_RC_TO_RX_MS,
     SX1262_STBY_RC_TO_TX_MS,
+    TX_SETUP_FIXED_SPI_BYTES,
+    cad_scan_spi_overhead_ms,
     rssi_cca_duration_ms,
     rssi_sample_offsets_ms,
     rx_packet_read_ms,
+    rx_rearm_after_read_ms,
     rx_rearm_ms,
     spi_wire_time_ms,
     tx_startup_ms,
@@ -77,42 +85,57 @@ def test_radiolib6_default_spi_is_well_below_sx1262_limit():
     )
 
 
+def test_exact_radiolib6_transaction_byte_counts_are_pinned():
+    # These values are derived from tag 6.0.0 SX126x.cpp + Module.cpp with the
+    # default RADIOLIB_SPI_PARANOID verification enabled.
+    assert RSSI_SPI_BYTES_PER_SAMPLE == 8
+    assert TX_SETUP_FIXED_SPI_BYTES == 87
+    assert RX_READ_FIXED_SPI_BYTES == 61
+    assert RX_REARM_AFTER_TX_SPI_BYTES == 67
+    assert RX_REARM_AFTER_READ_SPI_BYTES == 56
+    assert CAD_SCAN_FIXED_SPI_BYTES == 63
+
+
 def test_production_rssi_cca_timing_is_three_samples_over_twenty_ms():
     offsets = rssi_sample_offsets_ms()
     assert len(offsets) == 3
-    assert offsets[0] > 0.0
-    assert offsets[1] - offsets[0] == pytest.approx(10.012, abs=1e-9)
-    assert offsets[2] - offsets[1] == pytest.approx(10.012, abs=1e-9)
-    assert rssi_cca_duration_ms() == pytest.approx(20.036, abs=1e-9)
+    assert offsets == pytest.approx((0.032, 10.064, 20.096), abs=1e-12)
+    assert rssi_cca_duration_ms() == pytest.approx(20.096, abs=1e-12)
 
 
-def test_tx_startup_includes_frame_sized_spi_transfer_and_radio_ramp():
-    # A full frame requires >1 ms just to clock the RadioLib command/buffer
-    # sequence at its default 2 MHz before the SX1262 PA transition completes.
-    full = tx_startup_ms(255)
-    short = tx_startup_ms(20)
-    assert full > 1.3
-    assert short > SX1262_STBY_RC_TO_TX_MS
-    assert full > short
-    assert full - short == pytest.approx(
+def test_tx_startup_matches_exact_radiolib6_sequence():
+    # MAC first issues SetStandby; RadioLib startTransmit then clocks the exact
+    # LoRa setup sequence and waits for STBY_RC -> TX BUSY to fall.
+    assert tx_startup_ms(20) == pytest.approx(0.554, abs=1e-12)
+    assert tx_startup_ms(255) == pytest.approx(1.494, abs=1e-12)
+    assert tx_startup_ms(255) - tx_startup_ms(20) == pytest.approx(
         spi_wire_time_ms(255 - 20), abs=1e-12
     )
+    assert tx_startup_ms(20) > SX1262_STBY_RC_TO_TX_MS
 
 
-def test_rx_buffer_read_scales_with_received_frame_size():
-    tiny = rx_packet_read_ms(11)
-    full = rx_packet_read_ms(255)
-    assert 0.09 < tiny < 0.12
-    assert 1.0 < full < 1.2
-    assert full > tiny
-    assert full - tiny == pytest.approx(
+def test_rx_done_to_lcmm_callback_matches_exact_radiolib6_sequence():
+    assert rx_packet_read_ms(11) == pytest.approx(0.288, abs=1e-12)
+    assert rx_packet_read_ms(255) == pytest.approx(1.264, abs=1e-12)
+    assert rx_packet_read_ms(255) - rx_packet_read_ms(11) == pytest.approx(
         spi_wire_time_ms(255 - 11), abs=1e-12
     )
 
 
-def test_rx_rearm_contains_spi_commands_and_physical_rx_transition():
-    assert rx_rearm_ms() > SX1262_STBY_RC_TO_RX_MS
-    assert 0.20 < rx_rearm_ms() < 0.35
+def test_rx_rearm_distinguishes_tx_done_from_rx_callback_return():
+    # TX_DONE executes finishTransmit() then startReceive().  RX_DONE where no
+    # immediate ACK/TX starts only needs startReceive() after the callback.
+    assert rx_rearm_ms() == pytest.approx(0.351, abs=1e-12)
+    assert rx_rearm_after_read_ms() == pytest.approx(0.307, abs=1e-12)
+    assert rx_rearm_ms() > rx_rearm_after_read_ms() > SX1262_STBY_RC_TO_RX_MS
+
+
+def test_optional_cad_has_252us_spi_overhead_around_correlation_window():
+    assert cad_scan_spi_overhead_ms() == pytest.approx(0.252, abs=1e-12)
+    env = EnvironmentKernel(sf=9, bandwidth_hz=125_000)
+    assert env.cad_duration_ms() + cad_scan_spi_overhead_ms() == pytest.approx(
+        18.684, abs=1e-9
+    )
 
 
 def test_default_link_delay_is_not_fake_radio_propagation():
