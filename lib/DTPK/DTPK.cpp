@@ -276,21 +276,36 @@ void DTPK::retrySequenceRequests()
             continue;
         }
 
-        if (pending.attempts >= SEQ_REQ_MAX_ATTEMPTS)
+        // If all contributions disappeared, the destination is no longer a
+        // feasibility-blocked known route. Stop repairing it. Otherwise retry
+        // until a sufficiently fresh generation is actually learned: a finite
+        // fire-and-forget burst is not a liveness guarantee on lossy RF.
+        if (route == nullptr &&
+            !_crystDatabase.hasKnownDestination(destination))
         {
             it = _pendingSeqRequests.erase(it);
             continue;
         }
 
+        uint32_t retryDelay = 0;
+        if (pending.attempts > 0)
+        {
+            const uint8_t shift = std::min<uint8_t>(
+                static_cast<uint8_t>(pending.attempts - 1u), 4u);
+            const uint32_t scaled = SEQ_REQ_RETRY_MIN_MS << shift;
+            retryDelay = std::min<uint32_t>(
+                scaled, SEQ_REQ_RETRY_MAX_MS);
+        }
         const bool due =
             pending.attempts == 0 ||
             static_cast<uint32_t>(_currentTime - pending.lastSent) >=
-                SEQ_REQ_COOLDOWN_MS;
+                retryDelay;
         if (due)
         {
             sendSeqRequest(destination, pending.requestedSequence);
             pending.lastSent = _currentTime;
-            ++pending.attempts;
+            if (pending.attempts < 0xffu)
+                ++pending.attempts;
         }
         ++it;
     }

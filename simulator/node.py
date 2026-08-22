@@ -30,8 +30,8 @@ class Node:
         self.neighbor_cryst_state: Dict[int, Tuple[int, int]] = {}
 
         self.seq_requests_seen: Set[Tuple[int, int, int, int]] = set()
-        self.seq_request_last: Dict[int, float] = {}
-        self.seq_request_max_seen: Dict[int, int] = {}
+        # destination -> (requested generation, number of emitted retries)
+        self.pending_seq_requests: Dict[int, Tuple[int, int]] = {}
 
         self.session_active = False
         self.session_seen: Set[int] = set()
@@ -58,8 +58,7 @@ class Node:
         self.route_version = 0
         self.neighbor_cryst_state.clear()
         self.seq_requests_seen.clear()
-        self.seq_request_last.clear()
-        self.seq_request_max_seen.clear()
+        self.pending_seq_requests.clear()
         self.session_active = False
         self.session_seen.clear()
         self.session_deadline = 0
@@ -522,23 +521,45 @@ class Node:
         if not self.profile.seqno_requests or dest == self.id:
             return
 
-        last = self.seq_request_last.get(dest, -1e30)
-        max_seen = self.seq_request_max_seen.get(dest, -1)
-        if (
-            requested_sequence <= max_seen
-            and self.sim.now - last < self.profile.seqno_request_cooldown_ms
-        ):
+        requested_sequence &= 0xFFFF
+        existing = self.pending_seq_requests.get(dest)
+        if existing is not None:
+            if not sequence_newer(requested_sequence, existing[0]):
+                return
+        self.pending_seq_requests[dest] = (requested_sequence, 0)
+        self._retry_sequence_request(dest, requested_sequence)
+
+    def _retry_sequence_request(
+        self, dest: int, requested_sequence: int
+    ) -> None:
+        if not self.up or self.crashed:
+            return
+        pending = self.pending_seq_requests.get(dest)
+        if pending is None or pending[0] != requested_sequence:
             return
 
-        self.seq_request_last[dest] = self.sim.now
-        self.seq_request_max_seen[dest] = max(max_seen, requested_sequence)
+        route = self.routes.get(dest)
+        if route is not None and not sequence_newer(
+            requested_sequence, route.sequence
+        ):
+            self.pending_seq_requests.pop(dest, None)
+            return
+
+        known = any(
+            dest in contribution
+            for contribution in self.routes_by_neighbor.values()
+        )
+        if route is None and not known:
+            self.pending_seq_requests.pop(dest, None)
+            return
+
         request = Packet(
             "SEQ_REQ",
             self.next_packet_id(),
             original_sender=self.id,
             final_target=dest,
             wire_dtpk_size=DTPK_SEQ_REQ_SIZE,
-            requested_sequence=requested_sequence & 0xFFFF,
+            requested_sequence=requested_sequence,
             hop_limit=self.profile.seqno_request_hop_limit,
         )
         key = (
@@ -554,8 +575,23 @@ class Node:
             node=self.id,
             dest=dest,
             requested=request.requested_sequence,
+            attempt=pending[1] + 1,
         )
         self.enqueue(TxRequest(request, None, lcmm_ack=False, priority=True))
+
+        attempts = min(pending[1] + 1, 255)
+        self.pending_seq_requests[dest] = (requested_sequence, attempts)
+        shift = min(max(attempts - 1, 0), 4)
+        delay = min(
+            self.profile.seqno_request_cooldown_ms * (1 << shift),
+            self.profile.seqno_request_max_cooldown_ms,
+        )
+        self.sim.schedule(
+            delay,
+            self._retry_sequence_request,
+            dest,
+            requested_sequence,
+        )
 
     def receive_seq_req(self, packet: Packet, previous_hop: int) -> None:
         self.sim.metrics.seq_req_rx += 1

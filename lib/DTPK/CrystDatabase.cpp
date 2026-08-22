@@ -10,6 +10,19 @@ RoutingRecord *CrystDatabase::getRouting(uint16_t id)
     return it == routeCache.end() ? nullptr : &it->second;
 }
 
+bool CrystDatabase::hasKnownDestination(uint16_t id) const
+{
+    for (const auto &neighborEntry : routesByNeighbor)
+    {
+        for (const Candidate &candidate : neighborEntry.second)
+        {
+            if (candidate.destination == id)
+                return true;
+        }
+    }
+    return false;
+}
+
 bool CrystDatabase::sequenceNewer(uint16_t a, uint16_t b)
 {
     if (a == b)

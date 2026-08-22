@@ -172,3 +172,31 @@ def test_data_replay_identity_includes_sender_incarnation_after_reboot():
     assert sim.metrics.duplicate_app == 0
     assert sim.metrics.e2e_success >= 2
     assert len(receiver.delivered_ids) == 2
+
+
+
+def test_lost_generation_repair_wave_is_retried_until_route_recovers():
+    """A reachable destination must not remain missing after five lost repairs."""
+    sim = Simulator(seed=20, profile=Profile.crystallized_v2())
+    add_nodes(sim, 6)
+    for a, b in ((1, 2), (2, 3), (2, 4), (3, 6), (4, 5), (4, 6)):
+        sim.add_link(
+            a,
+            b,
+            loss=0.05,
+            ack_loss=0.05,
+            latency_ms=0,
+            jitter_ms=5,
+        )
+
+    sim.run(300_000)
+    assert sim.audit()["correct"], sim.audit()
+
+    sim.set_link(4, 6, False)
+    sim.run(600_000)
+
+    # The old five-request burst left route 6 -> 4 missing forever for this
+    # deterministic loss trace. Persistent, backed-off repair converges.
+    assert sim.metrics.seq_req_satisfied >= 3
+    assert sim.audit()["correct"], sim.audit()
+    assert sim.nodes[6].routes[4].distance == 3

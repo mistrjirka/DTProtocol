@@ -21,6 +21,7 @@ public:
     explicit CrystDatabase(uint16_t id);
 
     RoutingRecord *getRouting(uint16_t id);
+    bool hasKnownDestination(uint16_t id) const;
 
     // A HELLO proves the direct neighbour alive. If `invalidateIndirect` is
     // true (new incarnation / no full-state knowledge), all old indirect

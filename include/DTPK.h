@@ -82,8 +82,8 @@ private:
     static constexpr uint32_t CRYST_JITTER_MIN_MS = 200;
     static constexpr uint32_t CRYST_JITTER_MAX_MS = 1500;
     static constexpr uint32_t CRYST_ASSEMBLY_EXPIRY_MS = 30000;
-    static constexpr uint32_t SEQ_REQ_COOLDOWN_MS = 5000;
-    static constexpr uint8_t SEQ_REQ_MAX_ATTEMPTS = 5;
+    static constexpr uint32_t SEQ_REQ_RETRY_MIN_MS = 5000;
+    static constexpr uint32_t SEQ_REQ_RETRY_MAX_MS = 60000;
     static constexpr uint16_t MAX_CRYST_CHUNKS = 256;
     static constexpr size_t RECENT_DATA_CACHE_SIZE = 64;
     static constexpr size_t RECENT_SEQ_REQ_CACHE_SIZE = 64;

@@ -202,6 +202,28 @@ void DTPK::sendCrystRequest(uint16_t neighbor)
 
 void DTPK::sendSeqRequest(uint16_t destination, uint16_t requestedSequence)
 {
+    for (DTPKPacketRequest &queued : _packetRequests)
+    {
+        if (!queued.packet || queued.packet->type != SEQ_REQ)
+            continue;
+        DTPKPacketSeqRequest *existing =
+            reinterpret_cast<DTPKPacketSeqRequest *>(queued.packet);
+        if (existing->destination != destination)
+            continue;
+        if (!sequenceNewer(requestedSequence, existing->requestedSequence))
+            return;
+
+        existing->id = nextPacketId();
+        existing->requestedSequence = requestedSequence == 0
+                                          ? 1
+                                          : requestedSequence;
+        rememberSeqRequest(
+            existing->originalSender,
+            existing->id,
+            existing->destination,
+            existing->requestedSequence);
+        return;
+    }
     DTPKPacketSeqRequest *packet =
         static_cast<DTPKPacketSeqRequest *>(malloc(sizeof(DTPKPacketSeqRequest)));
     if (!packet)

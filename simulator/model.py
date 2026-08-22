@@ -66,6 +66,7 @@ class Profile:
     state_digest_requests: bool = False
     seqno_requests: bool = False
     seqno_request_cooldown_ms: int = 5_000
+    seqno_request_max_cooldown_ms: int = 60_000
     seqno_request_hop_limit: int = 32
 
     @staticmethod
