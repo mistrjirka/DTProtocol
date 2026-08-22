@@ -63,9 +63,13 @@ void randomSeed(uint64_t seed);
 long random(long min_value, long max_value);
 long random(long max_value);
 
+// Host tests are single-threaded. These are no-ops that preserve the production
+// source contract for the very short ISR wake-flag critical section.
+inline void noInterrupts() {}
+inline void interrupts() {}
+
 int host_debug_printf(const char *fmt, ...);
 
 #ifdef HOST_SIM
-// Keep production debug output from corrupting the runner's line protocol.
 #define printf host_debug_printf
 #endif
