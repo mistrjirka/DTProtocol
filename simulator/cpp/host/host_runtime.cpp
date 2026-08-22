@@ -15,6 +15,8 @@ uint64_t g_now_ms = 0;
 std::mt19937_64 g_rng(1);
 std::deque<hostsim::TxFrame> g_tx_queue;
 uint64_t g_next_tx_token = 1;
+uint8_t g_next_send_result = MAC_SEND_OK;
+uint64_t g_send_wait_until_ms = 0;
 }
 
 uint32_t millis() {
@@ -56,13 +58,24 @@ void MAC::setRXAlienCallback(PacketReceivedCallback callback) {
 
 uint8_t MAC::sendData(uint16_t target, unsigned char *data,
                       uint8_t size, uint32_t) {
-    if (state_ == SENDING) return 5;
+    if (state_ == SENDING) return MAC_SEND_BUSY;
+
+    if (g_next_send_result != MAC_SEND_OK) {
+        const uint8_t result = g_next_send_result;
+        g_next_send_result = MAC_SEND_OK;
+        return result;
+    }
+
     active_tx_token_ = hostsim::enqueue_tx(target, data, size);
     state_ = SENDING;
-    return 0;
+    return MAC_SEND_OK;
 }
 
-uint32_t MAC::getTransmitWaitMs() const { return 0; }
+uint32_t MAC::getTransmitWaitMs() const {
+    if (g_send_wait_until_ms <= g_now_ms) return 0;
+    const uint64_t wait = g_send_wait_until_ms - g_now_ms;
+    return wait > 0xffffffffULL ? 0xffffffffu : static_cast<uint32_t>(wait);
+}
 
 void MAC::loop() {}
 
@@ -116,10 +129,17 @@ void reset(uint16_t, uint64_t seed) {
     g_rng.seed(seed);
     g_tx_queue.clear();
     g_next_tx_token = 1;
+    g_next_send_result = MAC_SEND_OK;
+    g_send_wait_until_ms = 0;
 }
 
 void set_time_ms(uint64_t now_ms) { g_now_ms = now_ms; }
 uint64_t time_ms() { return g_now_ms; }
+
+void set_next_send_result(uint8_t result, uint32_t wait_ms) {
+    g_next_send_result = result;
+    g_send_wait_until_ms = g_now_ms + wait_ms;
+}
 
 uint64_t enqueue_tx(uint16_t target, const unsigned char *data, uint8_t size) {
     TxFrame frame;
