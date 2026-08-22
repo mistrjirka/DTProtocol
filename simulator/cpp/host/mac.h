@@ -47,6 +47,7 @@ public:
     State getMode();
     uint16_t getId();
     void setTransmitDone(TransmitDone callback);
+    uint32_t getTransmitWaitMs() const;
 
     // Host-only entry points. The production protocol never calls these.
     bool hostInject(uint16_t sender, uint16_t target,
