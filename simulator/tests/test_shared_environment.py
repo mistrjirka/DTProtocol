@@ -30,16 +30,22 @@ def test_scenario_round_trip_preserves_environment_definition():
     assert restored.radio_profile == "eu869-high-duty"
 
 
-def test_named_radio_profiles_apply_expected_duty_policy():
-    eu868 = Scenario.line(1, seed=1, radio_profile="eu868").build(
-        "python", profile=Profile.intended()
-    )
-    eu869 = Scenario.line(1, seed=1, radio_profile="eu869-high-duty").build(
-        "python", profile=Profile.intended()
-    )
-    eu433 = Scenario.line(1, seed=1, radio_profile="eu433").build(
-        "python", profile=Profile.intended()
-    )
+def test_named_radio_profiles_do_not_impose_duty_policy_unless_strict():
+    for radio_profile in ("eu868", "eu869-high-duty", "eu433"):
+        practical = Scenario.line(1, seed=1, radio_profile=radio_profile).build(
+            "python", profile=Profile.intended()
+        )
+        assert practical.duty_cycle_percent == 0.0
+
+    eu868 = Scenario.line(
+        1, seed=1, radio_profile="eu868", strict_duty_cycle=True
+    ).build("python", profile=Profile.intended())
+    eu869 = Scenario.line(
+        1, seed=1, radio_profile="eu869-high-duty", strict_duty_cycle=True
+    ).build("python", profile=Profile.intended())
+    eu433 = Scenario.line(
+        1, seed=1, radio_profile="eu433", strict_duty_cycle=True
+    ).build("python", profile=Profile.intended())
     assert eu868.duty_cycle_percent == 1.0
     assert eu869.duty_cycle_percent == 10.0
     assert eu433.duty_cycle_percent == 10.0
