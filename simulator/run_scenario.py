@@ -30,9 +30,14 @@ def normalize_routes(routes: Dict[int, Dict[int, Tuple[int, int]]]):
 
 
 def run_one(scenario: Scenario, backend: str, duration_ms: float,
-            profile_name: str, binary: str | None):
+            profile_name: str, binary: str | None, tick_ms: float):
     profile = PROFILES[profile_name]() if backend == "python" else None
-    network = scenario.build(backend, profile=profile, binary=binary)
+    network = scenario.build(
+        backend,
+        profile=profile,
+        binary=binary,
+        tick_ms=tick_ms,
+    )
     try:
         network.run(duration_ms)
         routes = route_snapshot(network)
@@ -49,9 +54,15 @@ def run_one(scenario: Scenario, backend: str, duration_ms: float,
                 "rf_metrics": asdict(network.rf_metrics),
             },
         }
+        medium = getattr(network, "medium_metrics", None)
+        if medium is not None:
+            result["environment"]["medium_metrics"] = asdict(medium)
         metrics = getattr(network, "metrics", None)
         if metrics is not None:
             result["protocol_metrics"] = asdict(metrics)
+        audit = getattr(network, "audit", None)
+        if audit is not None:
+            result["audit"] = audit()
         return result
     finally:
         network.close()
@@ -85,6 +96,8 @@ def main() -> int:
     parser.add_argument("--profile", choices=tuple(PROFILES), default="current",
                         help="Python theoretical model profile")
     parser.add_argument("--cpp-binary", default=None)
+    parser.add_argument("--tick-ms", type=float, default=50.0,
+                        help="host C++ firmware loop tick period")
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
 
@@ -96,12 +109,24 @@ def main() -> int:
         )
 
     if args.backend == "python":
-        output = run_one(scenario, "python", args.duration_ms, args.profile, args.cpp_binary)
+        output = run_one(
+            scenario, "python", args.duration_ms, args.profile,
+            args.cpp_binary, args.tick_ms,
+        )
     elif args.backend == "cpp":
-        output = run_one(scenario, "cpp", args.duration_ms, args.profile, args.cpp_binary)
+        output = run_one(
+            scenario, "cpp", args.duration_ms, args.profile,
+            args.cpp_binary, args.tick_ms,
+        )
     else:
-        py = run_one(scenario, "python", args.duration_ms, args.profile, args.cpp_binary)
-        cpp = run_one(scenario, "cpp", args.duration_ms, args.profile, args.cpp_binary)
+        py = run_one(
+            scenario, "python", args.duration_ms, args.profile,
+            args.cpp_binary, args.tick_ms,
+        )
+        cpp = run_one(
+            scenario, "cpp", args.duration_ms, args.profile,
+            args.cpp_binary, args.tick_ms,
+        )
         output = {
             "scenario_seed": scenario.seed,
             "python": py,
