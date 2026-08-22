@@ -5,6 +5,7 @@
 #include <mac.h>
 #include <lcmm.h>
 #include "generalsettings.h"
+#include <array>
 #include <vector>
 #include <unordered_map>
 #include <algorithm>
@@ -16,10 +17,10 @@
 /**
  * DTPK routing layer.
  *
- * The original crystallization algorithm is intentionally preserved on the
- * protocol-v2 branch until the host-simulator baseline is clean. Implementation
- * fixes in this phase must not rely on crystallization-session behavior for
- * correctness.
+ * Phase 1 on protocol-v2 makes the current data plane mechanically trustworthy
+ * before replacing crystallization semantics. DATA is bounded by a hop limit
+ * and a fixed-size replay cache, while ACK/NACK/CRYST control traffic is never
+ * blocked by another end-to-end DATA wait.
  */
 
 typedef struct CrystTimeout
@@ -79,6 +80,20 @@ private:
     static void receivePacket(LCMMPacketDataReceive *packet, uint16_t size);
     static void receiveAck(uint16_t id, bool success);
 
+    struct PacketIdentity
+    {
+        uint16_t originalSender = 0;
+        uint16_t id = 0;
+        bool valid = false;
+    };
+
+    // Fixed-size replay cache avoids heap churn and naturally ages old 16-bit
+    // packet IDs before they can wrap around. It is intentionally DATA-only:
+    // duplicate end-to-end ACK/NACK packets are already harmless/idempotent.
+    static constexpr size_t RECENT_DATA_CACHE_SIZE = 64;
+    std::array<PacketIdentity, RECENT_DATA_CACHE_SIZE> _recentData{};
+    size_t _recentDataNext = 0;
+
     uint64_t _seed;
     uint32_t _timeOfInit;
     uint32_t _currentTime;
@@ -94,6 +109,9 @@ private:
     PacketReceivedCallback _recieveCallback;
     bool _waitingForAck;
     uint16_t _currentlySendingId;
+
+    bool hasSeenData(uint16_t originalSender, uint16_t id) const;
+    void rememberData(uint16_t originalSender, uint16_t id);
 
     DTPKPacketCryst *prepareCrystPacket(size_t *size);
     bool isPacketForMe(DTPKPacketUnknownReceive *packet, size_t size);
