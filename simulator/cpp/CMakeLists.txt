@@ -114,17 +114,13 @@ add_executable(dtprotocol_cryst_database_contract
 )
 target_compile_features(dtprotocol_cryst_database_contract PRIVATE cxx_std_17)
 set_target_properties(dtprotocol_cryst_database_contract PROPERTIES CXX_EXTENSIONS ON)
-target_include_directories(dtprotocol_cryst_database_contract BEFORE PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/host
-    ${REPO_ROOT}
+target_include_directories(dtprotocol_cryst_database_contract PRIVATE
     ${REPO_ROOT}/include
 )
 target_compile_options(dtprotocol_cryst_database_contract PRIVATE
     -UNDEBUG
-    -include${CMAKE_CURRENT_SOURCE_DIR}/host/mac.h
     -Wall -Wextra -Wconversion -Wno-unused-parameter
 )
-target_compile_definitions(dtprotocol_cryst_database_contract PRIVATE HOST_SIM=1)
 add_test(NAME crystallization_database_contract COMMAND dtprotocol_cryst_database_contract)
 
 # -----------------------------------------------------------------------------

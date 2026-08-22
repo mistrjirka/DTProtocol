@@ -41,19 +41,16 @@ void DTPK::controlDeamon()
         _maintenanceRemaining = static_cast<int32_t>(MAINTENANCE_PERIOD_MS);
     }
 
-    if (_crystTimeout.sendingPacket)
+    if (_crystRemaining >= 0)
     {
-        _crystTimeout.remainingTimeToSend =
-            elapsed >= static_cast<uint32_t>(
-                           std::max<int32_t>(
-                               _crystTimeout.remainingTimeToSend, 0))
+        _crystRemaining =
+            elapsed >= static_cast<uint32_t>(_crystRemaining)
                 ? 0
-                : _crystTimeout.remainingTimeToSend -
-                      static_cast<int32_t>(elapsed);
+                : _crystRemaining - static_cast<int32_t>(elapsed);
 
-        if (_crystTimeout.remainingTimeToSend <= 0)
+        if (_crystRemaining == 0)
         {
-            _crystTimeout.sendingPacket = false;
+            _crystRemaining = -1;
             queueCrystSnapshot();
         }
     }
@@ -133,12 +130,22 @@ uint16_t DTPK::sendPacket(
 
 void DTPK::receivePacket(LCMMPacketDataReceive *packet, uint32_t size)
 {
-    if (!packet || !DTPK::getInstance())
+    DTPK *self = DTPK::getInstance();
+    if (!packet || !self)
+    {
+        free(packet);
         return;
-    DTPK::getInstance()->_packetReceived.push(
-        std::make_pair(
-            reinterpret_cast<DTPKPacketUnknownReceive *>(packet),
-            static_cast<size_t>(size)));
+    }
+    if (size < sizeof(LCMMDataHeader) + sizeof(DTPKPacketUnknown))
+    {
+        free(packet);
+        return;
+    }
+
+    self->_packetReceived.push(
+        ReceivedPacket{
+            packet,
+            static_cast<size_t>(size - sizeof(LCMMDataHeader))});
 }
 
 void DTPK::receiveAck(uint16_t id, bool success)

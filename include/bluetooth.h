@@ -103,7 +103,7 @@ private:
 
     Bluetooth();  // Private constructor
     void handleConnection(bool connected);
-    void handleDTPKPacket(DTPKPacketGenericReceive* packet, uint16_t size);
+    void handleDTPKPacket(DTPKPacketGeneric* packet, uint16_t size);
     void periodicNeighborUpdate();
 };
 

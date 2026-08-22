@@ -109,8 +109,8 @@ int main() {
                     static_cast<uint16_t>(origin_sequence == 0 ? 1 : origin_sequence),
                     mobile_hint != 0);
                 DTPK::getInstance()->setPacketReceivedCallback(
-                    [](DTPKPacketGenericReceive *packet, uint16_t size) {
-                        const size_t header = sizeof(DTPKPacketGenericReceive);
+                    [](DTPKPacketGeneric *packet, uint16_t size) {
+                        const size_t header = sizeof(DTPKPacketGeneric);
                         const size_t payload_size = size > header ? size - header : 0;
                         std::cout << "APP_RX " << packet->originalSender << ' '
                                   << packet->finalTarget << ' ' << packet->id << ' '

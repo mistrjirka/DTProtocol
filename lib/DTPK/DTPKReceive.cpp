@@ -5,14 +5,14 @@
 #include <cstring>
 
 void DTPK::parseHelloPacket(
-    std::pair<DTPKPacketUnknownReceive *, size_t> packet)
+    const ReceivedPacket &packet)
 {
-    if (packet.second < sizeof(DTPKPacketHelloReceive))
+    if (packet.dtpkSize < sizeof(DTPKPacketHello))
         return;
 
-    DTPKPacketHelloReceive *hello =
-        reinterpret_cast<DTPKPacketHelloReceive *>(packet.first);
-    const uint16_t sender = hello->lcmm.mac.sender;
+    DTPKPacketHello *hello =
+        reinterpret_cast<DTPKPacketHello *>(packet.frame->data);
+    const uint16_t sender = packet.frame->mac.sender;
     noteHeard(sender);
 
     auto applied = _neighborState.find(sender);
@@ -53,25 +53,23 @@ void DTPK::parseHelloPacket(
 }
 
 void DTPK::parseCrystRequestPacket(
-    std::pair<DTPKPacketUnknownReceive *, size_t> packet)
+    const ReceivedPacket &packet)
 {
-    if (packet.second < sizeof(DTPKPacketCrystRequestReceive))
+    if (packet.dtpkSize < sizeof(DTPKPacketCrystRequest))
         return;
-    DTPKPacketCrystRequestReceive *request =
-        reinterpret_cast<DTPKPacketCrystRequestReceive *>(packet.first);
-    noteHeard(request->lcmm.mac.sender);
+    noteHeard(packet.frame->mac.sender);
     sendCrystPacket();
 }
 
 void DTPK::parseCrystPacket(
-    std::pair<DTPKPacketUnknownReceive *, size_t> packet)
+    const ReceivedPacket &packet)
 {
-    if (packet.second < sizeof(DTPKPacketCrystReceive))
+    if (packet.dtpkSize < sizeof(DTPKPacketCryst))
         return;
 
-    DTPKPacketCrystReceive *cryst =
-        reinterpret_cast<DTPKPacketCrystReceive *>(packet.first);
-    const uint16_t sender = cryst->lcmm.mac.sender;
+    DTPKPacketCryst *cryst =
+        reinterpret_cast<DTPKPacketCryst *>(packet.frame->data);
+    const uint16_t sender = packet.frame->mac.sender;
     noteHeard(sender);
 
     if (cryst->chunkCount == 0 ||
@@ -79,7 +77,7 @@ void DTPK::parseCrystPacket(
         cryst->chunkIndex >= cryst->chunkCount)
         return;
 
-    const size_t payloadBytes = packet.second - sizeof(DTPKPacketCrystReceive);
+    const size_t payloadBytes = packet.dtpkSize - sizeof(DTPKPacketCryst);
     if ((payloadBytes % sizeof(NeighborRecordV2)) != 0)
         return;
     const size_t recordCount = payloadBytes / sizeof(NeighborRecordV2);
@@ -158,14 +156,14 @@ void DTPK::parseCrystPacket(
 }
 
 void DTPK::parseSeqRequestPacket(
-    std::pair<DTPKPacketUnknownReceive *, size_t> packet)
+    const ReceivedPacket &packet)
 {
-    if (packet.second < sizeof(DTPKPacketSeqRequestReceive))
+    if (packet.dtpkSize < sizeof(DTPKPacketSeqRequest))
         return;
 
-    DTPKPacketSeqRequestReceive *request =
-        reinterpret_cast<DTPKPacketSeqRequestReceive *>(packet.first);
-    const uint16_t sender = request->lcmm.mac.sender;
+    DTPKPacketSeqRequest *request =
+        reinterpret_cast<DTPKPacketSeqRequest *>(packet.frame->data);
+    const uint16_t sender = packet.frame->mac.sender;
     noteHeard(sender);
 
     if (hasSeenSeqRequest(
@@ -228,13 +226,13 @@ void DTPK::parseSeqRequestPacket(
 }
 
 void DTPK::parseSingleDataPacket(
-    std::pair<DTPKPacketUnknownReceive *, size_t> packet)
+    const ReceivedPacket &packet)
 {
-    if (packet.second < sizeof(DTPKPacketGenericReceive))
+    if (packet.dtpkSize < sizeof(DTPKPacketGeneric))
         return;
 
-    DTPKPacketGenericReceive *data =
-        reinterpret_cast<DTPKPacketGenericReceive *>(packet.first);
+    DTPKPacketGeneric *data =
+        reinterpret_cast<DTPKPacketGeneric *>(packet.frame->data);
 
     const bool duplicate = hasSeenData(data->originalSender, data->id);
     if (!duplicate)
@@ -244,31 +242,30 @@ void DTPK::parseSingleDataPacket(
             _recieveCallback(
                 data,
                 static_cast<uint16_t>(
-                    std::min<size_t>(packet.second, UINT16_MAX)));
+                    std::min<size_t>(packet.dtpkSize, UINT16_MAX)));
     }
 
     if ((data->flags & DTPK_FLAG_E2E_ACK_REQUESTED) != 0)
         sendAckPacket(
             data->originalSender,
-            data->lcmm.mac.sender,
+            packet.frame->mac.sender,
             data->id);
 }
 
-bool DTPK::forwardRoutedPacket(
-    DTPKPacketUnknownReceive *packet, size_t size)
+bool DTPK::forwardRoutedPacket(const ReceivedPacket &packet)
 {
-    if (size < sizeof(DTPKPacketGenericReceive))
+    if (packet.dtpkSize < sizeof(DTPKPacketGeneric))
         return false;
 
-    DTPKPacketGenericReceive *generic =
-        reinterpret_cast<DTPKPacketGenericReceive *>(packet);
+    DTPKPacketGeneric *generic =
+        reinterpret_cast<DTPKPacketGeneric *>(packet.frame->data);
 
     if (generic->hopLimit <= 1)
     {
         if (generic->type == DATA_SINGLE)
             sendNackPacket(
                 generic->originalSender,
-                generic->lcmm.mac.sender,
+                packet.frame->mac.sender,
                 generic->id,
                 generic->finalTarget);
         return false;
@@ -280,7 +277,7 @@ bool DTPK::forwardRoutedPacket(
         if (generic->type == DATA_SINGLE)
             sendNackPacket(
                 generic->originalSender,
-                generic->lcmm.mac.sender,
+                packet.frame->mac.sender,
                 generic->id,
                 generic->finalTarget);
         return false;
@@ -290,14 +287,14 @@ bool DTPK::forwardRoutedPacket(
         hasSeenData(generic->originalSender, generic->id))
         return false;
 
-    const size_t outgoingSize = size - sizeof(LCMMDataHeader);
+    const size_t outgoingSize = packet.dtpkSize;
     if (outgoingSize < sizeof(DTPKPacketHeader) ||
         outgoingSize > DATASIZE_LCMM)
     {
         if (generic->type == DATA_SINGLE)
             sendNackPacket(
                 generic->originalSender,
-                generic->lcmm.mac.sender,
+                packet.frame->mac.sender,
                 generic->id,
                 generic->finalTarget);
         return false;
@@ -310,7 +307,7 @@ bool DTPK::forwardRoutedPacket(
 
     memcpy(
         forwarded,
-        reinterpret_cast<unsigned char *>(packet) + sizeof(LCMMDataHeader),
+        packet.frame->data,
         outgoingSize);
 
     DTPKPacketGeneric *out =
@@ -341,14 +338,17 @@ void DTPK::receivingDeamon()
     auto packet = _packetReceived.front();
     _packetReceived.pop();
 
-    DTPKPacketUnknownReceive *dtpk = packet.first;
-    if (!dtpk || packet.second < sizeof(DTPKPacketUnknownReceive))
+    DTPKPacketUnknown *dtpk =
+        packet.frame
+            ? reinterpret_cast<DTPKPacketUnknown *>(packet.frame->data)
+            : nullptr;
+    if (!dtpk || packet.dtpkSize < sizeof(DTPKPacketUnknown))
     {
-        free(dtpk);
+        free(packet.frame);
         return;
     }
 
-    noteHeard(dtpk->lcmm.mac.sender);
+    noteHeard(packet.frame->mac.sender);
 
     switch (dtpk->type)
     {
@@ -369,15 +369,15 @@ void DTPK::receivingDeamon()
     case ACK:
     case NACK_NOTFOUND:
     {
-        if (packet.second < sizeof(DTPKPacketGenericReceive))
+        if (packet.dtpkSize < sizeof(DTPKPacketGeneric))
             break;
 
-        DTPKPacketGenericReceive *generic =
-            reinterpret_cast<DTPKPacketGenericReceive *>(dtpk);
+        DTPKPacketGeneric *generic =
+            reinterpret_cast<DTPKPacketGeneric *>(dtpk);
 
         if (generic->finalTarget != MAC::getInstance()->getId())
         {
-            forwardRoutedPacket(dtpk, packet.second);
+            forwardRoutedPacket(packet);
             break;
         }
 
@@ -397,13 +397,6 @@ void DTPK::receivingDeamon()
                 waiting.success = success;
             }
         }
-
-        if (_waitingForAck &&
-            _currentlySendingId == generic->id)
-        {
-            _waitingForAck = false;
-            _currentlySendingId = 0;
-        }
         break;
     }
 
@@ -411,5 +404,5 @@ void DTPK::receivingDeamon()
         break;
     }
 
-    free(dtpk);
+    free(packet.frame);
 }

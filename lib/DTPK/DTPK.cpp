@@ -40,6 +40,14 @@ bool DTPK::isControlType(DTPKPacketType type)
            type == SEQ_REQ || type == ACK || type == NACK_NOTFOUND;
 }
 
+bool DTPK::hasOutstandingEndToEndAck() const
+{
+    return std::any_of(
+        _packetWaiting.begin(),
+        _packetWaiting.end(),
+        [](const DTPKPacketWaiting &waiting) { return !waiting.gotAck; });
+}
+
 uint32_t DTPK::effectiveHelloPeriodMs() const
 {
     uint32_t period = _mobileHint ? MOBILE_HELLO_PERIOD_MS : HELLO_PERIOD_MS;
@@ -68,12 +76,6 @@ DTPK::DTPK(uint16_t originSequence, bool mobileHint)
     _helloRemaining = static_cast<int32_t>(
         random(100, static_cast<long>(helloPeriod + 1u)));
     _maintenanceRemaining = static_cast<int32_t>(MAINTENANCE_PERIOD_MS);
-
-    _crystTimeout.sendingPacket = false;
-    _crystTimeout.remainingTimeToSend = 0;
-
-    _waitingForAck = false;
-    _currentlySendingId = 0;
 
     LCMM::initialize(DTPK::receivePacket, DTPK::receiveAck);
     MAC::getInstance()->setMode(RECEIVING, true);
@@ -348,7 +350,7 @@ void DTPK::sendingDeamon()
         const DTPKPacketType type = request.packet->type;
         if (request.timeLeftToSend > 0 ||
             LCMM::getInstance()->isSending() ||
-            (_waitingForAck && !isControlType(type)))
+            (hasOutstandingEndToEndAck() && !isControlType(type)))
             continue;
 
         const uint16_t lcmmId = LCMM::getInstance()->sendPacketSingle(
@@ -406,8 +408,6 @@ void DTPK::sendingDeamon()
             waiting.success = false;
             waiting.callback = request.callback;
             _packetWaiting.push_back(waiting);
-            _waitingForAck = true;
-            _currentlySendingId = waiting.id;
         }
 
         free(request.packet);

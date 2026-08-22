@@ -1,7 +1,7 @@
-#include <lcmm.h>
+#ifndef DTPK_DEFINITIONS_H
+#define DTPK_DEFINITIONS_H
 
-#ifndef DPTKDefinitions_H
-#define DPTKDefinitions_H
+#include <stdint.h>
 
 enum DTPKPacketType : uint8_t
 {
@@ -107,64 +107,5 @@ typedef struct __attribute__((packed))
     uint16_t requestedSequence;
     uint8_t hopLimit;
 } DTPKPacketSeqRequest;
-
-typedef struct __attribute__((packed))
-{
-    LCMMDataHeader lcmm;
-    DTPKPacketType type;
-    uint16_t id;
-    uint16_t originalSender;
-    uint16_t finalTarget;
-    uint8_t flags;
-    uint8_t hopLimit;
-    unsigned char data[];
-} DTPKPacketGenericReceive;
-
-typedef struct __attribute__((packed))
-{
-    LCMMDataHeader lcmm;
-    DTPKPacketType type;
-    uint16_t id;
-    uint16_t originSequence;
-    uint32_t routeVersion;
-    uint16_t chunkIndex;
-    uint16_t chunkCount;
-    NeighborRecordV2 neighbors[];
-} DTPKPacketCrystReceive;
-
-typedef struct __attribute__((packed))
-{
-    LCMMDataHeader lcmm;
-    DTPKPacketType type;
-    uint16_t id;
-    uint16_t originSequence;
-    uint32_t routeVersion;
-} DTPKPacketHelloReceive;
-
-typedef struct __attribute__((packed))
-{
-    LCMMDataHeader lcmm;
-    DTPKPacketType type;
-    uint16_t id;
-} DTPKPacketCrystRequestReceive;
-
-typedef struct __attribute__((packed))
-{
-    LCMMDataHeader lcmm;
-    DTPKPacketType type;
-    uint16_t id;
-    uint16_t originalSender;
-    uint16_t destination;
-    uint16_t requestedSequence;
-    uint8_t hopLimit;
-} DTPKPacketSeqRequestReceive;
-
-typedef struct __attribute__((packed))
-{
-    LCMMDataHeader lcmm;
-    DTPKPacketType type;
-    uint16_t id;
-    unsigned char data[];
-} DTPKPacketUnknownReceive;
 
 #endif

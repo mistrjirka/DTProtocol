@@ -5,10 +5,10 @@
 Bluetooth* Bluetooth::instance = nullptr;
 
 // DTPK callback handler
-void dtpkPacketReceived(DTPKPacketGenericReceive* packet, uint16_t size) {
+void dtpkPacketReceived(DTPKPacketGeneric* packet, uint16_t size) {
     // Forward received packet to BLE client
     if (Bluetooth::getInstance()->deviceIsConnected()) {
-        Bluetooth::getInstance()->sendInboundMessage(packet->originalSender, (const char*)packet->data, size - sizeof(DTPKPacketGenericReceive));
+        Bluetooth::getInstance()->sendInboundMessage(packet->originalSender, (const char*)packet->data, size - sizeof(DTPKPacketGeneric));
     }
 }
 

@@ -14,17 +14,13 @@
 #include <DTPKDefinitions.h>
 #include <CrystDatabase.h>
 
-struct CrystTimeout
-{
-    bool sendingPacket;
-    int32_t remainingTimeToSend;
-};
-
 class DTPK
 {
 public:
+    // The callback receives only the DTPK payload. The LCMM/MAC transport
+    // prefix is intentionally hidden from applications.
     using PacketReceivedCallback =
-        std::function<void(DTPKPacketGenericReceive *packet, uint16_t size)>;
+        std::function<void(DTPKPacketGeneric *packet, uint16_t size)>;
     using PacketAckCallback =
         std::function<void(uint8_t result, uint16_t ping)>;
 
@@ -138,6 +134,12 @@ private:
         uint8_t attempts = 0;
     };
 
+    struct ReceivedPacket
+    {
+        LCMMPacketDataReceive *frame = nullptr;
+        size_t dtpkSize = 0;
+    };
+
     std::array<PacketIdentity, RECENT_DATA_CACHE_SIZE> _recentData{};
     size_t _recentDataNext = 0;
     std::array<SeqRequestIdentity, RECENT_SEQ_REQ_CACHE_SIZE> _recentSeqRequests{};
@@ -154,12 +156,11 @@ private:
 
     std::vector<DTPKPacketRequest> _packetRequests;
     std::vector<DTPKPacketWaiting> _packetWaiting;
-    std::queue<std::pair<DTPKPacketUnknownReceive *, size_t>> _packetReceived;
+    std::queue<ReceivedPacket> _packetReceived;
     CrystDatabase _crystDatabase;
-    CrystTimeout _crystTimeout;
+    // Negative means no CRYST snapshot is scheduled.
+    int32_t _crystRemaining = -1;
     PacketReceivedCallback _recieveCallback;
-    bool _waitingForAck;
-    uint16_t _currentlySendingId;
 
     std::unordered_map<uint16_t, uint32_t> _lastHeard;
     std::unordered_map<uint16_t, uint32_t> _lastLivenessProbe;
@@ -182,6 +183,7 @@ private:
     static bool sequenceNewer(uint16_t a, uint16_t b);
     static bool versionNewer(uint32_t a, uint32_t b);
     static bool isControlType(DTPKPacketType type);
+    bool hasOutstandingEndToEndAck() const;
     uint16_t nextPacketId();
     uint32_t effectiveHelloPeriodMs() const;
 
@@ -211,12 +213,12 @@ private:
                         uint16_t failedDestination);
     void sendAckPacket(uint16_t target, uint16_t from, uint16_t id);
 
-    void parseCrystPacket(std::pair<DTPKPacketUnknownReceive *, size_t> packet);
-    void parseHelloPacket(std::pair<DTPKPacketUnknownReceive *, size_t> packet);
-    void parseCrystRequestPacket(std::pair<DTPKPacketUnknownReceive *, size_t> packet);
-    void parseSeqRequestPacket(std::pair<DTPKPacketUnknownReceive *, size_t> packet);
-    void parseSingleDataPacket(std::pair<DTPKPacketUnknownReceive *, size_t> packet);
-    bool forwardRoutedPacket(DTPKPacketUnknownReceive *packet, size_t size);
+    void parseCrystPacket(const ReceivedPacket &packet);
+    void parseHelloPacket(const ReceivedPacket &packet);
+    void parseCrystRequestPacket(const ReceivedPacket &packet);
+    void parseSeqRequestPacket(const ReceivedPacket &packet);
+    void parseSingleDataPacket(const ReceivedPacket &packet);
+    bool forwardRoutedPacket(const ReceivedPacket &packet);
 
     void receivingDeamon();
     void sendingDeamon();

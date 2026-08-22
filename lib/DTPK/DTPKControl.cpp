@@ -49,21 +49,14 @@ void DTPK::timeoutDeamon()
     for (auto it = remove.rbegin(); it != remove.rend(); ++it)
         _packetWaiting.erase(_packetWaiting.begin() + static_cast<long>(*it));
 
-    if (_packetWaiting.empty())
-    {
-        _waitingForAck = false;
-        _currentlySendingId = 0;
-    }
 }
 
 void DTPK::sendCrystPacket()
 {
-    if (_crystTimeout.sendingPacket)
+    if (_crystRemaining >= 0)
         return;
 
-    _crystTimeout.sendingPacket = true;
-    _crystTimeout.remainingTimeToSend =
-        static_cast<int32_t>(random(
+    _crystRemaining = static_cast<int32_t>(random(
             static_cast<long>(CRYST_JITTER_MIN_MS),
             static_cast<long>(CRYST_JITTER_MAX_MS + 1u)));
 }
