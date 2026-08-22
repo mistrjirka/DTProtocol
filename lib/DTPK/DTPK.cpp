@@ -44,6 +44,29 @@ void DTPK::setPacketReceivedCallback(DTPK::PacketReceivedCallback callback)
   this->_recieveCallback = callback;
 }
 
+bool DTPK::hasSeenData(uint16_t originalSender, uint16_t id) const
+{
+  for (const PacketIdentity &entry : this->_recentData)
+  {
+    if (entry.valid && entry.originalSender == originalSender && entry.id == id)
+      return true;
+  }
+  return false;
+}
+
+void DTPK::rememberData(uint16_t originalSender, uint16_t id)
+{
+  if (this->hasSeenData(originalSender, id))
+    return;
+
+  PacketIdentity &entry = this->_recentData[this->_recentDataNext];
+  entry.originalSender = originalSender;
+  entry.id = id;
+  entry.valid = true;
+  this->_recentDataNext =
+      (this->_recentDataNext + 1) % RECENT_DATA_CACHE_SIZE;
+}
+
 void DTPK::sendingDeamon()
 {
   if (this->_packetRequests.empty())
@@ -64,7 +87,8 @@ void DTPK::sendingDeamon()
     }
 
     const DTPKPacketType type = request.packet->type;
-    const bool controlPacket = type == ACK || type == NACK_NOTFOUND || type == CRYST;
+    const bool controlPacket =
+        type == ACK || type == NACK_NOTFOUND || type == CRYST;
 
     if (request.timeLeftToSend > 0 ||
         LCMM::getInstance()->isSending() ||
@@ -93,8 +117,6 @@ void DTPK::sendingDeamon()
         request.timeout > 0 ? (uint32_t)(request.timeout / 3) : 1,
         3);
 
-    // LCMM returns zero when it could not accept the packet. Keep the request
-    // queued and try again instead of reporting a transmission that never ran.
     if (lcmmId == 0)
       return;
 
@@ -141,7 +163,8 @@ void DTPK::timeoutDeamon()
       if (waiting.callback)
       {
         const uint16_t ping = waiting.success
-            ? (uint16_t)(waiting.timeout - (uint32_t)std::max<int32_t>(waiting.timeLeft, 0))
+            ? (uint16_t)(waiting.timeout -
+                         (uint32_t)std::max<int32_t>(waiting.timeLeft, 0))
             : 0;
         waiting.callback(waiting.success ? 1 : 0, ping);
       }
@@ -191,9 +214,7 @@ void DTPK::timeoutDeamon()
   }
 
   for (auto it = toDelete.rbegin(); it != toDelete.rend(); ++it)
-  {
     this->_packetWaiting.erase(this->_packetWaiting.begin() + *it);
-  }
 }
 
 void DTPK::parseCrystPacket(pair<DTPKPacketUnknownReceive *, size_t> packet)
@@ -234,13 +255,26 @@ void DTPK::parseSingleDataPacket(pair<DTPKPacketUnknownReceive *, size_t> packet
     return;
   }
 
-  if (this->_recieveCallback)
-    this->_recieveCallback(dataPacket, (uint16_t)packet.second);
+  const bool duplicate =
+      this->hasSeenData(dataPacket->originalSender, dataPacket->id);
 
-  this->sendAckPacket(
-      dataPacket->originalSender,
-      dataPacket->lcmm.mac.sender,
-      dataPacket->id);
+  if (!duplicate)
+  {
+    this->rememberData(dataPacket->originalSender, dataPacket->id);
+    if (this->_recieveCallback)
+      this->_recieveCallback(dataPacket, (uint16_t)packet.second);
+  }
+
+  // A retransmission caused by a lost lower-layer ACK must not be delivered to
+  // the application twice, but the end-to-end ACK is intentionally repeated so
+  // its source can still complete after losing the previous response.
+  if ((dataPacket->flags & DTPK_FLAG_E2E_ACK_REQUESTED) != 0)
+  {
+    this->sendAckPacket(
+        dataPacket->originalSender,
+        dataPacket->lcmm.mac.sender,
+        dataPacket->id);
+  }
 }
 
 bool DTPK::isPacketForMe(DTPKPacketUnknownReceive *packet, size_t size)
@@ -260,26 +294,55 @@ bool DTPK::isPacketForMe(DTPKPacketUnknownReceive *packet, size_t size)
   if (genericPacket->finalTarget == MAC::getInstance()->getId())
     return true;
 
+  // A routed packet may arrive with hopLimit==1, but it may not be forwarded
+  // again. DATA gets a useful NACK; ACK/NACK simply expire.
+  if (genericPacket->hopLimit <= 1)
+  {
+    if (genericPacket->type == DATA_SINGLE)
+    {
+      this->sendNackPacket(
+          genericPacket->originalSender,
+          packet->lcmm.mac.sender,
+          genericPacket->id);
+    }
+    return false;
+  }
+
   RoutingRecord *routing =
       this->_crystDatabase.getRouting(genericPacket->finalTarget);
 
   if (routing == nullptr)
   {
-    this->sendNackPacket(
-        genericPacket->originalSender,
-        packet->lcmm.mac.sender,
-        genericPacket->id);
+    if (genericPacket->type == DATA_SINGLE)
+    {
+      this->sendNackPacket(
+          genericPacket->originalSender,
+          packet->lcmm.mac.sender,
+          genericPacket->id);
+    }
+    return false;
+  }
+
+  // Link-level retry can present the same DATA to DTPK more than once. The LCMM
+  // ACK has already been sent, so an intermediate node can safely drop the
+  // duplicate here rather than forwarding it twice.
+  if (genericPacket->type == DATA_SINGLE &&
+      this->hasSeenData(genericPacket->originalSender, genericPacket->id))
+  {
     return false;
   }
 
   const size_t sizeOfPacketToSend = size - sizeof(LCMMDataHeader);
-  if (sizeOfPacketToSend < sizeof(DTPKPacketUnknown) ||
+  if (sizeOfPacketToSend < sizeof(DTPKPacketHeader) ||
       sizeOfPacketToSend > DATASIZE_LCMM)
   {
-    this->sendNackPacket(
-        genericPacket->originalSender,
-        packet->lcmm.mac.sender,
-        genericPacket->id);
+    if (genericPacket->type == DATA_SINGLE)
+    {
+      this->sendNackPacket(
+          genericPacket->originalSender,
+          packet->lcmm.mac.sender,
+          genericPacket->id);
+    }
     return false;
   }
 
@@ -288,15 +351,17 @@ bool DTPK::isPacketForMe(DTPKPacketUnknownReceive *packet, size_t size)
   if (!forwarded)
     return false;
 
-  // Strip exactly one LCMM header. Do not reconstruct/copy a different size:
-  // the DTPK bytes must remain identical across hops.
   memcpy(
       forwarded,
       ((unsigned char *)packet) + sizeof(LCMMDataHeader),
       sizeOfPacketToSend);
 
-  // Every routed hop uses LCMM reliability. The previous implementation only
-  // protected the first hop, which made multi-hop success collapse quickly.
+  DTPKPacketGeneric *forwardedGeneric = (DTPKPacketGeneric *)forwarded;
+  --forwardedGeneric->hopLimit;
+
+  if (genericPacket->type == DATA_SINGLE)
+    this->rememberData(genericPacket->originalSender, genericPacket->id);
+
   this->addPacketToSendingQueue(
       forwarded,
       sizeOfPacketToSend,
@@ -368,8 +433,6 @@ void DTPK::receivingDeamon()
     break;
   }
 
-  // The LCMM->DTPK callback transfers ownership of the received allocation.
-  // Application callbacks are synchronous, so it is safe to release here.
   free(dtpkPacket);
 }
 
@@ -386,8 +449,7 @@ void DTPK::crystDeamon()
   {
     if (this->_crystTimeout.remainingTimeToSend == -1)
     {
-      // A CRYST packet is already queued and will clear sendingPacket when it
-      // is handed to LCMM.
+      // A CRYST is already queued and clears sendingPacket when handed to LCMM.
     }
     else if (this->_crystTimeout.remainingTimeToSend <= 0)
     {
@@ -551,8 +613,9 @@ void DTPK::sendNackPacket(uint16_t target, uint16_t from, uint16_t id)
   packet->originalSender = MAC::getInstance()->getId();
   packet->finalTarget = target;
   packet->id = id;
+  packet->flags = DTPK_FLAG_NONE;
+  packet->hopLimit = DTPK_DEFAULT_HOP_LIMIT;
 
-  // First reverse hop is always the node that forwarded the failed packet.
   this->addPacketToSendingQueue(
       (DTPKPacketUnknown *)packet,
       sizeof(DTPKPacketHeader),
@@ -574,9 +637,9 @@ void DTPK::sendAckPacket(uint16_t target, uint16_t from, uint16_t id)
   packet->originalSender = MAC::getInstance()->getId();
   packet->finalTarget = target;
   packet->id = id;
+  packet->flags = DTPK_FLAG_NONE;
+  packet->hopLimit = DTPK_DEFAULT_HOP_LIMIT;
 
-  // Do not require a pre-existing reverse route at the destination. Sending to
-  // the previous hop is both sufficient and necessary during initial discovery.
   this->addPacketToSendingQueue(
       (DTPKPacketUnknown *)packet,
       sizeof(DTPKPacketHeader),
@@ -624,8 +687,13 @@ uint16_t DTPK::sendPacket(
   dtpkPacket->id = this->_packetCounter++;
   dtpkPacket->type = DATA_SINGLE;
   dtpkPacket->finalTarget = target;
+  dtpkPacket->flags = dtpkAck ? DTPK_FLAG_E2E_ACK_REQUESTED : DTPK_FLAG_NONE;
+  dtpkPacket->hopLimit = DTPK_DEFAULT_HOP_LIMIT;
   if (size > 0)
     memcpy(dtpkPacket->data, packet, size);
+
+  const uint16_t id = dtpkPacket->id;
+  this->rememberData(dtpkPacket->originalSender, id);
 
   this->addPacketToSendingQueue(
       (DTPKPacketUnknown *)dtpkPacket,
@@ -637,7 +705,7 @@ uint16_t DTPK::sendPacket(
       dtpkAck,
       callback);
 
-  return dtpkPacket->id;
+  return id;
 }
 
 void DTPK::receivePacket(LCMMPacketDataReceive *packet, uint16_t size)
@@ -652,8 +720,6 @@ void DTPK::receivePacket(LCMMPacketDataReceive *packet, uint16_t size)
 
 void DTPK::receiveAck(uint16_t id, bool success)
 {
-  // This callback reports hop-level LCMM completion. End-to-end completion is
-  // represented by DTPK ACK/NACK packets and is handled in receivingDeamon().
   (void)id;
   (void)success;
 }
