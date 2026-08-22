@@ -1,5 +1,9 @@
 #include "include/lcmm.h"
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
 LCMM *LCMM::lcmm = nullptr;
 uint16_t LCMM::packetId = 1;
 LCMM::ACKWaitingSingle LCMM::ackWaitingSingle;
@@ -9,6 +13,22 @@ LCMMPacketDataReceive *LCMM::afterCallbackSent_packet = nullptr;
 uint16_t LCMM::afterCallbackSent_size = 0;
 uint16_t LCMM::noAckId = 0;
 LCMM::AcknowledgmentCallback LCMM::noAckAcknowledgmentCallback = nullptr;
+
+namespace
+{
+bool transientMacFailure(uint8_t result)
+{
+  return result == MAC_SEND_BUSY ||
+         result == MAC_SEND_CHANNEL_BUSY_TIMEOUT ||
+         result == MAC_SEND_DUTY_CYCLE;
+}
+
+int clampTimeoutToInt(uint64_t value)
+{
+  const uint64_t limit = static_cast<uint64_t>(std::numeric_limits<int>::max());
+  return static_cast<int>(std::min(value, limit));
+}
+} // namespace
 
 void dummyFunction()
 {
@@ -109,7 +129,7 @@ void LCMM::handleDataACK(LCMMPacketDataReceive *packet, uint16_t size)
 
   free(response);
 
-  if (result != 0)
+  if (result != MAC_SEND_OK)
   {
     MAC::getInstance()->setTransmitDone(dummyFunction);
     LCMM::afterCallbackSent_packet = nullptr;
@@ -157,7 +177,7 @@ bool LCMM::timeoutHandler()
   {
     const uint32_t currTime = millis();
     const uint32_t elapsed = currTime - LCMM::getInstance()->lastTick;
-    LCMM::ackWaitingSingle.timeLeft -= (int)elapsed;
+    LCMM::ackWaitingSingle.timeLeft -= static_cast<int>(elapsed);
 
     if (LCMM::ackWaitingSingle.timeLeft <= 0)
     {
@@ -173,25 +193,34 @@ bool LCMM::timeoutHandler()
       const uint8_t result = MAC::getInstance()->sendData(
           LCMM::ackWaitingSingle.target,
           (unsigned char *)LCMM::ackWaitingSingle.packet,
-          sizeof(LCMMPacketData) + LCMM::ackWaitingSingle.size,
-          LCMM::ackWaitingSingle.timeout);
+          static_cast<uint8_t>(sizeof(LCMMPacketData) + LCMM::ackWaitingSingle.size),
+          static_cast<uint32_t>(LCMM::ackWaitingSingle.timeout));
       const uint32_t timeAfterSending = millis();
+      LCMM::getInstance()->lastSendResult = result;
 
-      if (result == 0)
+      if (result == MAC_SEND_OK)
       {
         LCMM::ackWaitingSingle.timeLeft =
             LCMM::ackWaitingSingle.timeout +
-            (int)(timeBeforeSending - timeAfterSending);
+            static_cast<int>(timeBeforeSending - timeAfterSending);
       }
-      else
+      else if (transientMacFailure(result))
       {
-        // MAC policy denial (carrier backoff / duty cycle) means no RF attempt
-        // happened. Restore the reliability attempt and wake when MAC says the
-        // next send can actually be tried rather than spinning every loop.
+        // No RF attempt happened. Restore the reliability attempt and wake when
+        // the MAC policy permits a real retry instead of consuming retry budget.
         LCMM::ackWaitingSingle.attemptsLeft++;
         const uint32_t macWait = MAC::getInstance()->getTransmitWaitMs();
         LCMM::ackWaitingSingle.timeLeft =
-            macWait > 0 ? (int)macWait : 1;
+            macWait > 0 ? clampTimeoutToInt(macWait) : 1;
+      }
+      else
+      {
+        // Allocation/config/radio errors are not carrier contention. Retrying
+        // forever hides a real hardware fault and can permanently wedge LCMM.
+        if (LCMM::ackWaitingSingle.callback)
+          LCMM::ackWaitingSingle.callback(LCMM::ackWaitingSingle.id, false);
+        LCMM::getInstance()->clearSendingPacket();
+        return false;
       }
     }
     LCMM::getInstance()->lastTick = currTime;
@@ -215,6 +244,7 @@ LCMM::LCMM(DataReceivedCallback dataReceived,
   this->transmissionComplete = transmissionComplete;
   this->lastTick = millis();
   this->packetSendStart = millis();
+  this->lastSendResult = MAC_SEND_OK;
 }
 
 LCMM::~LCMM()
@@ -251,7 +281,26 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
                                 uint32_t timeout, uint8_t attempts)
 {
   if (LCMM::sending || LCMM::waitingForACKSingle)
+  {
+    this->lastSendResult = MAC_SEND_BUSY;
     return 0;
+  }
+
+  // Avoid packet allocation/churn while the MAC already knows it cannot send.
+  if (MAC::getInstance()->getTransmitWaitMs() > 0)
+  {
+    this->lastSendResult = MAC_SEND_CHANNEL_BUSY_TIMEOUT;
+    return 0;
+  }
+
+  const size_t macPayloadBytes = sizeof(LCMMPacketData) + static_cast<size_t>(size);
+  if (macPayloadBytes > DATASIZE_MAC || macPayloadBytes > UINT8_MAX)
+  {
+    this->lastSendResult = MAC_SEND_TOO_LARGE;
+    if (callback)
+      callback(0, false);
+    return 0;
+  }
 
   this->packetSendStart = millis();
 
@@ -259,6 +308,7 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
       (LCMMPacketData *)malloc(sizeof(LCMMPacketData) + size);
   if (!packet)
   {
+    this->lastSendResult = MAC_SEND_ALLOC_FAILED;
     if (callback)
       callback(0, false);
     return 0;
@@ -286,11 +336,12 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
   const uint8_t result = MAC::getInstance()->sendData(
       target,
       (unsigned char *)packet,
-      sizeof(LCMMPacketData) + size,
+      static_cast<uint8_t>(macPayloadBytes),
       timeout);
   const uint32_t timeAfterSending = millis();
+  this->lastSendResult = result;
 
-  if (result != 0)
+  if (result != MAC_SEND_OK)
   {
     if (!needACK)
     {
@@ -299,7 +350,10 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
     }
     LCMM::sending = false;
     free(packet);
-    if (callback)
+
+    // Policy denial is not a failed RF attempt. The owner still has the DTPK
+    // bytes and can retry after getTransmitWaitMs(). Fatal errors are surfaced.
+    if (!transientMacFailure(result) && callback)
       callback(outgoingId, false);
     return 0;
   }
@@ -327,14 +381,34 @@ LCMM::ACKWaitingSingle LCMM::prepareAckWaitingSingle(
 {
   ACKWaitingSingle callbackStruct;
   callbackStruct.callback = callback;
-  callbackStruct.timeout =
-      timeout + MathExtension.timeOnAir(size + MAC_OVERHEAD, 8, 9, 125, 7);
+
+  // MAC actually transmits MAC header + LCMM header + DTPK payload. The old
+  // calculation omitted sizeof(LCMMPacketData), underestimating TX completion
+  // by up to a complete LoRa symbol group.
+  const uint16_t fullFrameBytes = static_cast<uint16_t>(
+      MAC_OVERHEAD + sizeof(LCMMPacketData) + static_cast<size_t>(size));
+  const float airtimeFloat = MathExtension.timeOnAir(
+      fullFrameBytes, 8, 9, 125.0f, 7);
+  const uint32_t airtimeMs =
+      airtimeFloat > 0.0f && std::isfinite(airtimeFloat)
+          ? static_cast<uint32_t>(std::ceil(airtimeFloat))
+          : 0u;
+
+  const uint64_t timeoutWithAirtime =
+      static_cast<uint64_t>(timeout) + airtimeMs;
+  callbackStruct.timeout = clampTimeoutToInt(timeoutWithAirtime);
   callbackStruct.id = packet->id;
   callbackStruct.packet = packet;
   callbackStruct.attemptsLeft = attemptsLeft;
+
+  const int64_t elapsedInsideSend =
+      static_cast<int64_t>(timeAfterSending) - static_cast<int64_t>(timeBeforeSending);
+  const int64_t initialTime =
+      static_cast<int64_t>(timeout) + static_cast<int64_t>(airtimeMs) - elapsedInsideSend;
   callbackStruct.timeLeft =
-      timeout + timeBeforeSending - timeAfterSending +
-      (int)MathExtension.timeOnAir(size + MAC_OVERHEAD, 8, 9, 125, 7);
+      initialTime <= 1
+          ? 1
+          : clampTimeoutToInt(static_cast<uint64_t>(initialTime));
   callbackStruct.target = target;
   callbackStruct.size = size;
   return callbackStruct;
