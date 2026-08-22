@@ -16,26 +16,36 @@ void dummyFunction()
 
 void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
 {
-  if (crc != packet->crc32 || size <= 0)
+  if (!packet)
+    return;
+
+  if (crc != packet->crc32 || size < sizeof(MACHeader) + sizeof(uint8_t))
   {
     free(packet);
     return;
   }
 
-  uint8_t type = ((LCMMPacketUknownTypeReceive *)packet)->type;
+  const uint8_t type = ((LCMMPacketUknownTypeReceive *)packet)->type;
 
   switch (type)
   {
   case PACKET_TYPE_DATA_NOACK:
-    LCMM::getInstance()->handleDataNoACK((LCMMPacketDataReceive *)packet, size);
+    if (size >= sizeof(LCMMPacketDataReceive))
+      LCMM::getInstance()->handleDataNoACK((LCMMPacketDataReceive *)packet, size);
+    else
+      free(packet);
     break;
 
   case PACKET_TYPE_DATA_ACK:
-    LCMM::getInstance()->handleDataACK((LCMMPacketDataReceive *)packet, size);
+    if (size >= sizeof(LCMMPacketDataReceive))
+      LCMM::getInstance()->handleDataACK((LCMMPacketDataReceive *)packet, size);
+    else
+      free(packet);
     break;
 
   case PACKET_TYPE_ACK:
-    LCMM::getInstance()->handleACK((LCMMPacketResponseReceive *)packet, size);
+    if (size >= sizeof(LCMMPacketResponseReceive) + sizeof(uint16_t))
+      LCMM::getInstance()->handleACK((LCMMPacketResponseReceive *)packet, size);
     free(packet);
     break;
 
@@ -48,9 +58,8 @@ void LCMM::ReceivePacket(MACPacket *packet, uint16_t size, uint32_t crc)
 void LCMM::clearSendingPacket()
 {
   if (LCMM::ackWaitingSingle.packet != NULL)
-  {
     free(LCMM::ackWaitingSingle.packet);
-  }
+
   LCMM::ackWaitingSingle.packet = NULL;
   LCMM::ackWaitingSingle.callback = NULL;
   LCMM::waitingForACKSingle = false;
@@ -65,14 +74,13 @@ void LCMM::handleDataNoACK(LCMMPacketDataReceive *packet, uint16_t size)
 void LCMM::afterCallbackSent()
 {
   LCMMPacketDataReceive *packet = LCMM::afterCallbackSent_packet;
-  uint16_t size = LCMM::afterCallbackSent_size;
+  const uint16_t size = LCMM::afterCallbackSent_size;
   LCMM::afterCallbackSent_packet = nullptr;
   LCMM::afterCallbackSent_size = 0;
 
   if (packet != nullptr)
-  {
     LCMM::getInstance()->dataReceived(packet, size);
-  }
+
   MAC::getInstance()->setTransmitDone(dummyFunction);
 }
 
@@ -93,7 +101,7 @@ void LCMM::handleDataACK(LCMMPacketDataReceive *packet, uint16_t size)
   LCMM::afterCallbackSent_size = size;
   MAC::getInstance()->setTransmitDone(afterCallbackSent);
 
-  uint8_t result = MAC::getInstance()->sendData(
+  const uint8_t result = MAC::getInstance()->sendData(
       packet->mac.sender,
       (unsigned char *)response,
       sizeof(LCMMPacketResponse) + sizeof(uint16_t),
@@ -106,17 +114,26 @@ void LCMM::handleDataACK(LCMMPacketDataReceive *packet, uint16_t size)
     MAC::getInstance()->setTransmitDone(dummyFunction);
     LCMM::afterCallbackSent_packet = nullptr;
     LCMM::afterCallbackSent_size = 0;
+    // Do not leak the payload merely because the link ACK could not be queued.
+    // Upper DTPK replay suppression makes the sender's later retry idempotent.
     LCMM::getInstance()->dataReceived(packet, size);
   }
 }
 
 void LCMM::handleACK(LCMMPacketResponseReceive *packet, uint16_t size)
 {
-  int numOfAcknowledgedPackets =
-      (size - sizeof(LCMMPacketResponseReceive)) / sizeof(uint16_t);
+  if (size < sizeof(LCMMPacketResponseReceive) + sizeof(uint16_t))
+    return;
 
-  if (waitingForACKSingle && numOfAcknowledgedPackets == 1 &&
-      ackWaitingSingle.id == packet->packetIds[0])
+  const size_t payloadBytes = size - sizeof(LCMMPacketResponseReceive);
+  const size_t numOfAcknowledgedPackets = payloadBytes / sizeof(uint16_t);
+
+  // Packet IDs are only 16 bits. Matching the immediate-hop sender as well as
+  // the ID prevents an unrelated neighbour's ACK from completing this send.
+  if (waitingForACKSingle &&
+      numOfAcknowledgedPackets == 1 &&
+      ackWaitingSingle.id == packet->packetIds[0] &&
+      ackWaitingSingle.target == packet->mac.sender)
   {
     currentPing = millis() - packetSendStart;
 
@@ -141,8 +158,8 @@ bool LCMM::timeoutHandler()
 {
   if (LCMM::waitingForACKSingle)
   {
-    uint32_t currTime = millis();
-    uint32_t elapsed = currTime - LCMM::getInstance()->lastTick;
+    const uint32_t currTime = millis();
+    const uint32_t elapsed = currTime - LCMM::getInstance()->lastTick;
     LCMM::ackWaitingSingle.timeLeft -= (int)elapsed;
 
     if (LCMM::ackWaitingSingle.timeLeft <= 0)
@@ -154,27 +171,27 @@ bool LCMM::timeoutHandler()
         LCMM::getInstance()->clearSendingPacket();
         return false;
       }
+
+      const uint32_t timeBeforeSending = millis();
+      const uint8_t result = MAC::getInstance()->sendData(
+          LCMM::ackWaitingSingle.target,
+          (unsigned char *)LCMM::ackWaitingSingle.packet,
+          sizeof(LCMMPacketData) + LCMM::ackWaitingSingle.size,
+          LCMM::ackWaitingSingle.timeout);
+      const uint32_t timeAfterSending = millis();
+
+      if (result == 0)
+      {
+        LCMM::ackWaitingSingle.timeLeft =
+            LCMM::ackWaitingSingle.timeout +
+            (int)(timeBeforeSending - timeAfterSending);
+      }
       else
       {
-        uint32_t timeBeforeSending = millis();
-        uint8_t result = MAC::getInstance()->sendData(
-            LCMM::ackWaitingSingle.target,
-            (unsigned char *)LCMM::ackWaitingSingle.packet,
-            sizeof(LCMMPacketData) + LCMM::ackWaitingSingle.size,
-            LCMM::ackWaitingSingle.timeout);
-        uint32_t timeAfterSending = millis();
-
-        if (result == 0)
-        {
-          LCMM::ackWaitingSingle.timeLeft =
-              LCMM::ackWaitingSingle.timeout +
-              (int)(timeBeforeSending - timeAfterSending);
-        }
-        else
-        {
-          LCMM::ackWaitingSingle.attemptsLeft++;
-          LCMM::ackWaitingSingle.timeLeft = 1;
-        }
+        // Busy means no attempt happened. Restore the attempt and retry from the
+        // cooperative loop rather than silently consuming reliability budget.
+        LCMM::ackWaitingSingle.attemptsLeft++;
+        LCMM::ackWaitingSingle.timeLeft = 1;
       }
     }
     LCMM::getInstance()->lastTick = currTime;
@@ -186,9 +203,8 @@ void LCMM::initialize(DataReceivedCallback dataReceived,
                       AcknowledgmentCallback transmissionComplete)
 {
   if (lcmm == nullptr)
-  {
     lcmm = new LCMM(dataReceived, transmissionComplete);
-  }
+
   MAC::getInstance()->setRXCallback(LCMM::ReceivePacket);
 }
 
@@ -235,9 +251,7 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
                                 uint32_t timeout, uint8_t attempts)
 {
   if (LCMM::sending || LCMM::waitingForACKSingle)
-  {
     return 0;
-  }
 
   this->packetSendStart = millis();
 
@@ -245,7 +259,8 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
       (LCMMPacketData *)malloc(sizeof(LCMMPacketData) + size);
   if (!packet)
   {
-    if (callback) callback(0, false);
+    if (callback)
+      callback(0, false);
     return 0;
   }
 
@@ -255,7 +270,7 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
   const uint16_t outgoingId = packet->id;
 
   LCMM::sending = true;
-  uint32_t timeBeforeSending = millis();
+  const uint32_t timeBeforeSending = millis();
 
   if (!needACK)
   {
@@ -268,12 +283,12 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
     MAC::getInstance()->setTransmitDone(dummyFunction);
   }
 
-  uint8_t result = MAC::getInstance()->sendData(
+  const uint8_t result = MAC::getInstance()->sendData(
       target,
       (unsigned char *)packet,
       sizeof(LCMMPacketData) + size,
       timeout);
-  uint32_t timeAfterSending = millis();
+  const uint32_t timeAfterSending = millis();
 
   if (result != 0)
   {
@@ -284,7 +299,8 @@ uint16_t LCMM::sendPacketSingle(bool needACK, uint16_t target,
     }
     LCMM::sending = false;
     free(packet);
-    if (callback) callback(outgoingId, false);
+    if (callback)
+      callback(outgoingId, false);
     return 0;
   }
 
