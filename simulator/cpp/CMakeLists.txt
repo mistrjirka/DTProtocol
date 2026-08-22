@@ -59,7 +59,15 @@ target_compile_options(dtprotocol_mac_contract PRIVATE
     -Wall -Wextra -Wconversion -Wno-unused-parameter
 )
 target_compile_definitions(dtprotocol_mac_contract PRIVATE HOST_SIM=1)
-add_test(NAME production_mac_contract COMMAND dtprotocol_mac_contract)
+
+# Every invocation is a fresh process, which is important because production
+# MAC is intentionally a singleton. Exercise each regional profile separately.
+add_test(NAME production_mac_eu868
+         COMMAND dtprotocol_mac_contract eu868)
+add_test(NAME production_mac_eu869_high_duty
+         COMMAND dtprotocol_mac_contract eu869-high-duty)
+add_test(NAME production_mac_eu433
+         COMMAND dtprotocol_mac_contract eu433)
 
 if(DTP_HOST_SANITIZERS)
     foreach(target dtprotocol_host_node dtprotocol_mac_contract)
