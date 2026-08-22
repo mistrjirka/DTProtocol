@@ -124,7 +124,9 @@ class Profile:
             # not advertised and never participates in route safety/metrics.
             mobile_hello_period_ms=4_000,
             hello_jitter_fraction=0.20,
-            neighbor_expiry_ms=30_000,
+            # Six nominal HELLO periods avoids false expiry/relearn cascades in
+            # larger half-duplex networks while still detecting hard failures.
+            neighbor_expiry_ms=60_000,
             session_gc_enabled=False,
             sequence_numbers=True,
             feasibility_condition=True,
