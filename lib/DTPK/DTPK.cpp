@@ -156,27 +156,67 @@ void DTPK::noteHeard(uint16_t neighbor)
     if (neighbor == 0 || neighbor == MAC::getInstance()->getId())
         return;
     _lastHeard[neighbor] = _currentTime;
+    _lastLivenessProbe.erase(neighbor);
+    _livenessProbeFailures.erase(neighbor);
 }
 
 void DTPK::expireNeighbours()
 {
-    const uint32_t helloPeriod = effectiveHelloPeriodMs();
-    const uint32_t expiry =
-        std::max<uint32_t>(NEIGHBOR_EXPIRY_MS, helloPeriod * 3u);
-
     std::vector<uint16_t> stale;
     stale.reserve(_lastHeard.size());
+
     for (const auto &entry : _lastHeard)
     {
-        if (static_cast<uint32_t>(_currentTime - entry.second) >= expiry)
-            stale.push_back(entry.first);
+        const uint16_t neighbor = entry.first;
+        const uint32_t age =
+            static_cast<uint32_t>(_currentTime - entry.second);
+        const auto failureIt = _livenessProbeFailures.find(neighbor);
+        const uint8_t failures = failureIt == _livenessProbeFailures.end()
+                                     ? 0
+                                     : failureIt->second;
+
+        if (age >= _neighborHardExpiryMs ||
+            (age >= NEIGHBOR_SUSPECT_MS &&
+             failures >= LIVENESS_PROBE_MAX_FAILURES))
+        {
+            stale.push_back(neighbor);
+            continue;
+        }
+
+        if (age < NEIGHBOR_SUSPECT_MS)
+            continue;
+
+        const auto last = _lastLivenessProbe.find(neighbor);
+        if (last == _lastLivenessProbe.end() ||
+            static_cast<uint32_t>(_currentTime - last->second) >=
+                LIVENESS_PROBE_COOLDOWN_MS)
+        {
+            // CRYST_REQ is already a tiny reliable direct-neighbor packet. Its
+            // LCMM ACK proves liveness, while its CRYST response repairs any
+            // indirect state that may have gone stale during the quiet period.
+            sendCrystRequest(neighbor);
+            _lastLivenessProbe[neighbor] = _currentTime;
+        }
     }
 
     for (uint16_t neighbor : stale)
     {
         _lastHeard.erase(neighbor);
+        _lastLivenessProbe.erase(neighbor);
+        _livenessProbeFailures.erase(neighbor);
         _neighborState.erase(neighbor);
         _crystAssemblies.erase(neighbor);
+
+        // Remove stale outstanding LCMM-id mappings to this neighbor.
+        for (auto it = _livenessProbeByLcmmId.begin();
+             it != _livenessProbeByLcmmId.end();)
+        {
+            if (it->second == neighbor)
+                it = _livenessProbeByLcmmId.erase(it);
+            else
+                ++it;
+        }
+
         if (_crystDatabase.removeNeighbor(neighbor))
             markRoutingChanged("neighbor expired");
     }
@@ -351,6 +391,10 @@ void DTPK::sendingDeamon()
                 _packetRequests.begin() + static_cast<long>(i));
             return;
         }
+
+        if (type == CRYST_REQ && request.lcmmAck &&
+            request.target != BROADCAST)
+            _livenessProbeByLcmmId[lcmmId] = request.target;
 
         if (request.dtpkAck)
         {
