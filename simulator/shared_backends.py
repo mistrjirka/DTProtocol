@@ -10,6 +10,14 @@ from typing import DefaultDict, List, Optional, Tuple
 from cpp_sim_adapter import CppSimNetwork
 from model import LCMM_OVERHEAD, MAC_OVERHEAD, MAX_PACKET_SIZE, NEIGHBOR_RECORD_SIZE
 from node import Node
+from radio_timing import (
+    RSSI_CCA_SAMPLE_SPACING_MS,
+    RSSI_CCA_SAMPLES,
+    rssi_cca_duration_ms,
+    rssi_sample_offsets_ms,
+    rx_rearm_ms,
+    tx_startup_ms,
+)
 from simulator import Simulator
 
 
@@ -17,16 +25,32 @@ from simulator import Simulator
 class MediumMetrics:
     collision_drops: int = 0
     half_duplex_drops: int = 0
+    cca_scans: int = 0
+    cca_busy: int = 0
+    cca_clear: int = 0
+    cca_backoff_ms: float = 0.0
 
 
 class KeyedEnvironmentMixin:
-    """Keyed environment randomness + common same-channel contention."""
+    """Keyed randomness + common medium/CCA behavior.
+
+    The production MAC keeps the SX1262 in continuous RX while taking three
+    instantaneous-RSSI samples over roughly 20 ms. A detected carrier causes a
+    randomized 25-250 ms backoff. This mixin models that physical observation
+    window independently from routing behavior so the Python theoretical backend
+    and C++ adapter share the same RF history/collision predicates.
+    """
+
+    CARRIER_BACKOFF_MIN_MS = 25.0
+    CARRIER_BACKOFF_MAX_MS = 250.0
 
     def _init_shared_environment(self, *, radio_contention: bool = False) -> None:
         self._environment_ordinals: DefaultDict[Tuple, int] = defaultdict(int)
         self.radio_contention = bool(radio_contention)
         self.medium_metrics = MediumMetrics()
         self._medium_tx: List[dict] = []
+        self._carrier_backoff_until: dict[int, float] = {}
+        self._cca_pending_until: dict[int, float] = {}
 
     def _keyed_rng(self, namespace: str, *parts) -> random.Random:
         key = (namespace, *parts)
@@ -62,6 +86,13 @@ class KeyedEnvironmentMixin:
         )
         return rng.random() < p
 
+    def transmit_wait_ms(self, node_id: int, at_ms: Optional[float] = None) -> float:
+        """Combine optional regulatory spacing with MAC carrier backoff."""
+        at = self.now if at_ms is None else float(at_ms)
+        regulatory = super().transmit_wait_ms(node_id, at)
+        carrier = max(0.0, self._carrier_backoff_until.get(node_id, 0.0) - at)
+        return max(float(regulatory), carrier)
+
     def _record_medium_tx(self, sender: int, start_ms: float, end_ms: float) -> None:
         if not self.radio_contention:
             return
@@ -69,6 +100,48 @@ class KeyedEnvironmentMixin:
         self._medium_tx[:] = [x for x in self._medium_tx if x["end"] >= cutoff]
         self._medium_tx.append(
             {"sender": int(sender), "start": float(start_ms), "end": float(end_ms)}
+        )
+
+    def _carrier_backoff_ms(self, node_id: int, observed_at_ms: float) -> float:
+        rng = self._keyed_rng(
+            "carrier-backoff", int(node_id), self._time_key(observed_at_ms)
+        )
+        return rng.uniform(self.CARRIER_BACKOFF_MIN_MS, self.CARRIER_BACKOFF_MAX_MS)
+
+    def _medium_energy_at(self, receiver: int, at_ms: float) -> bool:
+        """Whether an abstract reachable transmission contributes RSSI energy.
+
+        Links in the shared simulator are already the abstraction for RF reach.
+        Therefore a transmission is considered CCA-visible only when the sender
+        has an up/in-range physical link to the sensing node. Hidden terminals
+        remain hidden by construction.
+        """
+        if not self.radio_contention:
+            return False
+        if not self.node_up.get(receiver, False):
+            return False
+        at = float(at_ms)
+        for tx in self._medium_tx:
+            other = int(tx["sender"])
+            if other == receiver:
+                continue
+            if not (float(tx["start"]) <= at < float(tx["end"])):
+                continue
+            link = self.get_link(other, receiver)
+            if link is None or not link.up:
+                continue
+            if not self.node_up.get(other, False):
+                continue
+            if self.in_range_now(other, receiver, at):
+                return True
+        return False
+
+    def _rssi_cca_busy(self, node_id: int, cca_start_ms: float) -> bool:
+        return any(
+            self._medium_energy_at(node_id, float(cca_start_ms) + offset)
+            for offset in rssi_sample_offsets_ms(
+                RSSI_CCA_SAMPLES, RSSI_CCA_SAMPLE_SPACING_MS
+            )
         )
 
     def _ever_in_range(self, a: int, b: int, start_ms: float, end_ms: float) -> bool:
@@ -213,22 +286,111 @@ class SharedPythonNetwork(KeyedEnvironmentMixin, Simulator):
             int(record_size) - NEIGHBOR_RECORD_SIZE
         )
 
-    def transmit(self, sender_id, target, packet, reliable, on_complete, attempt=1):
-        wait = self.transmit_wait_ms(sender_id)
-        if wait > 1e-9:
+    def _schedule_data_cca(
+        self, sender_id, target, packet, reliable, on_complete, attempt
+    ) -> None:
+        sender = self.nodes[sender_id]
+        if (
+            not self.node_up.get(sender_id, False)
+            or not sender.up
+            or sender.crashed
+        ):
+            self.schedule(0, on_complete, False)
+            return
+
+        regulatory_wait = Simulator.transmit_wait_ms(self, sender_id)
+        if regulatory_wait > 1e-9:
             self.note_regulatory_deferral(sender_id)
-            self.schedule(
-                wait,
-                self.transmit,
+        wait = self.transmit_wait_ms(sender_id)
+        earliest = max(
+            self.now + wait,
+            float(sender.radio_busy_until),
+            self._cca_pending_until.get(sender_id, 0.0),
+        )
+        if earliest > self.now + 1e-9:
+            self.schedule_at(
+                earliest,
+                self._schedule_data_cca,
                 sender_id,
                 target,
                 packet,
                 reliable,
                 on_complete,
                 attempt,
+                priority=self.RADIO_PRIORITY,
             )
             return
 
+        cca_start = self.now
+        cca_end = cca_start + rssi_cca_duration_ms()
+        self._cca_pending_until[sender_id] = cca_end
+        self.medium_metrics.cca_scans += 1
+        self.schedule_at(
+            cca_end,
+            self._finish_data_cca,
+            sender_id,
+            target,
+            packet,
+            reliable,
+            on_complete,
+            attempt,
+            cca_start,
+            priority=self.RADIO_PRIORITY,
+        )
+
+    def _finish_data_cca(
+        self, sender_id, target, packet, reliable, on_complete, attempt, cca_start
+    ) -> None:
+        sender = self.nodes[sender_id]
+        if (
+            not self.node_up.get(sender_id, False)
+            or not sender.up
+            or sender.crashed
+        ):
+            self._cca_pending_until.pop(sender_id, None)
+            self.schedule(0, on_complete, False)
+            return
+
+        if self._rssi_cca_busy(sender_id, cca_start):
+            self.medium_metrics.cca_busy += 1
+            backoff = self._carrier_backoff_ms(sender_id, self.now)
+            self.medium_metrics.cca_backoff_ms += backoff
+            next_try = self.now + backoff
+            self._carrier_backoff_until[sender_id] = next_try
+            self._cca_pending_until[sender_id] = next_try
+            self.schedule_at(
+                next_try,
+                self._schedule_data_cca,
+                sender_id,
+                target,
+                packet,
+                reliable,
+                on_complete,
+                attempt,
+                priority=self.RADIO_PRIORITY,
+            )
+            return
+
+        self.medium_metrics.cca_clear += 1
+        frame_bytes = self._frame_bytes(packet)
+        rf_start = self.now + tx_startup_ms(frame_bytes)
+        self._cca_pending_until[sender_id] = rf_start
+        self.schedule_at(
+            rf_start,
+            self._transmit_after_cca,
+            sender_id,
+            target,
+            packet,
+            reliable,
+            on_complete,
+            attempt,
+            priority=self.RADIO_PRIORITY,
+        )
+
+    def _transmit_after_cca(
+        self, sender_id, target, packet, reliable, on_complete, attempt
+    ):
+        self._cca_pending_until.pop(sender_id, None)
         sender = self.nodes[sender_id]
         frame_bytes = self._frame_bytes(packet)
         actual_start = (
@@ -240,35 +402,56 @@ class SharedPythonNetwork(KeyedEnvironmentMixin, Simulator):
         )
         if actual_start:
             airtime = self.airtime_ms(frame_bytes)
-            self.account_transmission(sender_id, self.now, self.now + airtime)
-            self._record_medium_tx(sender_id, self.now, self.now + airtime)
-        return super().transmit(sender_id, target, packet, reliable, on_complete, attempt)
+            rf_end = self.now + airtime
+            self.account_transmission(sender_id, self.now, rf_end)
+            self._record_medium_tx(sender_id, self.now, rf_end)
+            result = super().transmit(
+                sender_id, target, packet, reliable, on_complete, attempt
+            )
+            sender.radio_busy_until = max(
+                float(sender.radio_busy_until), rf_end + rx_rearm_ms()
+            )
+            return result
+        return super().transmit(
+            sender_id, target, packet, reliable, on_complete, attempt
+        )
 
-    def _deliver(self, receiver_id, previous_hop, packet, reliable, ack_context,
-                 receiver_epoch=None):
+    def transmit(self, sender_id, target, packet, reliable, on_complete, attempt=1):
+        # Regulatory spacing and carrier backoff are both MAC policy waits and
+        # neither consumes an LCMM RF attempt. Once allowed, model the actual
+        # blocking three-sample RSSI CCA before RadioLib/SX1262 TX setup.
+        return self._schedule_data_cca(
+            sender_id, target, packet, reliable, on_complete, attempt
+        )
+
+    def _schedule_ack_cca(
+        self,
+        receiver_id,
+        previous_hop,
+        packet,
+        sender_id,
+        target,
+        original_packet,
+        on_complete,
+        attempt,
+    ) -> None:
         receiver = self.nodes[receiver_id]
         if (
             not receiver.up
             or receiver.crashed
             or not self.node_up.get(receiver_id, False)
-            or (
-                receiver_epoch is not None
-                and self.node_epoch.get(receiver_id, 0) != receiver_epoch
-            )
         ):
             self.rf_metrics.firmware_epoch_drops += 1
             return
 
-        self.rf_metrics.rf_delivered += 1
-        if not reliable:
+        # Production LCMM does not queue a link ACK when MAC policy refuses it;
+        # it delivers the DATA upward and lets the original sender retry.
+        regulatory_wait = Simulator.transmit_wait_ms(self, receiver_id)
+        if regulatory_wait > 1e-9:
+            self.note_regulatory_deferral(receiver_id)
             receiver.receive(packet, previous_hop)
-            return
-
-        sender_id, target, original_packet, on_complete, attempt = ack_context
-        link = self.get_link(receiver_id, sender_id)
-        if link is None:
             self.schedule(
-                receiver.link_retry_timeout_ms(packet),
+                self.nodes[sender_id].link_retry_timeout_ms(original_packet),
                 self._retry_or_finish,
                 sender_id,
                 target,
@@ -279,8 +462,124 @@ class SharedPythonNetwork(KeyedEnvironmentMixin, Simulator):
             )
             return
 
-        if self.transmit_wait_ms(receiver_id) > 1e-9:
-            self.note_regulatory_deferral(receiver_id)
+        backoff_wait = max(
+            0.0, self._carrier_backoff_until.get(receiver_id, 0.0) - self.now
+        )
+        if backoff_wait > 1e-9:
+            receiver.receive(packet, previous_hop)
+            self.schedule(
+                self.nodes[sender_id].link_retry_timeout_ms(original_packet),
+                self._retry_or_finish,
+                sender_id,
+                target,
+                original_packet,
+                True,
+                on_complete,
+                attempt,
+            )
+            return
+
+        cca_start = self.now
+        cca_end = cca_start + rssi_cca_duration_ms()
+        self._cca_pending_until[receiver_id] = cca_end
+        self.medium_metrics.cca_scans += 1
+        self.schedule_at(
+            cca_end,
+            self._finish_ack_cca,
+            receiver_id,
+            previous_hop,
+            packet,
+            sender_id,
+            target,
+            original_packet,
+            on_complete,
+            attempt,
+            cca_start,
+            priority=self.RADIO_PRIORITY,
+        )
+
+    def _finish_ack_cca(
+        self,
+        receiver_id,
+        previous_hop,
+        packet,
+        sender_id,
+        target,
+        original_packet,
+        on_complete,
+        attempt,
+        cca_start,
+    ) -> None:
+        receiver = self.nodes[receiver_id]
+        if (
+            not receiver.up
+            or receiver.crashed
+            or not self.node_up.get(receiver_id, False)
+        ):
+            self._cca_pending_until.pop(receiver_id, None)
+            self.rf_metrics.firmware_epoch_drops += 1
+            return
+
+        if self._rssi_cca_busy(receiver_id, cca_start):
+            self.medium_metrics.cca_busy += 1
+            backoff = self._carrier_backoff_ms(receiver_id, self.now)
+            self.medium_metrics.cca_backoff_ms += backoff
+            self._carrier_backoff_until[receiver_id] = self.now + backoff
+            self._cca_pending_until.pop(receiver_id, None)
+            receiver.receive(packet, previous_hop)
+            self.schedule(
+                self.nodes[sender_id].link_retry_timeout_ms(original_packet),
+                self._retry_or_finish,
+                sender_id,
+                target,
+                original_packet,
+                True,
+                on_complete,
+                attempt,
+            )
+            return
+
+        self.medium_metrics.cca_clear += 1
+        ack_bytes = MAC_OVERHEAD + 1 + 2
+        ack_start = self.now + tx_startup_ms(ack_bytes)
+        self._cca_pending_until[receiver_id] = ack_start
+        self.schedule_at(
+            ack_start,
+            self._start_ack_tx,
+            receiver_id,
+            previous_hop,
+            packet,
+            sender_id,
+            target,
+            original_packet,
+            on_complete,
+            attempt,
+            priority=self.RADIO_PRIORITY,
+        )
+
+    def _start_ack_tx(
+        self,
+        receiver_id,
+        previous_hop,
+        packet,
+        sender_id,
+        target,
+        original_packet,
+        on_complete,
+        attempt,
+    ) -> None:
+        self._cca_pending_until.pop(receiver_id, None)
+        receiver = self.nodes[receiver_id]
+        if (
+            not receiver.up
+            or receiver.crashed
+            or not self.node_up.get(receiver_id, False)
+        ):
+            self.rf_metrics.firmware_epoch_drops += 1
+            return
+
+        link = self.get_link(receiver_id, sender_id)
+        if link is None:
             receiver.receive(packet, previous_hop)
             self.schedule(
                 self.nodes[sender_id].link_retry_timeout_ms(original_packet),
@@ -298,6 +597,9 @@ class SharedPythonNetwork(KeyedEnvironmentMixin, Simulator):
         ack_airtime = self.airtime_ms(ack_bytes)
         ack_start = self.now
         ack_end = ack_start + ack_airtime
+        receiver.radio_busy_until = max(
+            float(receiver.radio_busy_until), ack_end + rx_rearm_ms()
+        )
         self.account_transmission(receiver_id, ack_start, ack_end)
         self._record_medium_tx(receiver_id, ack_start, ack_end)
         self.metrics.radio_link_ack_frames += 1
@@ -329,8 +631,64 @@ class SharedPythonNetwork(KeyedEnvironmentMixin, Simulator):
             priority=self.RADIO_PRIORITY,
         )
 
+    def _deliver(self, receiver_id, previous_hop, packet, reliable, ack_context,
+                 receiver_epoch=None):
+        receiver = self.nodes[receiver_id]
+        if (
+            not receiver.up
+            or receiver.crashed
+            or not self.node_up.get(receiver_id, False)
+            or (
+                receiver_epoch is not None
+                and self.node_epoch.get(receiver_id, 0) != receiver_epoch
+            )
+        ):
+            self.rf_metrics.firmware_epoch_drops += 1
+            return
+
+        self.rf_metrics.rf_delivered += 1
+        if not reliable:
+            receiver.receive(packet, previous_hop)
+            return
+
+        sender_id, target, original_packet, on_complete, attempt = ack_context
+        if self.get_link(receiver_id, sender_id) is None:
+            self.schedule(
+                receiver.link_retry_timeout_ms(packet),
+                self._retry_or_finish,
+                sender_id,
+                target,
+                original_packet,
+                True,
+                on_complete,
+                attempt,
+            )
+            return
+
+        self._schedule_ack_cca(
+            receiver_id,
+            previous_hop,
+            packet,
+            sender_id,
+            target,
+            original_packet,
+            on_complete,
+            attempt,
+        )
+
 
 class SharedCppNetwork(KeyedEnvironmentMixin, CppSimNetwork):
+    """Real C++ protocol on the shared RF medium.
+
+    Collision/half-duplex history is shared with Python. The subprocess fake MAC
+    still begins a TX synchronously when firmware calls sendData(), so exact
+    20-ms RSSI CCA/backoff is intentionally *not* synthesized here: doing so
+    would make the subprocess think it was already transmitting while hardware
+    should still be in RX. Contention studies that depend on CCA timing should
+    use SharedPythonNetwork until the subprocess protocol gains a mid-send CCA
+    handshake; protocol/serialization/failure tests remain valid here.
+    """
+
     def __init__(self, *args, radio_contention: bool = False,
                  duty_cycle_percent: float = 0.0, **kwargs):
         super().__init__(
