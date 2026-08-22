@@ -56,13 +56,13 @@ void MAC::setRXAlienCallback(PacketReceivedCallback callback) {
 
 uint8_t MAC::sendData(uint16_t target, unsigned char *data,
                       uint8_t size, uint32_t) {
-    // protocol-v2 production MAC reports BUSY instead of pretending a dropped
-    // transmission succeeded.
     if (state_ == SENDING) return 5;
     active_tx_token_ = hostsim::enqueue_tx(target, data, size);
     state_ = SENDING;
     return 0;
 }
+
+uint32_t MAC::getTransmitWaitMs() const { return 0; }
 
 void MAC::loop() {}
 
@@ -99,14 +99,11 @@ bool MAC::hostInject(uint16_t sender, uint16_t target,
         return false;
     }
     cb(packet, static_cast<uint16_t>(total), packet->crc32);
-    return true; // ownership transferred to upper layer
+    return true;
 }
 
 void MAC::hostPhyDone(uint64_t token) {
     if (state_ != SENDING || token != active_tx_token_) return;
-
-    // Match protocol-v2 production MAC: RX state is restored before upper-layer
-    // TX-done callbacks execute.
     state_ = RECEIVING;
     active_tx_token_ = 0;
     if (transmit_done_) transmit_done_();
