@@ -14,16 +14,11 @@ from shared_backends import SharedCppNetwork, SharedPythonNetwork
 
 def test_scenario_round_trip_preserves_environment_definition():
     scenario = Scenario.line(3, seed=77, max_range=15.0)
-    scenario.trajectories[2] = [
-        (0, 1, 0),
-        (1000, 20, 0),
-        (2000, 1, 0),
-    ]
+    scenario.trajectories[2] = [(0, 1, 0), (1000, 20, 0), (2000, 1, 0)]
     scenario.link_events.append(LinkStateEvent(500, 1, 2, False))
     scenario.link_events.append(LinkStateEvent(750, 1, 2, True))
     scenario.node_events.append(NodeStateEvent(1200, 3, False))
     scenario.node_events.append(NodeStateEvent(1800, 3, True))
-
     restored = Scenario.from_json(scenario.to_json())
     assert restored.to_json() == scenario.to_json()
 
@@ -33,7 +28,6 @@ def test_python_backend_uses_shared_continuous_motion_kernel():
     scenario.trajectories[1] = [(0, 0, 0), (100, 0, 0)]
     scenario.trajectories[2] = [(0, 0, 0), (50, 20, 0), (100, 0, 0)]
     net = scenario.build("python", profile=Profile.intended())
-
     assert net.position_at(2, 0) == (0.0, 0.0)
     assert net.position_at(2, 100) == (0.0, 0.0)
     assert net.stays_in_range(1, 2, 0, 100) is False
@@ -51,7 +45,6 @@ def test_environment_failure_epoch_is_independent_of_protocol_events():
     ])
     net = scenario.build("python", profile=Profile.intended())
     net.run(250)
-
     assert net.get_link(1, 2).epoch == 2
     assert net.node_epoch[2] == 2
 
@@ -63,16 +56,11 @@ def test_keyed_environment_loss_is_not_shifted_by_unrelated_draws():
         net.add_link(1, 2, loss=0.37, jitter_ms=7.0)
         net.add_link(3, 4, loss=0.91, jitter_ms=19.0)
         net.now = 1234.5
-
     expected_loss = a.sample_link_loss(1, 2)
     expected_jitter = a.jittered_latency(a.get_link(1, 2))
-
-    # Burn unrelated environment operations on another link. With one global
-    # sequential RNG this would shift all later decisions.
     for _ in range(50):
         b.sample_link_loss(3, 4)
         b.jittered_latency(b.get_link(3, 4))
-
     assert b.sample_link_loss(1, 2) == expected_loss
     assert b.jittered_latency(b.get_link(1, 2)) == expected_jitter
 
@@ -83,7 +71,6 @@ def test_python_and_cpp_adapters_use_identical_keyed_physical_draws_without_firm
     for net in (py, cpp):
         net.add_link(7, 8, loss=0.43, ack_loss=0.21, latency_ms=12, jitter_ms=3)
         net.now = 987.25
-
     py_link = py.get_link(7, 8)
     cpp_link = cpp.get_link(7, 8)
     assert py.sample_link_loss(7, 8) == cpp.sample_link_loss(7, 8)
@@ -91,31 +78,55 @@ def test_python_and_cpp_adapters_use_identical_keyed_physical_draws_without_firm
     assert py.jittered_latency(py_link) == cpp.jittered_latency(cpp_link)
 
 
-@pytest.mark.skipif(
-    not CppNodeProcess.available(),
-    reason="host C++ node not built",
-)
+@pytest.mark.parametrize("network_type", [SharedPythonNetwork, SharedCppNetwork])
+def test_shared_medium_models_hidden_terminal_collision(network_type):
+    kwargs = {"profile": Profile.intended()} if network_type is SharedPythonNetwork else {}
+    net = network_type(seed=44, radio_contention=True, **kwargs)
+    for node in (1, 2, 3):
+        net.register_node(node)
+    # 1 and 3 are hidden from each other but both are audible at 2.
+    net.add_link(1, 2, jitter_ms=0)
+    net.add_link(2, 3, jitter_ms=0)
+    net._record_medium_tx(1, 0.0, 100.0)
+    net._record_medium_tx(3, 0.0, 100.0)
+    epochs = net.capture_frame_epochs(1, 2)
+    valid, reason = net.frame_path_valid(1, 2, 0.0, 100.0, *epochs)
+    assert not valid
+    assert reason == "collision"
+
+
+@pytest.mark.parametrize("network_type", [SharedPythonNetwork, SharedCppNetwork])
+def test_shared_medium_models_half_duplex_receiver(network_type):
+    kwargs = {"profile": Profile.intended()} if network_type is SharedPythonNetwork else {}
+    net = network_type(seed=45, radio_contention=True, **kwargs)
+    for node in (1, 2, 3):
+        net.register_node(node)
+    net.add_link(1, 2, jitter_ms=0)
+    net.add_link(2, 3, jitter_ms=0)
+    net._record_medium_tx(1, 0.0, 100.0)
+    net._record_medium_tx(2, 50.0, 80.0)
+    epochs = net.capture_frame_epochs(1, 2)
+    valid, reason = net.frame_path_valid(1, 2, 0.0, 100.0, *epochs)
+    assert not valid
+    assert reason == "half-duplex"
+
+
+@pytest.mark.skipif(not CppNodeProcess.available(), reason="host C++ node not built")
 def test_same_static_scenario_runs_python_and_cpp_adapters():
     scenario = Scenario.line(2, seed=31, latency_ms=5.0, jitter_ms=0.0)
-
     with scenario.build("python", profile=Profile.intended()) as py_net:
         py_net.run(60_000)
         py_routes = route_snapshot(py_net)
-
     with scenario.build("cpp", tick_ms=50) as cpp_net:
         cpp_net.run(60_000)
         cpp_routes = route_snapshot(cpp_net)
-
     assert py_routes[1].get(2) == (2, 1)
     assert py_routes[2].get(1) == (1, 1)
     assert cpp_routes[1].get(2) == (2, 1)
     assert cpp_routes[2].get(1) == (1, 1)
 
 
-@pytest.mark.skipif(
-    not CppNodeProcess.available(),
-    reason="host C++ node not built",
-)
+@pytest.mark.skipif(not CppNodeProcess.available(), reason="host C++ node not built")
 def test_same_failure_trace_has_identical_physical_epochs_in_both_backends():
     scenario = Scenario.line(2, seed=32)
     scenario.link_events.extend([
@@ -126,15 +137,12 @@ def test_same_failure_trace_has_identical_physical_epochs_in_both_backends():
         NodeStateEvent(1025, 2, False),
         NodeStateEvent(1075, 2, True),
     ])
-
     with scenario.build("python", profile=Profile.intended()) as py_net:
         py_net.run(1200)
         py_link_epoch = py_net.get_link(1, 2).epoch
         py_node_epoch = py_net.node_epoch[2]
-
     with scenario.build("cpp", tick_ms=50) as cpp_net:
         cpp_net.run(1200)
         cpp_link_epoch = cpp_net.get_link(1, 2).epoch
         cpp_node_epoch = cpp_net.node_epoch[2]
-
     assert (py_link_epoch, py_node_epoch) == (cpp_link_epoch, cpp_node_epoch) == (2, 2)
