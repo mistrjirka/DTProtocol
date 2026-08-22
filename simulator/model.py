@@ -11,7 +11,7 @@ LCMM_RX_HEADER = MAC_OVERHEAD + LCMM_OVERHEAD
 DTPK_GENERIC_HEADER = 9
 DTPK_CRYST_HEADER = 3
 DTPK_CRYST_V2_HEADER = 13  # type:u8,id:u16,origin-seq:u16,route-version:u32,chunk-index:u16,chunk-count:u16
-DTPK_HELLO_SIZE = 9
+DTPK_HELLO_SIZE = 10  # + flags:u8 (mobile is only a hint)
 DTPK_CRYST_REQ_SIZE = 3
 DTPK_SEQ_REQ_SIZE = 10
 NEIGHBOR_RECORD_SIZE = 5
@@ -38,6 +38,7 @@ class Profile:
     cryst_jitter_max_ms: Optional[int] = None
     periodic_cryst_ms: Optional[int] = None
     hello_period_ms: Optional[int] = None
+    mobile_hello_period_ms: Optional[int] = None
     hello_jitter_fraction: float = 0.0
     propagate_on_route_change: bool = False
     cryst_missing_self_reply: bool = True
@@ -116,11 +117,10 @@ class Profile:
         return replace(
             Profile.intended(),
             name="cryst-v2",
-            # Decouple event-propagation jitter from the old 20 s session
-            # timeout. This removes the practical one-hop 0-20s discovery delay.
             cryst_jitter_max_ms=1_500,
             periodic_cryst_ms=None,
             hello_period_ms=10_000,
+            mobile_hello_period_ms=4_000,
             hello_jitter_fraction=0.20,
             neighbor_expiry_ms=30_000,
             session_gc_enabled=False,
@@ -202,6 +202,7 @@ class Packet:
     route_version: int = 0
     requested_sequence: int = 0
     hop_limit: int = 0
+    mobile_hint: bool = False
 
     def clone(self) -> "Packet":
         return copy.copy(self)
