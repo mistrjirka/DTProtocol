@@ -1,357 +1,186 @@
 #include "include/mac.h"
 
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
+
 State MAC::state = RECEIVING;
 MAC *MAC::mac = nullptr;
 bool MAC::operationDone = false;
 
-/*
- * LORANoiseFloorCalibrate function calibrates noise floor of the LoRa channel
- * and returns the average value of noise measurements. The noise floor is used
- * to determine the sensitivity threshold of the receiver, i.e., the minimum
- * signal strength required for the receiver to detect a LoRa message. The
- * function takes two arguments: the channel number and a boolean flag
- * indicating whether to save the calibrated noise floor value to the
- * noise_floor_per_channel array. By default, save is true. The function returns
- * an integer value representing the average noise measurement.
- */
-int MAC::LORANoiseFloorCalibrate(int channel, bool save /* = true */)
+// 125 kHz-safe channel centres. The old edge channels at 433.05 and 434.8
+// cannot fit a 125 kHz LoRa signal wholly inside 433.05-434.79 MHz.
+const double MAC::EU433_CHANNELS[] = {
+    433.175, 433.300, 433.425, 433.550, 433.675, 433.800, 433.925,
+    434.050, 434.175, 434.300, 434.425, 434.550, 434.675};
+const double MAC::EU868_CHANNELS[] = {868.100, 868.300, 868.500};
+const uint8_t MAC::EU433_CHANNEL_COUNT = 13;
+const uint8_t MAC::EU868_CHANNEL_COUNT = 3;
+
+namespace
 {
-  State prev_state = getMode();
-  this->setFrequencyAndListen(channel);
+bool radioOk(int status)
+{
+  if (status == RADIOLIB_ERR_NONE)
+    return true;
+  Serial.println("RadioLib configuration error: " + String(status));
+  return false;
+}
+} // namespace
 
-  // Set frequency to the given channel
-  MAC::channel = channel;                         // Set current channel
-  int noise_measurements[NUMBER_OF_MEASUREMENTS]; // Array to hold noise
-  // measurements
+MAC::MAC(
+    SX1262 &loramodule,
+    int nodeId,
+    MACRegion selectedRegion,
+    int defaultChannel,
+    int defaultSpreadingFactor,
+    float defaultBandwidth,
+    int selectedSquelch,
+    int defaultPower,
+    int defaultCodingRate)
+    : module(loramodule),
+      channels(selectedRegion == MACRegion::EU868 ? EU868_CHANNELS : EU433_CHANNELS),
+      channelCount(selectedRegion == MACRegion::EU868 ? EU868_CHANNEL_COUNT : EU433_CHANNEL_COUNT),
+      region(selectedRegion),
+      // 868.0-868.6 permits 25 mW e.r.p. in the Czech/EU profile. 13 dBm
+      // conducted is deliberately conservative until antenna gain is known.
+      maxConductedPowerDbm(selectedRegion == MACRegion::EU868 ? 13 : 10),
+      id((uint16_t)nodeId),
+      channel(defaultChannel),
+      spreading_factor(defaultSpreadingFactor),
+      bandwidth(defaultBandwidth),
+      squelch(selectedSquelch),
+      power(std::min(defaultPower, maxConductedPowerDbm)),
+      coding_rate(defaultCodingRate),
+      calibratedFrequency(0.0),
+      transmitDone(nullptr),
+      RXCallback(nullptr),
+      RXAlienCallback(nullptr)
+{
+  memset(this->noiseFloor, 0, sizeof(this->noiseFloor));
 
-  // Take NUMBER_OF_MEASUREMENTS noise measurements and store in
-  // noise_measurements array
-
-  for (int i = 0; i < NUMBER_OF_MEASUREMENTS; i++)
+  if (!validChannel((uint16_t)channel) ||
+      !configureRadio(spreading_factor, bandwidth, power, coding_rate))
   {
-    noise_measurements[i] = this->module.getRSSI(false);
-    delay(TIME_BETWEENMEASUREMENTS);
-    // this->module.nonBlockingDelay(TIME_BETWEENMEASUREMENTS);
+    // Leave an unmistakably invalid channel marker. sendData() will fail
+    // instead of pretending a partially configured radio is usable.
+    channel = -1;
+    state = IDLE;
+    return;
   }
 
-  // Sort the array in ascending order using quickSort algorithm
-  MathExtension.quickSort(noise_measurements, 0, NUMBER_OF_MEASUREMENTS - 1);
+  this->module.setDio1Action(setFlag);
+  LORANoiseCalibrateAllChannels(true);
+  setFrequency((uint16_t)channel);
+  setMode(RECEIVING, true);
+}
 
-  // Calculate the average noise measurement by excluding the
-  // DISCRIMINATE_MEASURMENTS highest values
-  int average = 0;
-  for (int i = DISCRIMINATE_MEASURMENTS; i < (NUMBER_OF_MEASUREMENTS - DISCRIMINATE_MEASURMENTS);
-       i++)
+MAC::~MAC() {}
+
+void MAC::initialize(
+    SX1262 &loramodule,
+    int id,
+    int default_channel,
+    int default_spreading_factor,
+    float default_bandwidth,
+    int squelch,
+    int default_power,
+    int default_coding_rate)
+{
+  initialize(
+      loramodule,
+      id,
+      MACRegion::EU433,
+      default_channel,
+      default_spreading_factor,
+      default_bandwidth,
+      squelch,
+      default_power,
+      default_coding_rate);
+}
+
+void MAC::initialize(
+    SX1262 &loramodule,
+    int id,
+    MACRegion region,
+    int default_channel,
+    int default_spreading_factor,
+    float default_bandwidth,
+    int squelch,
+    int default_power,
+    int default_coding_rate)
+{
+  if (mac == nullptr)
   {
-    average += noise_measurements[i];
+    mac = new MAC(
+        loramodule,
+        id,
+        region,
+        default_channel,
+        default_spreading_factor,
+        default_bandwidth,
+        squelch,
+        default_power,
+        default_coding_rate);
   }
-  average = average / (NUMBER_OF_MEASUREMENTS - DISCRIMINATE_MEASURMENTS * 2);
-
-  // If save is true, save the calibrated noise floor value to
-  // noise_floor_per_channel array
-  if (save)
-  {
-    noiseFloor[channel] = (int)(average + squelch);
-  }
-
-  return (
-      int)(average +
-           squelch); // Return the average noise measurement plus squelch value
-  setMode(prev_state);
 }
 
-uint32_t MAC::random()
+MAC *MAC::getInstance()
 {
-  return this->module.random(65000);
+  return mac;
 }
 
-void MAC::setFrequencyAndListen(uint16_t channel)
+bool MAC::validChannel(uint16_t candidate) const
 {
-  if (getMode() == SLEEPING)
-    setMode(IDLE);
-  setMode(RECEIVING);
-  this->module.setFrequency(channels[channel]); // Set frequency to the given channel
-  this->calibratedFrequency = channels[channel];
-  this->module.startReceive();
+  return candidate < channelCount;
 }
 
-void MAC::setFrequency(uint16_t channel)
+bool MAC::configureRadio(
+    int defaultSpreadingFactor,
+    float defaultBandwidth,
+    int defaultPower,
+    int defaultCodingRate)
 {
-  if (getMode() == SLEEPING)
-    setMode(IDLE);
-  this->module.setFrequency(channels[channel]); // Set frequency to the given channel
-  this->calibratedFrequency = channels[channel];
-}
+  if (!validChannel((uint16_t)channel))
+    return false;
 
-void MAC::LORANoiseCalibrateAllChannels(bool save /*= true*/)
-{
-  State prev_state = getMode();
-
-  int previusChannel = MAC::channel;
-  // Calibrate noise floor for all channels and save if requested
-  for (int i = 0; i < NUM_OF_CHANNELS; i++)
-  {
-    this->LORANoiseFloorCalibrate(i, save);
-  }
-  MAC::channel = previusChannel;
-  // Set LoRa to idle and set frequency to current channel
-  setFrequency(previusChannel);
-
-  setMode(prev_state);
+  calibratedFrequency = channels[channel];
+  bool ok = true;
+  ok = radioOk(module.setFrequency((float)calibratedFrequency)) && ok;
+  ok = radioOk(module.setOutputPower(defaultPower)) && ok;
+  ok = radioOk(module.setBandwidth(defaultBandwidth)) && ok;
+  ok = radioOk(module.setSpreadingFactor(defaultSpreadingFactor)) && ok;
+  ok = radioOk(module.setCodingRate(defaultCodingRate)) && ok;
+  ok = radioOk(module.setSyncWord(DEFAULT_SYNC_WORD)) && ok;
+  ok = radioOk(module.setPreambleLength(DEFAULT_PREAMBLE_LENGTH)) && ok;
+  return ok;
 }
 
 uint16_t MAC::getId()
 {
-  return this->id;
+  return id;
 }
 
-void MAC::handlePacket()
+uint32_t MAC::random()
 {
-  Serial.println("packet received");
-  uint16_t length = this->module.getPacketLength(true);
-  if (length)
-  {
-    Serial.println(length);
-    uint8_t *data = (uint8_t *)malloc(sizeof(uint8_t) * length);
-    if (data == NULL)
-    {
-      Serial.println("failed to allocate");
-      return;
-    }
-
-    int state = this->module.readData(data, length);
-
-    if (state != RADIOLIB_ERR_NONE)
-    {
-      Serial.print("Error during recieve \n");
-      return;
-    }
-
-    MACPacket *packet = (MACPacket *)data;
-
-    uint32_t crcReceived = packet->crc32;
-    packet->crc32 = 0;
-    uint32_t crcCalculated =
-        MathExtension.crc32c(0, packet->data, length - sizeof(MACPacket));
-    packet->crc32 = crcReceived;
-    if ((!packet->target || packet->target == this->id)&& RXCallback != nullptr)
-    {
-
-      RXCallback(packet, length, crcCalculated);
-    }
-    else if (packet->target && packet->target != this->id && RXAlienCallback != nullptr)
-    {
-      RXAlienCallback(packet, length, crcCalculated);
-    }
-  }
-}
-
-void MAC::setTransmitDone(TransmitDone fun)
-{
-  this->transmitDone = fun;
-}
-
-void MAC::loop()
-{
-  if (operationDone && getMode() == RECEIVING)
-  {
-    operationDone = false;
-    // Serial.println("PacketReceived");
-    this->handlePacket();
-  }
-  if (operationDone && getMode() == SENDING)
-  {
-    operationDone = false;
-    if (this->transmitDone != nullptr)
-      this->transmitDone();
-    this->module.finishTransmit();
-    setMode(RECEIVING, true);
-  }
-}
-// this function is called when a complete packet
-// is transmitted or received by the module
-// IMPORTANT: this function MUST be 'void' type
-//            and MUST NOT have any arguments!
-RAM_ATTR void MAC::setFlag(void)
-{
-  // we sent or received a packet, set the flag
-  MAC::operationDone = true;
-}
-
-bool check(int statuscode)
-{
-  if (statuscode != 0)
-  {
-    printf(("wrong settings error " + String(statuscode)).c_str());
-    return false;
-  }
-  return true;
-}
-
-MAC::MAC(
-    SX1262& loramodule,
-    int id,
-    int default_channel /* = DEFAULT_CHANNEL*/,
-    int default_spreading_factor /* = DEFAULT_SPREADING_FACTOR*/,
-    float default_bandwidth /* = DEFAULT_SPREADING_FACTOR*/,
-    int squelch /*= DEFAULT_SQUELCH*/,
-    int default_power /* = DEFAULT_POWER*/,
-    int default_coding_rate /*DEFAULT_CODING_RATE*/
-    ) : module(loramodule)
-{
-  this->RXCallback = nullptr;
-  this->RXAlienCallback = nullptr;
-  this->packetTransmitting = false;
-  this->readyToReceive = false;
-  this->id = id;
-  printf("id %d \n", id);
-  this->channel = default_channel;
-  this->spreading_factor = default_spreading_factor;
-  this->bandwidth = default_bandwidth;
-  this->squelch = squelch;
-  this->power = default_power;
-  this->coding_rate = default_coding_rate;
-  // Serial.println(String(default_power) + " " + String(default_spreading_factor) + " " + String(default_coding_rate) + " " + String(DEFAULT_SYNC_WORD) + " " + String(DEFAULT_PREAMBLE_LENGTH));
-  //  Initialize the LoRa module with the specified settings
-  printf(("initializing frequency" + String(channels[channel]) +  "\n").c_str() );
-  check(this->module.setFrequency(channels[channel]));
-  printf(("frequency \n" + String(channels[channel])).c_str());
-  // Serial.println("frequency" + String(channels[channel]));
-  check(this->module.setOutputPower(default_power));
-  printf("power %d \n", default_power);
-  check(this->module.setBandwidth(default_bandwidth));
-  printf("bandwidth %f \n", default_bandwidth);
-  check(this->module.setSpreadingFactor(default_spreading_factor));
-  printf("spreading factor %d \n", default_spreading_factor);
-  check(this->module.setCodingRate(default_coding_rate));
-  printf("coding rate %d \n", default_coding_rate);
-  check(this->module.setSyncWord(DEFAULT_SYNC_WORD));
-  printf("sync word %d \n", DEFAULT_SYNC_WORD);
-  check(this->module.setPreambleLength(DEFAULT_PREAMBLE_LENGTH));
-  printf("preamble length %d \n", DEFAULT_PREAMBLE_LENGTH);
-  this->module.setDio1Action(setFlag);
-  Serial.println("dio1 action set");
-
-  // Serial.print("Calibration->");
-  LORANoiseCalibrateAllChannels(true);
-  // Serial.println("Calibration done");
-  setMode(RECEIVING, true);
-}
-
-void MAC::initialize(
-    SX1262& loramodule,
-    int id, int default_channel /* = DEFAULT_CHANNEL*/,
-    int default_spreading_factor /* = DEFAULT_SPREADING_FACTOR*/,
-    float default_bandwidth /* = DEFAULT_SPREADING_FACTOR*/,
-    int squelch /*= DEFAULT_SQUELCH*/, int default_power /* = DEFAULT_POWER*/,
-    int default_coding_rate /*DEFAULT_CODING_RATE*/)
-{
-  if (mac == nullptr)
-  {
-    mac =
-        new MAC(loramodule, id, default_channel, default_spreading_factor,
-                default_bandwidth, squelch, default_power, default_coding_rate);
-  }
-}
-
-MAC::~MAC()
-{
-  // Destructor implementation if needed
-}
-
-int MAC::getNoiseFloorOfChannel(uint8_t channel)
-{
-  if (channel > NUM_OF_CHANNELS)
-    return 255;
-
-  return this->noiseFloor[channel];
+  return module.random(65000);
 }
 
 uint8_t MAC::getNumberOfChannels()
 {
-  return NUM_OF_CHANNELS;
+  return channelCount;
 }
 
-/**
- * Creates a MAC packet with the given data.
- * @param sender The sender node ID.
- * @param target The target node ID.
- * @param data The data to include in the packet.
- * @param size The size of the data in bytes.
- * @return The created MAC packet.
- */
-
-MACPacket *MAC::createPacket(uint16_t sender, uint16_t target,
-                             unsigned char *data, uint8_t size)
+int MAC::getNoiseFloorOfChannel(uint8_t channel_num)
 {
-  MACPacket *packet = (MACPacket *)malloc(sizeof(MACPacket) + size);
-  if (!packet)
-  {
-    return NULL;
-  }
-  (*packet).sender = sender;
-  (*packet).target = target;
-  (*packet).crc32 = 0;
-  memcpy((*packet).data, data, size);
-
-  (*packet).crc32 = MathExtension.crc32c(0, data, size);
-  // Serial.println(" CRC calculated : " + String((*packet).crc32));
-
-  return packet;
+  if (!validChannel(channel_num))
+    return 255;
+  return noiseFloor[channel_num];
 }
 
-/**
- * Sends data to a target node.
- * @param sender The sender node ID.
- * @param target The target node ID.
- * @param data The data to send.
- * @param size The size of the data in bytes.
- * @throws std::invalid_argument if the data size is greater than the maximum
- * allowed size.
- */
-
-uint8_t MAC::sendData(uint16_t target, unsigned char *data, uint8_t size, uint32_t timeout /*= 5000*/)
+void MAC::setRXCallback(PacketReceivedCallback callback)
 {
-  if (this->getMode() != SENDING)
-  {
-    if (size > DATASIZE_MAC)
-    {
-      // Serial.println("Data size cannot be greater than 247 bytes\n");
-      return 3;
-    }
-
-    MACPacket *packet = createPacket(this->id, target, data, size);
-
-    if (!packet)
-      return 2;
-
-    calibrateBasedOnLastPacket();
-    uint8_t finalPacketLength = MAC_OVERHEAD + size;
-    unsigned char *packetBytes = (unsigned char *)packet;
-
-    if (!waitForTransmissionAuthorization(timeout))
-    {
-      printf("timeout\n");
-      free(packetBytes);
-      return 1;
-    }
-
-    // Serial.print("starting to send->" + String(finalPacketLength));
-    operationDone = false;
-
-    setMode(SENDING);
-
-    check(this->module.startTransmit(packetBytes, finalPacketLength));
-    // Serial.println("transmit start completed");
-
-    free(packetBytes);
-  }
-  else
-  {
-    // Serial.println("busy");
-  }
-
-  return 0;
+  RXCallback = callback;
 }
 
 void MAC::setRXAlienCallback(PacketReceivedCallback callback)
@@ -359,96 +188,275 @@ void MAC::setRXAlienCallback(PacketReceivedCallback callback)
   RXAlienCallback = callback;
 }
 
-void MAC::calibrateBasedOnLastPacket()
+void MAC::setTransmitDone(TransmitDone callback)
 {
-  float frequencyError = (float)this->module.getFrequencyError();
-  printf("frequency error %f \n", frequencyError);
-
-  if (abs(frequencyError) > 500 && this->channels[this->channel] * 1000000 + frequencyError < this->channels[this->channel] * 1000000 * 1.0001 && this->channels[this->channel] * 1000000 + frequencyError > this->channels[this->channel] * 1000000 * 0.9999)
-  {
-    this->calibratedFrequency -= frequencyError / 1000000;
-    this->module.setFrequency(this->calibratedFrequency);
-  }
+  transmitDone = callback;
 }
 
-/**
- * Waits for transmission authorization for a given timeout period.
- * @param timeout The timeout period in milliseconds.
- * @return true if transmission is authorized within the timeout period, false
- * otherwise.
- */
-
-bool MAC::waitForTransmissionAuthorization(uint32_t timeout)
+void MAC::setFrequencyAndListen(uint16_t newChannel)
 {
-  uint32_t start = millis();
-  // Serial.println("waiting for transmission authorization" + String(timeout) + "start" + String(start));
-  while (millis() - start < timeout && !transmissionAuthorized())
+  if (!validChannel(newChannel))
+    return;
+  if (getMode() == SLEEPING)
+    setMode(IDLE, true);
+  channel = newChannel;
+  calibratedFrequency = channels[channel];
+  module.setFrequency((float)calibratedFrequency);
+  setMode(RECEIVING, true);
+}
+
+void MAC::setFrequency(uint16_t newChannel)
+{
+  if (!validChannel(newChannel))
+    return;
+  if (getMode() == SLEEPING)
+    setMode(IDLE, true);
+  channel = newChannel;
+  calibratedFrequency = channels[channel];
+  module.setFrequency((float)calibratedFrequency);
+}
+
+int MAC::LORANoiseFloorCalibrate(int channelToMeasure, bool save)
+{
+  if (channelToMeasure < 0 || !validChannel((uint16_t)channelToMeasure))
+    return 255;
+
+  const State previousState = getMode();
+  const int previousChannel = channel;
+  setFrequencyAndListen((uint16_t)channelToMeasure);
+
+  int measurements[NUMBER_OF_MEASUREMENTS];
+  for (int i = 0; i < NUMBER_OF_MEASUREMENTS; ++i)
   {
-    delay(TIME_BETWEENMEASUREMENTS / 3);
+    measurements[i] = module.getRSSI(false);
+    delay(TIME_BETWEENMEASUREMENTS);
   }
-  // Serial.println("done waiting for transmission authorization end " + String(start - millis()));
-  return millis() - start < timeout;
+  MathExtension.quickSort(measurements, 0, NUMBER_OF_MEASUREMENTS - 1);
+
+  int average = 0;
+  for (int i = DISCRIMINATE_MEASURMENTS;
+       i < NUMBER_OF_MEASUREMENTS - DISCRIMINATE_MEASURMENTS;
+       ++i)
+  {
+    average += measurements[i];
+  }
+  average /= NUMBER_OF_MEASUREMENTS - DISCRIMINATE_MEASURMENTS * 2;
+
+  // Store the raw measured floor. Squelch is applied exactly once by the
+  // carrier-sense comparison below.
+  if (save)
+    noiseFloor[channelToMeasure] = average;
+
+  if (previousChannel >= 0 && validChannel((uint16_t)previousChannel))
+    setFrequency((uint16_t)previousChannel);
+  setMode(previousState, true);
+  return average + squelch;
+}
+
+void MAC::LORANoiseCalibrateAllChannels(bool save)
+{
+  const State previousState = getMode();
+  const int previousChannel = channel;
+  for (uint8_t i = 0; i < channelCount; ++i)
+    LORANoiseFloorCalibrate(i, save);
+  if (previousChannel >= 0 && validChannel((uint16_t)previousChannel))
+    setFrequency((uint16_t)previousChannel);
+  setMode(previousState, true);
+}
+
+MACPacket *MAC::createPacket(
+    uint16_t sender,
+    uint16_t target,
+    unsigned char *data,
+    uint8_t size)
+{
+  MACPacket *packet = (MACPacket *)malloc(sizeof(MACHeader) + size);
+  if (!packet)
+    return nullptr;
+
+  packet->sender = sender;
+  packet->target = target;
+  packet->crc32 = 0;
+  if (size > 0)
+    memcpy(packet->data, data, size);
+  packet->crc32 = MathExtension.crc32c(0, packet->data, size);
+  return packet;
+}
+
+void MAC::handlePacket()
+{
+  const uint16_t length = module.getPacketLength(true);
+  if (length < sizeof(MACHeader))
+    return;
+
+  uint8_t *data = (uint8_t *)malloc(length);
+  if (!data)
+    return;
+
+  const int readStatus = module.readData(data, length);
+  if (readStatus != RADIOLIB_ERR_NONE)
+  {
+    free(data);
+    return;
+  }
+
+  MACPacket *packet = (MACPacket *)data;
+  const uint32_t crcReceived = packet->crc32;
+  packet->crc32 = 0;
+  const uint32_t crcCalculated = MathExtension.crc32c(
+      0,
+      packet->data,
+      length - sizeof(MACHeader));
+  packet->crc32 = crcReceived;
+
+  if ((packet->target == BROADCAST || packet->target == id) && RXCallback)
+  {
+    RXCallback(packet, length, crcCalculated);
+    return; // ownership transfers to upper layer
+  }
+  if (packet->target != BROADCAST && packet->target != id && RXAlienCallback)
+  {
+    RXAlienCallback(packet, length, crcCalculated);
+    return; // ownership transfers to callback
+  }
+
+  free(packet);
 }
 
 bool MAC::transmissionAuthorized()
 {
-  State previousMode = getMode();
-  setMode(RECEIVING);
-  delay(TIME_BETWEENMEASUREMENTS / 3);
-  int rssi = this->module.getRSSI(false);
+  if (channel < 0 || !validChannel((uint16_t)channel))
+    return false;
 
-  for (int i = 1; i < NUMBER_OF_MEASUREMENTS_LBT; i++)
+  const State previousMode = getMode();
+  setMode(RECEIVING, true);
+
+  delay(TIME_BETWEENMEASUREMENTS / 3);
+  int rssi = module.getRSSI(false);
+  for (int i = 1; i < NUMBER_OF_MEASUREMENTS_LBT; ++i)
   {
     delay(TIME_BETWEENMEASUREMENTS);
-    rssi += this->module.getRSSI(false);
+    rssi += module.getRSSI(false);
   }
   rssi /= NUMBER_OF_MEASUREMENTS_LBT;
-  // Serial.println("RSSI: " + String(rssi) + "noise floor" + String(noiseFloor[channel] + squelch));
-  //  //Serial.printf("rssi %d roof %d \n ", rssi, noiseFloor[channel] + squelch);
 
-  setMode(previousMode);
+  setMode(previousMode, true);
   return rssi < noiseFloor[channel] + squelch;
 }
 
-MAC *MAC::getInstance()
+bool MAC::waitForTransmissionAuthorization(uint32_t timeout)
 {
-  if (mac == nullptr)
+  const uint32_t start = millis();
+  while ((uint32_t)(millis() - start) < timeout)
   {
-    // Throw an exception or handle the error case if initialize() has not been
-    // called before getInstance()
-    return nullptr;
+    if (transmissionAuthorized())
+      return true;
+    delay(TIME_BETWEENMEASUREMENTS / 3);
   }
-  return mac;
+  return false;
 }
 
-State MAC::getMode() { return state; }
-
-void MAC::setMode(State state, boolean force)
+void MAC::calibrateBasedOnLastPacket()
 {
-  if (force || MAC::getMode() != state)
+  // Deliberately disabled in protocol-v2. SX126x frequency-error reporting is
+  // not a safe basis for cumulatively changing the local TX frequency from the
+  // last peer's packet. A future correction loop must be bounded, filtered and
+  // associated with a specific peer/channel.
+}
+
+uint8_t MAC::sendData(
+    uint16_t target,
+    unsigned char *data,
+    uint8_t size,
+    uint32_t timeout)
+{
+  if (getMode() == SENDING)
+    return MAC_SEND_BUSY;
+  if (channel < 0 || !validChannel((uint16_t)channel))
+    return MAC_SEND_RADIO_ERROR;
+  if (size > DATASIZE_MAC)
+    return MAC_SEND_TOO_LARGE;
+
+  MACPacket *packet = createPacket(id, target, data, size);
+  if (!packet)
+    return MAC_SEND_ALLOC_FAILED;
+
+  const uint8_t finalPacketLength = MAC_OVERHEAD + size;
+  if (!waitForTransmissionAuthorization(timeout))
   {
-    MAC::state = state;
-    switch (state)
-    {
-    case SENDING:
-      this->module.standby();
-      break;
-    case IDLE:
-      this->module.standby();
-      break;
-    case RECEIVING:
-      this->module.startReceive();
-      break;
-    case SLEEPING:
-      this->module.sleep(true);
-      break;
-    default:
-      break;
-    }
+    free(packet);
+    return MAC_SEND_CHANNEL_BUSY_TIMEOUT;
+  }
+
+  operationDone = false;
+  setMode(SENDING, true);
+  const int result = module.startTransmit(
+      (unsigned char *)packet,
+      finalPacketLength);
+  free(packet);
+
+  if (result != RADIOLIB_ERR_NONE)
+  {
+    // Do not wedge in SENDING waiting for an IRQ that will never arrive.
+    setMode(RECEIVING, true);
+    return MAC_SEND_RADIO_ERROR;
+  }
+
+  return MAC_SEND_OK;
+}
+
+void MAC::loop()
+{
+  if (!operationDone)
+    return;
+
+  operationDone = false;
+  if (getMode() == RECEIVING)
+  {
+    handlePacket();
+    return;
+  }
+
+  if (getMode() == SENDING)
+  {
+    module.finishTransmit();
+    setMode(RECEIVING, true);
+    // Callback observes a radio that is already ready to receive. This avoids
+    // the old illegal intermediate state where upper layers ran while SENDING.
+    if (transmitDone)
+      transmitDone();
   }
 }
 
-void MAC::setRXCallback(PacketReceivedCallback callback)
+RAM_ATTR void MAC::setFlag(void)
 {
-  RXCallback = callback;
+  MAC::operationDone = true;
+}
+
+State MAC::getMode()
+{
+  return state;
+}
+
+void MAC::setMode(State newState, bool force)
+{
+  if (!force && state == newState)
+    return;
+
+  state = newState;
+  switch (newState)
+  {
+  case SENDING:
+  case IDLE:
+    module.standby();
+    break;
+  case RECEIVING:
+    module.startReceive();
+    break;
+  case SLEEPING:
+    module.sleep(true);
+    break;
+  default:
+    break;
+  }
 }
