@@ -7,7 +7,12 @@ SIM_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIM_ROOT))
 
 from model import Packet, Profile
-from radio_timing import rssi_cca_duration_ms, tx_startup_ms
+from radio_timing import (
+    rssi_cca_duration_ms,
+    rx_packet_read_ms,
+    rx_rearm_ms,
+    tx_startup_ms,
+)
 from shared_backends import SharedPythonNetwork
 
 
@@ -129,7 +134,7 @@ def test_audible_tx_started_during_cca_is_seen_by_later_rssi_sample():
     assert net.medium_metrics.collision_drops == 0
 
 
-def test_reliable_link_ack_pays_its_own_cca_setup_and_airtime():
+def test_reliable_link_ack_has_distinct_rx_read_cca_tx_and_rearm_timeline():
     net = SharedPythonNetwork(
         seed=905,
         profile=Profile.intended(),
@@ -144,16 +149,33 @@ def test_reliable_link_ack_pays_its_own_cca_setup_and_airtime():
     expected_data_start = rssi_cca_duration_ms() + tx_startup_ms(frame_bytes)
     expected_data_end = expected_data_start + net.airtime_ms(frame_bytes)
     expected_ack_start = (
-        expected_data_end + rssi_cca_duration_ms() + tx_startup_ms(ack_bytes)
+        expected_data_end
+        + rx_packet_read_ms(frame_bytes)
+        + rssi_cca_duration_ms()
+        + tx_startup_ms(ack_bytes)
     )
     expected_ack_end = expected_ack_start + net.airtime_ms(ack_bytes)
+    expected_sender_ack = expected_ack_end + rx_packet_read_ms(ack_bytes)
+    expected_receiver_dtpk = expected_ack_end + rx_rearm_ms()
 
     completions = []
+    deliveries = []
+    net.nodes[2].receive = lambda p, h: deliveries.append((net.now, p.packet_id))
     net.transmit(1, 2, packet, True, lambda ok: completions.append((net.now, ok)))
+
     net.run(expected_ack_end - 0.001)
     assert completions == []
+    assert deliveries == []
 
-    net.run(expected_ack_end + 0.001)
-    assert completions == [(pytest.approx(expected_ack_end, abs=1e-6), True)]
+    net.run(expected_sender_ack + 0.001)
+    assert len(completions) == 1
+    assert completions[0][0] == pytest.approx(expected_sender_ack, abs=1e-6)
+    assert completions[0][1] is True
+    # The ACK receiver can process its small ACK before the ACK transmitter has
+    # completed RadioLib's TX_DONE -> continuous-RX re-arm sequence.
+    assert deliveries == []
+
+    net.run(expected_receiver_dtpk + 0.001)
+    assert deliveries == [(pytest.approx(expected_receiver_dtpk, abs=1e-6), 30)]
     assert net.metrics.radio_link_ack_frames == 1
     assert net.medium_metrics.cca_scans >= 2
