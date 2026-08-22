@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from typing import Dict, List, Literal, Optional, Sequence, Tuple
+from typing import Dict, List, Literal, Optional, Tuple
 
-from cpp_backend import CppNetwork
-from environment import Waypoint
+from cpp_sim_adapter import CppSimNetwork
 from model import Profile
 from simulator import Simulator
 
@@ -61,9 +60,10 @@ class AppSendEvent:
 class Scenario:
     """Backend-independent experiment definition.
 
-    All topology, continuous trajectories, environmental failures and app demand
-    are defined before protocol execution.  `build("python")` and `build("cpp")`
-    then attach different node implementations to the same physical experiment.
+    Topology, continuous trajectories, environmental failures and application
+    demand are defined before protocol execution. ``build("python")`` and
+    ``build("cpp")`` attach different protocol implementations to the same
+    EnvironmentKernel semantics.
     """
 
     seed: int = 1
@@ -85,7 +85,7 @@ class Scenario:
         if backend == "python":
             network = Simulator(seed=self.seed, profile=profile or Profile.current())
         elif backend == "cpp":
-            network = CppNetwork(seed=self.seed, binary=binary, tick_ms=tick_ms)
+            network = CppSimNetwork(seed=self.seed, binary=binary, tick_ms=tick_ms)
         else:
             raise ValueError(f"unknown backend {backend!r}")
 
@@ -114,7 +114,6 @@ class Scenario:
         for node_id, points in self.trajectories.items():
             network.set_trajectory(node_id, points)
 
-        # Environment events always have priority over radio/protocol callbacks.
         for event in self.link_events:
             network.set_link_at(event.t_ms, event.a, event.b, event.up)
         for event in self.node_events:
@@ -148,7 +147,10 @@ class Scenario:
             seed=raw.get("seed", 1),
             nodes=[NodeSpec(**x) for x in raw.get("nodes", [])],
             links=[LinkSpec(**x) for x in raw.get("links", [])],
-            trajectories={int(k): [tuple(p) for p in v] for k, v in raw.get("trajectories", {}).items()},
+            trajectories={
+                int(k): [tuple(p) for p in v]
+                for k, v in raw.get("trajectories", {}).items()
+            },
             link_events=[LinkStateEvent(**x) for x in raw.get("link_events", [])],
             node_events=[NodeStateEvent(**x) for x in raw.get("node_events", [])],
             app_events=[AppSendEvent(**x) for x in raw.get("app_events", [])],
