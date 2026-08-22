@@ -21,11 +21,17 @@ class Node:
 
         self.routes_by_neighbor: Dict[int, Dict[int, AdvertisedRoute]] = {}
         self.routes: Dict[int, Route] = {}
-        # For each destination: best finite distance that *this node has
-        # advertised*. This is intentionally not updated merely by route
-        # selection; that distinction is part of the feasibility proof.
+        # Feasible distance is based on values this node has advertised, not
+        # merely values it once selected internally.
         self.feasibility: Dict[int, FeasibilityState] = {}
         self.origin_sequence = 0
+        self.route_version = 0
+        # Direct neighbour -> (neighbour incarnation/origin sequence, state version)
+        self.neighbor_cryst_state: Dict[int, Tuple[int, int]] = {}
+
+        self.seq_requests_seen: Set[Tuple[int, int, int, int]] = set()
+        self.seq_request_last: Dict[int, float] = {}
+        self.seq_request_max_seen: Dict[int, int] = {}
 
         self.session_active = False
         self.session_seen: Set[int] = set()
@@ -47,6 +53,11 @@ class Node:
         self.routes_by_neighbor.clear()
         self.routes.clear()
         self.feasibility.clear()
+        self.route_version = 0
+        self.neighbor_cryst_state.clear()
+        self.seq_requests_seen.clear()
+        self.seq_request_last.clear()
+        self.seq_request_max_seen.clear()
         self.session_active = False
         self.session_seen.clear()
         self.session_deadline = 0
@@ -66,14 +77,15 @@ class Node:
         self.generation += 1
 
         if self.profile.sequence_numbers:
-            # Persistent across simulated reboot in the Python model. The C++
-            # implementation will use a persistence hook/range reservation so a
-            # reboot cannot move a source sequence backwards.
-            self.origin_sequence = (self.origin_sequence + 1) & 0xFFFF
-            if self.origin_sequence == 0:
-                self.origin_sequence = 1
+            # Persistent incarnation in the model. Real firmware should reserve
+            # sequence ranges / use a boot counter so reboot never moves backward.
+            self.origin_sequence = next_sequence(self.origin_sequence)
 
-        self.sim.log("node_up", node=self.id)
+        self.sim.log(
+            "node_up",
+            node=self.id,
+            origin_sequence=self.origin_sequence,
+        )
         self.schedule_cryst("startup")
 
         gen = self.generation
@@ -83,6 +95,9 @@ class Node:
                 self._periodic_cryst,
                 gen,
             )
+        if self.profile.hello_period_ms:
+            first = self.sim.rng.uniform(100, self.profile.hello_period_ms)
+            self.sim.schedule(first, self._periodic_hello, gen)
         if self.profile.origin_seq_period_ms:
             self.sim.schedule(
                 self.profile.origin_seq_period_ms,
@@ -104,6 +119,9 @@ class Node:
         self.sim.metrics.crashes += 1
         self.sim.log("crash", node=self.id, reason=reason)
 
+    # ------------------------------------------------------------------
+    # Control-plane timers
+    # ------------------------------------------------------------------
     def _periodic_cryst(self, gen: int) -> None:
         if gen != self.generation or not self.up or self.crashed:
             return
@@ -114,12 +132,29 @@ class Node:
             gen,
         )
 
+    def _periodic_hello(self, gen: int) -> None:
+        if gen != self.generation or not self.up or self.crashed:
+            return
+        packet = Packet(
+            "HELLO",
+            self.next_packet_id(),
+            wire_dtpk_size=DTPK_HELLO_SIZE,
+            sender_sequence=self.origin_sequence,
+            route_version=self.route_version,
+        )
+        self.sim.metrics.hello_tx += 1
+        self.enqueue(TxRequest(packet, None, lcmm_ack=False))
+
+        period = float(self.profile.hello_period_ms or 1)
+        jitter = max(0.0, min(0.95, self.profile.hello_jitter_fraction))
+        if jitter:
+            period *= self.sim.rng.uniform(1.0 - jitter, 1.0 + jitter)
+        self.sim.schedule(period, self._periodic_hello, gen)
+
     def _origin_sequence_tick(self, gen: int) -> None:
         if gen != self.generation or not self.up or self.crashed:
             return
-        self.origin_sequence = (self.origin_sequence + 1) & 0xFFFF
-        if self.origin_sequence == 0:
-            self.origin_sequence = 1
+        self.origin_sequence = next_sequence(self.origin_sequence)
         self.schedule_cryst("origin_sequence")
         self.sim.schedule(
             self.profile.origin_seq_period_ms or 1,
@@ -137,14 +172,21 @@ class Node:
             for neighbor, last in self.last_heard.items()
             if self.sim.now - last >= expiry
         ]
-        changed = False
+        changed_contribution = False
         for neighbor in stale:
             self.last_heard.pop(neighbor, None)
+            # We no longer possess this neighbour's full advertised state. A
+            # returning HELLO must therefore request it even if version numbers
+            # happen to match an earlier incarnation.
+            self.neighbor_cryst_state.pop(neighbor, None)
             if neighbor in self.routes_by_neighbor:
                 del self.routes_by_neighbor[neighbor]
-                changed = True
-        if changed and self.rebuild_routes():
-            self.schedule_cryst("neighbor_expired")
+                changed_contribution = True
+
+        if changed_contribution:
+            changed_best = self.rebuild_routes()
+            if changed_best:
+                self.schedule_cryst("neighbor_expired")
         self.sim.schedule(expiry / 3, self._expiry_tick, gen)
 
     def schedule_cryst(self, reason: str) -> None:
@@ -153,7 +195,10 @@ class Node:
         self.cryst_scheduled = True
         self.cryst_token += 1
         token = self.cryst_token
-        high = max(self.profile.cryst_jitter_min_ms + 1, self.profile.k_limit_ms)
+        upper = self.profile.cryst_jitter_max_ms
+        if upper is None:
+            upper = self.profile.k_limit_ms
+        high = max(self.profile.cryst_jitter_min_ms + 1, upper)
         delay = self.sim.rng.uniform(self.profile.cryst_jitter_min_ms, high)
         self.sim.log(
             "cryst_schedule",
@@ -163,12 +208,10 @@ class Node:
         )
         self.sim.schedule(delay, self._emit_cryst, token)
 
+    # ------------------------------------------------------------------
+    # Route advertisement / feasibility
+    # ------------------------------------------------------------------
     def _update_feasibility_from_advertisement(self) -> None:
-        """Record finite routing distances immediately before advertising them.
-
-        Babel's FD is based on updates sent by this node. A newer sequence resets
-        the metric component; within one sequence the FD metric can only decrease.
-        """
         if not self.profile.feasibility_condition:
             return
         for dest, route in self.routes.items():
@@ -199,7 +242,6 @@ class Node:
         if token != self.cryst_token or not self.up or self.crashed:
             return
         self.cryst_scheduled = False
-
         self._update_feasibility_from_advertisement()
 
         ads: List[AdvertisedRoute] = []
@@ -227,12 +269,19 @@ class Node:
             if self.profile.sequence_numbers
             else NEIGHBOR_RECORD_SIZE
         )
+        header_size = (
+            DTPK_CRYST_V2_HEADER
+            if self.profile.state_digest_requests
+            else DTPK_CRYST_HEADER
+        )
         packet = Packet(
             "CRYST",
             self.next_packet_id(),
             advertisements=tuple(ads),
-            wire_dtpk_size=DTPK_CRYST_HEADER + len(ads) * record_size,
+            wire_dtpk_size=header_size + len(ads) * record_size,
             cryst_record_size=record_size,
+            sender_sequence=self.origin_sequence,
+            route_version=self.route_version,
         )
         self.enqueue(TxRequest(packet, None, lcmm_ack=False))
 
@@ -241,6 +290,9 @@ class Node:
         self.packet_counter = (self.packet_counter + 1) & 0xFFFF
         return pid
 
+    # ------------------------------------------------------------------
+    # TX queue / reliability
+    # ------------------------------------------------------------------
     def enqueue(self, req: TxRequest) -> None:
         if req.priority or req.packet.kind in ("ACK", "NACK"):
             self.txq.appendleft(req)
@@ -259,7 +311,9 @@ class Node:
         if self.waiting_e2e is not None and self.profile.global_e2e_gate:
             if not (
                 self.profile.ack_bypasses_e2e_gate
-                and req.packet.kind in ("ACK", "NACK", "CRYST")
+                and req.packet.kind in (
+                    "ACK", "NACK", "CRYST", "HELLO", "CRYST_REQ", "SEQ_REQ"
+                )
             ):
                 return
         self.txq.popleft()
@@ -315,16 +369,24 @@ class Node:
         self.sim.log("e2e_timeout", node=self.id, packet_id=packet_id)
         self.sim.schedule(0, self.pump)
 
+    # ------------------------------------------------------------------
+    # Receive dispatch
+    # ------------------------------------------------------------------
     def receive(self, packet: Packet, previous_hop: int) -> None:
         if not self.up or self.crashed:
             return
 
-        # Any valid directly-received DTPK packet proves that RF neighbour alive.
-        # This is independent of crystallization-wave participation.
+        # Any valid directly received protocol frame is a liveness observation.
         self.last_heard[previous_hop] = self.sim.now
 
+        if packet.kind == "HELLO":
+            self.receive_hello(packet, previous_hop)
+            return
         if packet.kind == "CRYST":
             self.receive_cryst(packet, previous_hop)
+            return
+        if packet.kind == "SEQ_REQ":
+            self.receive_seq_req(packet, previous_hop)
             return
 
         if packet.final_target == self.id:
@@ -334,12 +396,160 @@ class Node:
                 self.receive_ack_local(packet, True)
             elif packet.kind == "NACK":
                 self.receive_ack_local(packet, False)
+            elif packet.kind == "CRYST_REQ":
+                self.sim.metrics.cryst_req_rx += 1
+                self.schedule_cryst("state_request")
             return
 
         self.forward(packet, previous_hop)
 
+    # ------------------------------------------------------------------
+    # HELLO / state repair
+    # ------------------------------------------------------------------
+    def receive_hello(self, packet: Packet, previous_hop: int) -> None:
+        self.sim.metrics.hello_rx += 1
+        incoming_state = (packet.sender_sequence, packet.route_version)
+        known_state = self.neighbor_cryst_state.get(previous_hop)
+
+        contribution = self.routes_by_neighbor.get(previous_hop)
+        reincarnated = (
+            known_state is not None
+            and known_state[0] != packet.sender_sequence
+        )
+        if contribution is None or reincarnated:
+            # A new incarnation invalidates all old indirect state from this
+            # neighbour immediately; keep only the directly observed route.
+            contribution = {}
+            self.routes_by_neighbor[previous_hop] = contribution
+            if reincarnated:
+                self.neighbor_cryst_state.pop(previous_hop, None)
+
+        direct = AdvertisedRoute(
+            previous_hop,
+            self.id,
+            1,
+            packet.sender_sequence,
+        )
+        contribution_changed = contribution.get(previous_hop) != direct
+        if contribution_changed:
+            contribution[previous_hop] = direct
+
+        best_changed = self.rebuild_routes() if (contribution_changed or reincarnated) else False
+        if best_changed:
+            self.schedule_cryst("hello_neighbor_change")
+
+        known_state = self.neighbor_cryst_state.get(previous_hop)
+        self.sim.log(
+            "hello_rx",
+            node=self.id,
+            sender=previous_hop,
+            sender_sequence=packet.sender_sequence,
+            advertised_version=packet.route_version,
+            known_state=known_state,
+            best_changed=best_changed,
+        )
+
+        if self.profile.state_digest_requests and known_state != incoming_state:
+            request = Packet(
+                "CRYST_REQ",
+                self.next_packet_id(),
+                original_sender=self.id,
+                final_target=previous_hop,
+                wire_dtpk_size=DTPK_CRYST_REQ_SIZE,
+            )
+            self.sim.metrics.cryst_req_tx += 1
+            self.enqueue(
+                TxRequest(
+                    request,
+                    previous_hop,
+                    lcmm_ack=True,
+                    priority=True,
+                )
+            )
+
+    # ------------------------------------------------------------------
+    # Bounded sequence request: liveness counterpart of feasibility
+    # ------------------------------------------------------------------
+    def request_sequence(self, dest: int, requested_sequence: int) -> None:
+        if not self.profile.seqno_requests or dest == self.id:
+            return
+
+        last = self.seq_request_last.get(dest, -1e30)
+        max_seen = self.seq_request_max_seen.get(dest, -1)
+        if (
+            requested_sequence <= max_seen
+            and self.sim.now - last < self.profile.seqno_request_cooldown_ms
+        ):
+            return
+
+        self.seq_request_last[dest] = self.sim.now
+        self.seq_request_max_seen[dest] = max(max_seen, requested_sequence)
+        request = Packet(
+            "SEQ_REQ",
+            self.next_packet_id(),
+            original_sender=self.id,
+            final_target=dest,
+            wire_dtpk_size=DTPK_SEQ_REQ_SIZE,
+            requested_sequence=requested_sequence & 0xFFFF,
+            hop_limit=self.profile.seqno_request_hop_limit,
+        )
+        key = (
+            self.id,
+            request.packet_id,
+            dest,
+            request.requested_sequence,
+        )
+        self.seq_requests_seen.add(key)
+        self.sim.metrics.seq_req_tx += 1
+        self.sim.log(
+            "seq_req_tx",
+            node=self.id,
+            dest=dest,
+            requested=request.requested_sequence,
+        )
+        self.enqueue(TxRequest(request, None, lcmm_ack=False, priority=True))
+
+    def receive_seq_req(self, packet: Packet, previous_hop: int) -> None:
+        self.sim.metrics.seq_req_rx += 1
+        origin = packet.original_sender if packet.original_sender is not None else -1
+        dest = packet.final_target if packet.final_target is not None else -1
+        key = (origin, packet.packet_id, dest, packet.requested_sequence)
+        if key in self.seq_requests_seen:
+            self.sim.metrics.seq_req_duplicates += 1
+            return
+        self.seq_requests_seen.add(key)
+
+        if dest == self.id:
+            if sequence_newer(packet.requested_sequence, self.origin_sequence):
+                self.origin_sequence = packet.requested_sequence
+            self.sim.metrics.seq_req_satisfied += 1
+            self.sim.log(
+                "seq_req_satisfied",
+                node=self.id,
+                requester=origin,
+                sequence=self.origin_sequence,
+            )
+            self.schedule_cryst("sequence_request")
+            return
+
+        if packet.hop_limit <= 1:
+            return
+        forwarded = packet.clone()
+        forwarded.hop_limit -= 1
+        self.sim.metrics.seq_req_tx += 1
+        self.enqueue(TxRequest(forwarded, None, lcmm_ack=False, priority=True))
+
+    # ------------------------------------------------------------------
+    # CRYST receive
+    # ------------------------------------------------------------------
     def receive_cryst(self, packet: Packet, previous_hop: int) -> None:
         self.sim.metrics.cryst_rx += 1
+
+        if self.profile.state_digest_requests:
+            self.neighbor_cryst_state[previous_hop] = (
+                packet.sender_sequence,
+                packet.route_version,
+            )
 
         if self.profile.session_gc_enabled:
             if not self.session_active:
@@ -360,8 +570,9 @@ class Node:
             for advertisement in packet.advertisements
         )
 
-        sender_sequence = 0
-        if self.profile.sequence_numbers:
+        sender_sequence = packet.sender_sequence
+        if self.profile.sequence_numbers and not self.profile.state_digest_requests:
+            sender_sequence = 0
             for advertisement in packet.advertisements:
                 if (
                     advertisement.dest == previous_hop
@@ -381,11 +592,11 @@ class Node:
         }
 
         for advertisement in packet.advertisements:
-            # Sender's explicit self route became the direct candidate above.
-            if self.profile.sequence_numbers and advertisement.dest == previous_hop:
+            if (
+                self.profile.sequence_numbers
+                and advertisement.dest == previous_hop
+            ):
                 continue
-            # Broadcast split horizon: reject routes whose sender-selected next
-            # hop was us, and never learn a route to ourselves.
             if advertisement.dest == self.id or advertisement.via == self.id:
                 continue
 
@@ -394,7 +605,6 @@ class Node:
                 distance &= 0xFF
             elif self.profile.max_metric is not None:
                 distance = min(distance, self.profile.max_metric)
-
             if self.profile.sequence_numbers and distance >= ROUTE_INFINITY:
                 continue
 
@@ -411,14 +621,13 @@ class Node:
         best_changed = self.rebuild_routes()
 
         should_send = (
-            (not advertised_me)
+            (self.profile.cryst_missing_self_reply and not advertised_me)
             or (self.profile.propagate_on_route_change and best_changed)
         )
         self.sim.log(
             "cryst_rx",
             node=self.id,
             sender=previous_hop,
-            advertised_me=advertised_me,
             contribution_changed=contribution_changed,
             best_changed=best_changed,
             should_send=should_send,
@@ -453,15 +662,12 @@ class Node:
 
         if removed:
             changed = self.rebuild_routes()
-            self.sim.log(
-                "cryst_gc",
-                node=self.id,
-                removed=removed,
-                best_changed=changed,
-            )
             if changed:
                 self.schedule_cryst("cryst_gc")
 
+    # ------------------------------------------------------------------
+    # Route selection
+    # ------------------------------------------------------------------
     def _route_candidates(self) -> Dict[int, List[Route]]:
         candidates: Dict[int, List[Route]] = defaultdict(list)
         for router, contribution in self.routes_by_neighbor.items():
@@ -481,60 +687,69 @@ class Node:
     def _is_feasible(self, dest: int, route: Route) -> bool:
         if route.distance >= ROUTE_INFINITY:
             return False
-
         state = self.feasibility.get(dest)
         if state is None:
             return True
-
         if sequence_newer(route.sequence, state.sequence):
             return True
-
         if route.sequence != state.sequence:
             return False
-
-        # Feasibility compares the metric announced by our neighbour, not our
-        # local route metric. With unit-cost links that value is distance - 1.
         neighbour_metric = max(0, route.distance - 1)
         return neighbour_metric < state.feasible_distance
 
-    def _rebuild_feasible(self) -> Dict[int, Route]:
+    def _rebuild_feasible(self) -> Tuple[Dict[int, Route], Dict[int, List[Route]]]:
         candidates = self._route_candidates()
         new: Dict[int, Route] = {}
+        blocked: Dict[int, List[Route]] = defaultdict(list)
 
         for dest, routes in candidates.items():
             finite = [route for route in routes if route.distance < ROUTE_INFINITY]
-            feasible = [route for route in finite if self._is_feasible(dest, route)]
-            self.sim.metrics.feasibility_rejects += len(finite) - len(feasible)
-            if not feasible:
-                continue
+            feasible: List[Route] = []
+            for route in finite:
+                if self._is_feasible(dest, route):
+                    feasible.append(route)
+                else:
+                    blocked[dest].append(route)
+                    self.sim.metrics.feasibility_rejects += 1
+            if feasible:
+                new[dest] = min(
+                    feasible,
+                    key=lambda route: (route.distance, route.next_hop),
+                )
 
-            # Sequence numbers are admission/safety information, not a route
-            # preference. Among feasible routes choose minimum local metric.
-            new[dest] = min(
-                feasible,
-                key=lambda route: (route.distance, route.next_hop),
-            )
-
-        return new
+        return new, blocked
 
     def rebuild_routes(self) -> bool:
         old = self.routes
+        blocked: Dict[int, List[Route]] = {}
 
         if self.profile.feasibility_condition:
-            new = self._rebuild_feasible()
+            new, blocked = self._rebuild_feasible()
         else:
             candidates = self._route_candidates()
-            new: Dict[int, Route] = {}
-            for dest, routes in candidates.items():
-                new[dest] = min(
-                    routes,
-                    key=lambda route: (route.distance, route.next_hop),
-                )
+            new = {
+                dest: min(routes, key=lambda route: (route.distance, route.next_hop))
+                for dest, routes in candidates.items()
+            }
 
         changed = new != old
         self.routes = new
         if changed:
+            self.route_version = (self.route_version + 1) & 0xFFFF
             self.sim.metrics.route_changes += 1
+
+        # Feasibility provides safety by refusing a route that could point back
+        # into the forwarding DAG. If that refusal is the only reason a known
+        # destination vanished, explicitly ask the origin for a new generation.
+        if self.profile.seqno_requests:
+            for dest, rejected in blocked.items():
+                if dest in new or not rejected:
+                    continue
+                state = self.feasibility.get(dest)
+                if state is None:
+                    continue
+                self.request_sequence(dest, next_sequence(state.sequence))
+
         self.sim.metrics.max_route_entries = max(
             self.sim.metrics.max_route_entries,
             len(new),
@@ -545,6 +760,9 @@ class Node:
         )
         return changed
 
+    # ------------------------------------------------------------------
+    # Data plane
+    # ------------------------------------------------------------------
     def send_data(
         self,
         target: int,
@@ -687,6 +905,6 @@ class Node:
                 forwarded,
                 route.next_hop,
                 lcmm_ack=self.profile.relay_lcmm_ack,
-                priority=packet.kind in ("ACK", "NACK"),
+                priority=packet.kind in ("ACK", "NACK", "CRYST_REQ"),
             )
         )
