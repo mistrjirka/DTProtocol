@@ -26,6 +26,7 @@ jobs:
       - run: python -m pip install pytest
       - run: cmake -S simulator/cpp -B simulator/cpp/build -DCMAKE_BUILD_TYPE=RelWithDebInfo
       - run: cmake --build simulator/cpp/build --parallel 2
+      - run: ctest --test-dir simulator/cpp/build --output-on-failure
       - run: PYTHONPATH=simulator python -m pytest simulator/tests -q -rxX
 
   real-cpp-sanitizers:
@@ -40,6 +41,7 @@ jobs:
       - run: python -m pip install pytest
       - run: cmake -S simulator/cpp -B simulator/cpp/build-asan -DCMAKE_BUILD_TYPE=Debug -DDTP_HOST_SANITIZERS=ON
       - run: cmake --build simulator/cpp/build-asan --parallel 2
+      - run: ctest --test-dir simulator/cpp/build-asan --output-on-failure
       - run: >-
           DTP_CPP_NODE="$PWD/simulator/cpp/build-asan/dtprotocol_host_node"
           PYTHONPATH=simulator
