@@ -15,7 +15,12 @@ from scenario import Scenario, route_snapshot
 PROFILES = {
     "current": Profile.current,
     "intended": Profile.intended,
+    "heartbeat": Profile.heartbeat,
+    "heartbeat-sync": Profile.heartbeat_sync,
     "robust": Profile.robust,
+    "hold-down": Profile.hold_down,
+    "feasible": Profile.feasible,
+    "cryst-v2": Profile.crystallized_v2,
 }
 
 
