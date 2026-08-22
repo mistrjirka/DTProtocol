@@ -204,7 +204,15 @@ class CppNetwork(EnvironmentKernel):
         self.tick_ms = float(tick_ms)
         self.nodes: Dict[int, CppNodeProcess] = {}
         self._node_config: Dict[int, Tuple[int, int]] = {}
+        # Absolute environment time at which each emulated MCU last booted.
+        # The environment has one monotonic world clock, while Arduino millis()
+        # restarts at zero after every real reset/reboot.
+        self._boot_world_ms: Dict[int, float] = {}
         self._ticks_scheduled_until = 0.0
+
+    def _local_time(self, node_id: int) -> float:
+        """Translate absolute simulation time to this MCU's boot-relative millis."""
+        return max(0.0, self.now - self._boot_world_ms.get(node_id, self.now))
 
     def add_node(
         self,
@@ -222,6 +230,7 @@ class CppNetwork(EnvironmentKernel):
             k_limit=k_limit,
             binary=self.binary,
         )
+        self._boot_world_ms[node_id] = self.now
         self.register_node(node_id, up=True, position=position)
 
     def add_link(
@@ -266,6 +275,7 @@ class CppNetwork(EnvironmentKernel):
             k_limit=k_limit,
             binary=self.binary,
         )
+        self._boot_world_ms[node_id] = self.now
 
     def _handle_txs(self, sender: int, txs: List[Tx], at: float) -> None:
         for tx in txs:
@@ -374,7 +384,9 @@ class CppNetwork(EnvironmentKernel):
         ):
             self.rf_metrics.firmware_epoch_drops += 1
             return
-        txs = self.nodes[receiver].inject(self.now, sender, wire_target, payload)
+        txs = self.nodes[receiver].inject(
+            self._local_time(receiver), sender, wire_target, payload
+        )
         self.rf_metrics.rf_delivered += 1
         self._handle_txs(receiver, txs, self.now)
 
@@ -384,14 +396,14 @@ class CppNetwork(EnvironmentKernel):
             or self.node_epoch.get(sender, 0) != sender_epoch
         ):
             return
-        txs = self.nodes[sender].phy_done(self.now, token)
+        txs = self.nodes[sender].phy_done(self._local_time(sender), token)
         self._handle_txs(sender, txs, self.now)
 
     def _tick_all(self) -> None:
         for node_id in sorted(self.nodes):
             if not self.node_up.get(node_id, False):
                 continue
-            txs = self.nodes[node_id].tick(self.now)
+            txs = self.nodes[node_id].tick(self._local_time(node_id))
             self._handle_txs(node_id, txs, self.now)
 
     def run(self, until_ms: float) -> None:
@@ -410,7 +422,7 @@ class CppNetwork(EnvironmentKernel):
     def routes(self, node_id: int) -> Dict[int, Tuple[int, int]]:
         if not self.node_up.get(node_id, False):
             return {}
-        return self.nodes[node_id].routes(self.now)
+        return self.nodes[node_id].routes(self._local_time(node_id))
 
     def send(
         self,
@@ -423,7 +435,7 @@ class CppNetwork(EnvironmentKernel):
         if not self.node_up.get(node_id, False):
             return 0
         return self.nodes[node_id].send(
-            self.now,
+            self._local_time(node_id),
             target,
             payload,
             timeout_ms,
