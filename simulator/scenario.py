@@ -5,8 +5,8 @@ from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Literal, Optional, Tuple
 
 from model import Profile
-from shared_backends import SharedPythonNetwork
 from timed_cpp_backend import TimedSharedCppNetwork
+from timed_python_backend import TimedSharedPythonNetwork
 
 
 BackendName = Literal["python", "cpp"]
@@ -111,7 +111,7 @@ class Scenario:
             "duty_cycle_percent": duty_cycle_percent,
         }
         if backend == "python":
-            network = SharedPythonNetwork(
+            network = TimedSharedPythonNetwork(
                 profile=profile or Profile.current(), **common
             )
         elif backend == "cpp":
