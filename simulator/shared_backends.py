@@ -9,6 +9,7 @@ from typing import DefaultDict, List, Optional, Tuple
 
 from cpp_sim_adapter import CppSimNetwork
 from model import LCMM_OVERHEAD, MAC_OVERHEAD, MAX_PACKET_SIZE, NEIGHBOR_RECORD_SIZE
+from node import Node
 from simulator import Simulator
 
 
@@ -130,6 +131,33 @@ class KeyedEnvironmentMixin:
         return True, "ok"
 
 
+class MobileAwareNode(Node):
+    """Node whose own mobility label only changes its HELLO cadence.
+
+    The hint is intentionally local-only: it is not transmitted and cannot
+    change another node's feasibility condition, route metric, next-hop choice,
+    expiry, or loop-prevention state. A wrong label therefore affects airtime
+    and discovery latency only.
+    """
+
+    def __init__(self, sim, node_id: int, *, mobile_hint: bool = False):
+        super().__init__(sim, node_id)
+        self.mobile_hint = bool(mobile_hint)
+
+    def _effective_hello_period_ms(self) -> float:
+        configured = self.profile.hello_period_ms
+        if self.mobile_hint and self.profile.mobile_hello_period_ms is not None:
+            configured = self.profile.mobile_hello_period_ms
+        period = float(configured or 1)
+
+        # Preserve the optional strict-duty simulator behavior. Practical mode
+        # has duty_cycle_percent=0 and therefore gets the normal 4 s/10 s clocks.
+        duty = float(getattr(self.sim, "duty_cycle_percent", 0.0))
+        if 0.0 < duty <= 1.0:
+            period = max(period, 60_000.0)
+        return period
+
+
 class SharedPythonNetwork(KeyedEnvironmentMixin, Simulator):
     def __init__(
         self,
@@ -158,6 +186,21 @@ class SharedPythonNetwork(KeyedEnvironmentMixin, Simulator):
                 )
 
         self._init_shared_environment(radio_contention=radio_contention)
+
+    def add_node(
+        self,
+        node_id: int,
+        start: bool = True,
+        *,
+        position: Tuple[float, float] = (0.0, 0.0),
+        mobile_hint: bool = False,
+    ) -> MobileAwareNode:
+        node = MobileAwareNode(self, node_id, mobile_hint=mobile_hint)
+        self.nodes[node_id] = node
+        self.register_node(node_id, up=True, position=position)
+        if start:
+            self.schedule(0, node.start, priority=self.PROTOCOL_PRIORITY)
+        return node
 
     def _frame_bytes(self, packet):
         if packet.kind == "CRYST" and packet.wire_dtpk_size:
@@ -304,4 +347,9 @@ class SharedCppNetwork(KeyedEnvironmentMixin, CppSimNetwork):
         return super()._start_tx(sender, tx, at)
 
 
-__all__ = ["SharedPythonNetwork", "SharedCppNetwork", "MediumMetrics"]
+__all__ = [
+    "SharedPythonNetwork",
+    "SharedCppNetwork",
+    "MobileAwareNode",
+    "MediumMetrics",
+]
