@@ -1,6 +1,10 @@
 #include "host_runtime.h"
 #include "mac.h"
+#include "generalsettings.h"
+#include "mathextension.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdarg>
 #include <cstdlib>
 #include <cstring>
@@ -16,7 +20,15 @@ std::mt19937_64 g_rng(1);
 std::deque<hostsim::TxFrame> g_tx_queue;
 uint64_t g_next_tx_token = 1;
 uint8_t g_next_send_result = MAC_SEND_OK;
-uint64_t g_send_wait_until_ms = 0;
+uint64_t g_forced_wait_until_ms = 0;
+float g_duty_cycle_percent = 0.0f;
+uint64_t g_duty_until_ms = 0;
+
+uint32_t remaining_wait(uint64_t deadline) {
+    if (deadline <= g_now_ms) return 0;
+    const uint64_t wait = deadline - g_now_ms;
+    return wait > 0xffffffffULL ? 0xffffffffu : static_cast<uint32_t>(wait);
+}
 }
 
 uint32_t millis() {
@@ -60,21 +72,40 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data,
                       uint8_t size, uint32_t) {
     if (state_ == SENDING) return MAC_SEND_BUSY;
 
+    // Explicit test injection overrides policy so contracts can exercise fatal
+    // paths even if a previous successful frame established an off-time.
     if (g_next_send_result != MAC_SEND_OK) {
         const uint8_t result = g_next_send_result;
         g_next_send_result = MAC_SEND_OK;
         return result;
     }
 
+    if (g_duty_cycle_percent > 0.0f && g_duty_until_ms > g_now_ms)
+        return MAC_SEND_DUTY_CYCLE;
+
     active_tx_token_ = hostsim::enqueue_tx(target, data, size);
     state_ = SENDING;
+
+    if (g_duty_cycle_percent > 0.0f) {
+        const uint16_t frame_bytes = static_cast<uint16_t>(MAC_OVERHEAD + size);
+        const float airtime_ms = MathExtension.timeOnAir(
+            frame_bytes, 8, 9, 125.0f, 7);
+        if (airtime_ms > 0.0f && std::isfinite(airtime_ms)) {
+            const double period = std::ceil(
+                static_cast<double>(airtime_ms) *
+                (100.0 / static_cast<double>(g_duty_cycle_percent)));
+            const uint64_t wait = period > 0.0 ? static_cast<uint64_t>(period) : 1u;
+            g_duty_until_ms = g_now_ms + wait;
+        }
+    }
+
     return MAC_SEND_OK;
 }
 
 uint32_t MAC::getTransmitWaitMs() const {
-    if (g_send_wait_until_ms <= g_now_ms) return 0;
-    const uint64_t wait = g_send_wait_until_ms - g_now_ms;
-    return wait > 0xffffffffULL ? 0xffffffffu : static_cast<uint32_t>(wait);
+    return std::max(
+        remaining_wait(g_forced_wait_until_ms),
+        remaining_wait(g_duty_until_ms));
 }
 
 void MAC::loop() {}
@@ -130,15 +161,22 @@ void reset(uint16_t, uint64_t seed) {
     g_tx_queue.clear();
     g_next_tx_token = 1;
     g_next_send_result = MAC_SEND_OK;
-    g_send_wait_until_ms = 0;
+    g_forced_wait_until_ms = 0;
+    g_duty_cycle_percent = 0.0f;
+    g_duty_until_ms = 0;
 }
 
 void set_time_ms(uint64_t now_ms) { g_now_ms = now_ms; }
 uint64_t time_ms() { return g_now_ms; }
 
+void set_duty_cycle_percent(float percent, uint32_t initial_wait_ms) {
+    g_duty_cycle_percent = std::max(0.0f, std::min(100.0f, percent));
+    g_duty_until_ms = g_now_ms + initial_wait_ms;
+}
+
 void set_next_send_result(uint8_t result, uint32_t wait_ms) {
     g_next_send_result = result;
-    g_send_wait_until_ms = g_now_ms + wait_ms;
+    g_forced_wait_until_ms = g_now_ms + wait_ms;
 }
 
 uint64_t enqueue_tx(uint16_t target, const unsigned char *data, uint8_t size) {
