@@ -15,7 +15,8 @@ model:
 
 * exact SPI wire bytes at the declared 2 MHz default;
 * RadioLib's deterministic 1 us delay before each post-command BUSY poll;
-* documented typical STBY_RC->TX/RX mode-transition BUSY intervals.
+* documented typical mode-transition BUSY intervals only when that transition
+  actually occurs in the production call path.
 
 Any additional command-processing BUSY time, MCU/HAL execution, interrupt
 latency, allocator/CRC CPU time and scheduling jitter remain bounded omissions.
@@ -258,12 +259,17 @@ def rx_rearm_ms(spi_hz: int = RADIOLIB6_DEFAULT_SPI_HZ) -> float:
 
 
 def rx_rearm_after_read_ms(spi_hz: int = RADIOLIB6_DEFAULT_SPI_HZ) -> float:
-    """RX callback return -> continuous RX-ready when no immediate TX starts."""
+    """RX callback return -> end of explicit startReceive() refresh.
+
+    SX1262 Rx Continuous mode has *not* gone to STBY_RC here: the chip is already
+    searching for another packet. Production nevertheless calls startReceive()
+    again. There is no documented RX->RX switching-time constant to add, so this
+    is an exact SPI + deterministic RadioLib BUSY-poll lower bound. Any internal
+    SetRx/reconfiguration processing time remains explicitly unknown.
+    """
     return _path_floor_ms(
         RX_REARM_AFTER_READ_SPI_BYTES,
         RX_REARM_AFTER_READ_SPI_TRANSACTIONS,
-        mode_transition_ms=SX1262_STBY_RC_TO_RX_MS,
-        mode_transition_transactions=1,
         spi_hz=spi_hz,
     )
 
