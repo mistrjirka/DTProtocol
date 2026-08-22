@@ -1,0 +1,44 @@
+name: Protocol simulator
+
+on:
+  push:
+    branches: [main, protocol-simulator, protocol-v2]
+  pull_request:
+
+jobs:
+  python-model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pytest
+      - run: python -m pytest simulator/tests/test_dtpsim.py -q
+
+  real-cpp-host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pytest
+      - run: cmake -S simulator/cpp -B simulator/cpp/build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - run: cmake --build simulator/cpp/build --parallel 2
+      - run: python -m pytest simulator/tests/test_cpp_backend.py -q -rxX
+
+  real-cpp-sanitizers:
+    # The current firmware has known memory-lifetime defects. Keep this visible
+    # while protocol-simulator tracks current behavior; make it gating on v2.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pytest
+      - run: cmake -S simulator/cpp -B simulator/cpp/build-asan -DCMAKE_BUILD_TYPE=Debug -DDTP_HOST_SANITIZERS=ON
+      - run: cmake --build simulator/cpp/build-asan --parallel 2
+      - run: DTP_CPP_NODE="$PWD/simulator/cpp/build-asan/dtprotocol_host_node" python -m pytest simulator/tests/test_cpp_backend.py -q -rxX
