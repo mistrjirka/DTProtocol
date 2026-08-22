@@ -27,15 +27,15 @@ bool radioOk(int status)
   Serial.println("RadioLib configuration error: " + String(status));
   return false;
 }
+} // namespace
 
-bool irqPending()
+bool MAC::irqPending()
 {
   noInterrupts();
-  const bool pending = MAC::operationDone;
+  const bool pending = operationDone;
   interrupts();
   return pending;
 }
-} // namespace
 
 MAC::MAC(
     SX1262 &loramodule,
