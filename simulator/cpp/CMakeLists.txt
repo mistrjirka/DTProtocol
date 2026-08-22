@@ -69,8 +69,31 @@ add_test(NAME production_mac_eu869_high_duty
 add_test(NAME production_mac_eu433
          COMMAND dtprotocol_mac_contract eu433)
 
+# -----------------------------------------------------------------------------
+# Small embedded-math contract. The radio path depends on quickSort() during
+# noise calibration and timeOnAir() for LCMM/duty timing, so both are sanitizer
+# gates rather than untested helper code.
+# -----------------------------------------------------------------------------
+add_executable(dtprotocol_math_contract
+    math_contract_tests.cpp
+    host/mac_test_runtime.cpp
+    ${REPO_ROOT}/lib/mathextension/mathextension.cpp
+)
+target_compile_features(dtprotocol_math_contract PRIVATE cxx_std_17)
+set_target_properties(dtprotocol_math_contract PROPERTIES CXX_EXTENSIONS ON)
+target_include_directories(dtprotocol_math_contract BEFORE PRIVATE
+    ${REPO_ROOT}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/host
+    ${REPO_ROOT}
+)
+target_compile_options(dtprotocol_math_contract PRIVATE
+    -Wall -Wextra -Wconversion -Wno-unused-parameter
+)
+target_compile_definitions(dtprotocol_math_contract PRIVATE HOST_SIM=1)
+add_test(NAME embedded_math_contract COMMAND dtprotocol_math_contract)
+
 if(DTP_HOST_SANITIZERS)
-    foreach(target dtprotocol_host_node dtprotocol_mac_contract)
+    foreach(target dtprotocol_host_node dtprotocol_mac_contract dtprotocol_math_contract)
         target_compile_options(${target} PRIVATE
             -fsanitize=address,undefined -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE -fsanitize=address,undefined)
