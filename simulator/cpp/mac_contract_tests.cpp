@@ -20,21 +20,23 @@ int main(int argc, char **argv) {
     float expected_frequency = 868.100f;
     int expected_power = 13;
     uint8_t expected_channels = 3;
-    uint8_t expected_duty = 1;
+    uint8_t recommended_duty = 1;
 
     if (argc > 1 && std::strcmp(argv[1], "eu869-high-duty") == 0) {
         region = MACRegion::EU869_HIGH_DUTY;
         expected_frequency = 869.525f;
         expected_power = 20;
         expected_channels = 1;
-        expected_duty = 10;
+        recommended_duty = 10;
     } else if (argc > 1 && std::strcmp(argv[1], "eu433") == 0) {
         region = MACRegion::EU433;
         expected_frequency = 433.175f;
         expected_power = 10;
         expected_channels = 13;
-        expected_duty = 10;
+        recommended_duty = 10;
     }
+
+    const bool strict_duty = argc > 2 && std::strcmp(argv[2], "strict-duty") == 0;
 
     MAC::initialize(
         radio,
@@ -52,7 +54,16 @@ int main(int argc, char **argv) {
     assert(mac->getId() == 42);
     assert(mac->getRegion() == region);
     assert(mac->getNumberOfChannels() == expected_channels);
-    assert(mac->getFallbackDutyCyclePercent() == expected_duty);
+    assert(mac->recommendedRegionalDutyCyclePercent() == recommended_duty);
+
+    // Region selection is practical by default: it configures frequency/power
+    // but does not automatically impose the extremely restrictive fallback
+    // duty limits. Strict throttling is an explicit policy choice.
+    assert(mac->getDutyCycleLimitPercent() == 0);
+    if (strict_duty)
+        mac->setDutyCycleLimitPercent(recommended_duty);
+    assert(mac->getDutyCycleLimitPercent() == (strict_duty ? recommended_duty : 0));
+
     assert(closeEnough(radio.frequency, expected_frequency));
     assert(closeEnough(radio.bandwidth, 125.0f));
     assert(radio.output_power == expected_power);
@@ -60,12 +71,9 @@ int main(int argc, char **argv) {
     assert(radio.coding_rate == 7);
     assert(mac->getNoiseFloorOfChannel(expected_channels) == 255);
 
-    // SF9/BW125 full-frame airtime makes the 1% profile legally silent for
-    // about 170 s after a large transmission. Liveness must expand accordingly;
-    // 10% profiles remain safely inside the original 30 s timeout.
     const uint32_t neighborExpiry =
         mac->recommendedNeighborExpiryMs(30'000, 12'000, 1'000);
-    if (expected_duty == 1) {
+    if (strict_duty && recommended_duty == 1) {
         assert(neighborExpiry > 180'000);
         assert(neighborExpiry < 190'000);
     } else {
@@ -121,13 +129,16 @@ int main(int argc, char **argv) {
     assert(mac->getMode() == RECEIVING);
 
     const uint32_t wait = mac->getTransmitWaitMs();
-    assert(wait > 0);
-    assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_DUTY_CYCLE);
+    if (strict_duty) {
+        assert(wait > 0);
+        assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_DUTY_CYCLE);
+        delay(wait);
+        assert(mac->getTransmitWaitMs() == 0);
+    } else {
+        assert(wait == 0);
+    }
 
-    delay(wait);
-    assert(mac->getTransmitWaitMs() == 0);
     assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_OK);
-
     radio.irq_flags = RADIOLIB_SX126X_IRQ_TX_DONE;
     radio.dio1_action();
     mac->loop();
