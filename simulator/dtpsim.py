@@ -14,6 +14,7 @@ def profile_by_name(name: str) -> Profile:
         "current": Profile.current(),
         "intended": Profile.intended(),
         "robust": Profile.robust(),
+        "feasible": Profile.feasible(),
     }[name]
 
 
@@ -47,7 +48,6 @@ def random_graph(n: int, p: float, *, seed: int = 1,
     sim = Simulator(seed=seed, profile=profile or Profile.current())
     for i in range(1, n + 1):
         sim.add_node(i)
-    # Random spanning tree guarantees physical connectivity.
     for i in range(2, n + 1):
         parent = rng.randint(1, i - 1)
         sim.add_link(parent, i, loss=loss, ack_loss=ack_loss)
@@ -147,7 +147,7 @@ def run_monte_carlo(args):
 def build_parser():
     ap = argparse.ArgumentParser(description="DTProtocol/DTPK discrete-event simulator")
     ap.add_argument("scenario", choices=["static-line", "reconnect", "simultaneous", "send", "monte-carlo"])
-    ap.add_argument("--profile", choices=["current", "intended", "robust"], default="current")
+    ap.add_argument("--profile", choices=["current", "intended", "robust", "feasible"], default="current")
     ap.add_argument("--nodes", type=int, default=3)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--duration", type=float, default=120_000)
