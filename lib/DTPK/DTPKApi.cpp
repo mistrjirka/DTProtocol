@@ -1,0 +1,150 @@
+#include "mathextension.h"
+#include <DTPK.h>
+
+#include <algorithm>
+#include <cstring>
+
+std::vector<NeighborRecord> DTPK::getNeighbours()
+{
+    return _crystDatabase.getListOfNeighbours();
+}
+
+void DTPK::controlDeamon()
+{
+    const uint32_t elapsed = _currentTime - _lastTick;
+
+    _helloRemaining =
+        elapsed >= static_cast<uint32_t>(std::max<int32_t>(_helloRemaining, 0))
+            ? 0
+            : _helloRemaining - static_cast<int32_t>(elapsed);
+    if (_helloRemaining <= 0)
+    {
+        sendHello();
+        const uint8_t duty = MAC::getInstance()->getFallbackDutyCyclePercent();
+        const uint32_t helloPeriod =
+            (duty > 0 && duty <= 1) ? 60000u : HELLO_PERIOD_MS;
+        const uint32_t helloJitter = helloPeriod / 5u; // preserve ±20% jitter
+        const long low = static_cast<long>(helloPeriod - helloJitter);
+        const long high = static_cast<long>(helloPeriod + helloJitter + 1u);
+        _helloRemaining = static_cast<int32_t>(random(low, high));
+    }
+
+    _maintenanceRemaining =
+        elapsed >= static_cast<uint32_t>(
+                       std::max<int32_t>(_maintenanceRemaining, 0))
+            ? 0
+            : _maintenanceRemaining - static_cast<int32_t>(elapsed);
+    if (_maintenanceRemaining <= 0)
+    {
+        expireNeighbours();
+        expireAssemblies();
+        processSequenceRequests();
+        retrySequenceRequests();
+        _maintenanceRemaining = static_cast<int32_t>(MAINTENANCE_PERIOD_MS);
+    }
+
+    if (_crystTimeout.sendingPacket)
+    {
+        _crystTimeout.remainingTimeToSend =
+            elapsed >= static_cast<uint32_t>(
+                           std::max<int32_t>(
+                               _crystTimeout.remainingTimeToSend, 0))
+                ? 0
+                : _crystTimeout.remainingTimeToSend -
+                      static_cast<int32_t>(elapsed);
+
+        if (_crystTimeout.remainingTimeToSend <= 0)
+        {
+            _crystTimeout.sendingPacket = false;
+            queueCrystSnapshot();
+        }
+    }
+}
+
+void DTPK::loop()
+{
+    _currentTime = millis();
+
+    receivingDeamon();
+    sendingDeamon();
+    timeoutDeamon();
+    controlDeamon();
+
+    LCMM::getInstance()->loop();
+    _lastTick = _currentTime;
+}
+
+uint16_t DTPK::sendPacket(
+    uint16_t target,
+    unsigned char *payload,
+    size_t size,
+    int16_t timeout,
+    bool dtpkAck,
+    PacketAckCallback callback)
+{
+    RoutingRecord *routing = _crystDatabase.getRouting(target);
+    if (!routing)
+    {
+        if (callback)
+            callback(0, 0);
+        return 0;
+    }
+
+    const size_t wireSize = sizeof(DTPKPacketGeneric) + size;
+    if (wireSize > DATASIZE_LCMM)
+    {
+        if (callback)
+            callback(0, 0);
+        return 0;
+    }
+
+    DTPKPacketGeneric *packet =
+        static_cast<DTPKPacketGeneric *>(malloc(wireSize));
+    if (!packet)
+    {
+        if (callback)
+            callback(0, 0);
+        return 0;
+    }
+
+    const uint16_t id = nextPacketId();
+    packet->type = DATA_SINGLE;
+    packet->id = id;
+    packet->originalSender = MAC::getInstance()->getId();
+    packet->finalTarget = target;
+    packet->flags =
+        dtpkAck ? DTPK_FLAG_E2E_ACK_REQUESTED : DTPK_FLAG_NONE;
+    packet->hopLimit = DTPK_DEFAULT_HOP_LIMIT;
+    if (size > 0)
+        memcpy(packet->data, payload, size);
+
+    rememberData(packet->originalSender, id);
+
+    addPacketToSendingQueue(
+        reinterpret_cast<DTPKPacketUnknown *>(packet),
+        wireSize,
+        routing->router,
+        timeout,
+        0,
+        true,
+        dtpkAck,
+        callback);
+
+    return id;
+}
+
+void DTPK::receivePacket(LCMMPacketDataReceive *packet, uint32_t size)
+{
+    if (!packet || !DTPK::getInstance())
+        return;
+    DTPK::getInstance()->_packetReceived.push(
+        std::make_pair(
+            reinterpret_cast<DTPKPacketUnknownReceive *>(packet),
+            static_cast<size_t>(size)));
+}
+
+void DTPK::receiveAck(uint16_t id, bool success)
+{
+    (void)id;
+    (void)success;
+}
