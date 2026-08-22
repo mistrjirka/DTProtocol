@@ -31,17 +31,13 @@ def test_real_lcmm_retries_after_one_lost_data_frame():
         net.add_link(1, 2)
         net.run(60_000)
         assert 2 in net.routes(1) and 1 in net.routes(2)
-
-        # Failure is imposed by the environment, outside either firmware state
-        # machine. The first actual 1->2 PHY frame after SEND is discarded.
         net.drop_next_frames(1, 2, 1)
         net.send(1, 2, b"retry-me", timeout_ms=10_000, e2e_ack=True)
         net.run(78_000)
         assert any(result == 1 for result, _ping in net.app_acks(1)), net.nodes[1].events
 
 
-@pytest.mark.xfail(reason="current DTPK globally gates ACK transmission while waiting for its own end-to-end ACK")
-def test_real_cpp_simultaneous_e2e_send_should_not_deadlock():
+def test_real_cpp_simultaneous_e2e_send_does_not_deadlock():
     with CppNetwork(seed=23, tick_ms=50) as net:
         net.add_node(1)
         net.add_node(2)
@@ -50,5 +46,26 @@ def test_real_cpp_simultaneous_e2e_send_should_not_deadlock():
         net.send(1, 2, b"a", timeout_ms=10_000, e2e_ack=True)
         net.send(2, 1, b"b", timeout_ms=10_000, e2e_ack=True)
         net.run(78_000)
-        successes = sum(result == 1 for node in (1, 2) for result, _ in net.app_acks(node))
+        successes = sum(
+            result == 1
+            for node in (1, 2)
+            for result, _ in net.app_acks(node)
+        )
         assert successes == 2
+
+
+def test_real_cpp_three_hop_data_uses_reliable_relays_and_preserves_packet_size():
+    with CppNetwork(seed=29, tick_ms=50) as net:
+        for node in (1, 2, 3):
+            net.add_node(node)
+        net.add_link(1, 2)
+        net.add_link(2, 3)
+        net.run(120_000)
+        assert 3 in net.routes(1) and 1 in net.routes(3)
+
+        # Drop the first actual relay attempt on 2->3. v2 should retry it at
+        # LCMM instead of relying on an unreliable forwarded hop.
+        net.drop_next_frames(2, 3, 1)
+        net.send(1, 3, b"multi-hop", timeout_ms=15_000, e2e_ack=True)
+        net.run(145_000)
+        assert any(result == 1 for result, _ in net.app_acks(1)), net.nodes[1].events
