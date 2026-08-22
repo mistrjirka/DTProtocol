@@ -6,16 +6,24 @@
 HostSerial Serial;
 
 namespace {
-uint64_t g_now_ms = 0;
+uint64_t g_now_us = 0;
 std::mt19937_64 g_rng(1);
 }
 
 uint32_t millis() {
-    return static_cast<uint32_t>(g_now_ms & 0xffffffffULL);
+    return static_cast<uint32_t>((g_now_us / 1000ULL) & 0xffffffffULL);
+}
+
+uint64_t micros() {
+    return g_now_us;
 }
 
 void delay(uint32_t ms) {
-    g_now_ms += ms;
+    g_now_us += static_cast<uint64_t>(ms) * 1000ULL;
+}
+
+void delayMicroseconds(uint32_t us) {
+    g_now_us += us;
 }
 
 void randomSeed(uint64_t seed) {
