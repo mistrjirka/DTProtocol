@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT))
 from cpp_backend import CppNodeProcess
 from model import Profile
 from scenario import LinkStateEvent, NodeStateEvent, Scenario, route_snapshot
+from shared_backends import SharedCppNetwork, SharedPythonNetwork
 
 
 def test_scenario_round_trip_preserves_environment_definition():
@@ -51,10 +52,43 @@ def test_environment_failure_epoch_is_independent_of_protocol_events():
     net = scenario.build("python", profile=Profile.intended())
     net.run(250)
 
-    # A down->up transition that happens entirely between protocol events still
-    # changes the epoch and therefore invalidates any frame spanning it.
     assert net.get_link(1, 2).epoch == 2
     assert net.node_epoch[2] == 2
+
+
+def test_keyed_environment_loss_is_not_shifted_by_unrelated_draws():
+    a = SharedPythonNetwork(seed=123, profile=Profile.intended())
+    b = SharedPythonNetwork(seed=123, profile=Profile.intended())
+    for net in (a, b):
+        net.add_link(1, 2, loss=0.37, jitter_ms=7.0)
+        net.add_link(3, 4, loss=0.91, jitter_ms=19.0)
+        net.now = 1234.5
+
+    expected_loss = a.sample_link_loss(1, 2)
+    expected_jitter = a.jittered_latency(a.get_link(1, 2))
+
+    # Burn unrelated environment operations on another link. With one global
+    # sequential RNG this would shift all later decisions.
+    for _ in range(50):
+        b.sample_link_loss(3, 4)
+        b.jittered_latency(b.get_link(3, 4))
+
+    assert b.sample_link_loss(1, 2) == expected_loss
+    assert b.jittered_latency(b.get_link(1, 2)) == expected_jitter
+
+
+def test_python_and_cpp_adapters_use_identical_keyed_physical_draws_without_firmware():
+    py = SharedPythonNetwork(seed=321, profile=Profile.intended())
+    cpp = SharedCppNetwork(seed=321)
+    for net in (py, cpp):
+        net.add_link(7, 8, loss=0.43, ack_loss=0.21, latency_ms=12, jitter_ms=3)
+        net.now = 987.25
+
+    py_link = py.get_link(7, 8)
+    cpp_link = cpp.get_link(7, 8)
+    assert py.sample_link_loss(7, 8) == cpp.sample_link_loss(7, 8)
+    assert py.sample_link_loss(8, 7, ack=True) == cpp.sample_link_loss(8, 7, ack=True)
+    assert py.jittered_latency(py_link) == cpp.jittered_latency(cpp_link)
 
 
 @pytest.mark.skipif(
@@ -72,8 +106,6 @@ def test_same_static_scenario_runs_python_and_cpp_adapters():
         cpp_net.run(60_000)
         cpp_routes = route_snapshot(cpp_net)
 
-    # We compare the externally observable routing result, not internal data
-    # structures. The adapters are allowed to implement the protocol differently.
     assert py_routes[1].get(2) == (2, 1)
     assert py_routes[2].get(1) == (1, 1)
     assert cpp_routes[1].get(2) == (2, 1)
