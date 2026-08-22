@@ -30,7 +30,6 @@ enum DTPKPacketFlags : uint8_t
 static constexpr uint8_t DTPK_DEFAULT_HOP_LIMIT = 32;
 static constexpr uint8_t DTPK_ROUTE_INFINITY = 255;
 
-// Legacy/application-facing view retained for Picopod UI/API compatibility.
 typedef struct __attribute__((packed))
 {
     uint16_t id;
@@ -38,8 +37,6 @@ typedef struct __attribute__((packed))
     uint8_t distance;
 } NeighborRecord;
 
-// Protocol-v2 route-state record: destination, sender-selected next hop,
-// destination generation, and sender's metric to the destination.
 typedef struct __attribute__((packed))
 {
     uint16_t id;
@@ -64,7 +61,6 @@ typedef struct __attribute__((packed))
     unsigned char data[];
 } DTPKPacketUnknown;
 
-// DATA/ACK/NACK routed packet prefix.
 typedef struct __attribute__((packed))
 {
     DTPKPacketType type;
@@ -86,17 +82,14 @@ typedef struct __attribute__((packed))
     uint8_t hopLimit;
 } DTPKPacketHeader;
 
-// One complete route-state snapshot may be split into multiple CRYST chunks.
-// A receiver applies it transactionally only after all chunks for the same
-// (originSequence, routeVersion) have arrived.
 typedef struct __attribute__((packed))
 {
     DTPKPacketType type;
     uint16_t id;
     uint16_t originSequence;
-    uint16_t routeVersion;
-    uint8_t chunkIndex;
-    uint8_t chunkCount;
+    uint32_t routeVersion;
+    uint16_t chunkIndex;
+    uint16_t chunkCount;
     NeighborRecordV2 neighbors[];
 } DTPKPacketCryst;
 
@@ -105,21 +98,15 @@ typedef struct __attribute__((packed))
     DTPKPacketType type;
     uint16_t id;
     uint16_t originSequence;
-    uint16_t routeVersion;
+    uint32_t routeVersion;
 } DTPKPacketHello;
 
-// Direct reliable request asking one neighbour to retransmit its full route
-// state. MAC/LCMM targeting identifies which neighbour, so no routed header is
-// required.
 typedef struct __attribute__((packed))
 {
     DTPKPacketType type;
     uint16_t id;
 } DTPKPacketCrystRequest;
 
-// Bounded duplicate-suppressed flood used only when feasibility rejects all
-// remaining routes to a destination. The destination advances to at least the
-// requested generation and emits normal crystallization state.
 typedef struct __attribute__((packed))
 {
     DTPKPacketType type;
@@ -130,9 +117,6 @@ typedef struct __attribute__((packed))
     uint8_t hopLimit;
 } DTPKPacketSeqRequest;
 
-// ---------------------------------------------------------------------------
-// Receive layouts include the LCMM/MAC receive prefix.
-// ---------------------------------------------------------------------------
 typedef struct __attribute__((packed))
 {
     LCMMDataHeader lcmm;
@@ -151,9 +135,9 @@ typedef struct __attribute__((packed))
     DTPKPacketType type;
     uint16_t id;
     uint16_t originSequence;
-    uint16_t routeVersion;
-    uint8_t chunkIndex;
-    uint8_t chunkCount;
+    uint32_t routeVersion;
+    uint16_t chunkIndex;
+    uint16_t chunkCount;
     NeighborRecordV2 neighbors[];
 } DTPKPacketCrystReceive;
 
@@ -163,7 +147,7 @@ typedef struct __attribute__((packed))
     DTPKPacketType type;
     uint16_t id;
     uint16_t originSequence;
-    uint16_t routeVersion;
+    uint32_t routeVersion;
 } DTPKPacketHelloReceive;
 
 typedef struct __attribute__((packed))
@@ -192,7 +176,6 @@ typedef struct __attribute__((packed))
     unsigned char data[];
 } DTPKPacketUnknownReceive;
 
-// Retained for source compatibility; ACK/NACK use DTPKPacketHeader directly.
 typedef struct __attribute__((packed))
 {
     LCMMDataHeader lcmm;
