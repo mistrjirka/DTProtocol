@@ -28,6 +28,26 @@ def test_continuous_motion_detects_leave_and_return_inside_one_frame():
 
 
 @requires_cpp
+def test_real_cpp_reboot_resets_mcu_millis_epoch():
+    with MovingCppNetwork(seed=88, tick_ms=50) as net:
+        net.add_node(1)
+        net.run(30_000)
+        before = net.rf_metrics.tx_frames
+        assert before >= 1  # startup CRYST eventually happened
+
+        net.fail_node_at(40_000, 1)
+        net.recover_node_at(50_000, 1)
+        net.run(50_150)
+
+        # CRYST jitter has a 200 ms lower bound. A rebooted MCU should therefore
+        # not immediately transmit merely because global simulation time is 50s.
+        assert net.rf_metrics.tx_frames == before
+
+        net.run(71_000)
+        assert net.rf_metrics.tx_frames > before
+
+
+@requires_cpp
 def test_real_cpp_link_failure_mid_air_invalidates_then_lcmm_retries():
     with MovingCppNetwork(seed=101, tick_ms=50) as net:
         net.add_node(1, position=(0, 0))
@@ -38,8 +58,6 @@ def test_real_cpp_link_failure_mid_air_invalidates_then_lcmm_retries():
 
         start = net.now
         net.send(1, 2, b"mid-air-link-failure", timeout_ms=10_000, e2e_ack=True)
-        # The environment transition is independent of the firmware state and
-        # occurs while the frame is physically on air.
         net.set_link_at(start + 100, 1, 2, False)
         net.set_link_at(start + 500, 1, 2, True)
         net.run(start + 18_000)
@@ -58,9 +76,6 @@ def test_real_cpp_motion_out_and_back_mid_air_invalidates_first_attempt():
         assert 2 in net.routes(1) and 1 in net.routes(2)
 
         start = net.now
-        # The next firmware tick is at start+50 ms.  Keep the node stationary
-        # through that instant, then move it out of range while the already
-        # started LoRa frame is on air, and return before LCMM's retry.
         net.set_trajectory(
             2,
             [
