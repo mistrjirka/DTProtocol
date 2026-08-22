@@ -78,11 +78,15 @@ private:
     static constexpr uint32_t HELLO_PERIOD_MS = 10000;
     static constexpr uint32_t MOBILE_HELLO_PERIOD_MS = 4000;
     static constexpr uint32_t HELLO_JITTER_MS = 2000;
-    // A 30 s hard timeout (only ~3 nominal HELLO periods) caused healthy
-    // neighbours to expire in larger half-duplex networks when control traffic
-    // hid several consecutive HELLOs. 60 s still detects hard failures promptly
-    // while avoiding false expiry/relearn cascades observed at 32+ nodes.
-    static constexpr uint32_t BASE_NEIGHBOR_EXPIRY_MS = 60000;
+
+    // Missing several HELLOs is only suspicion. Larger half-duplex networks
+    // showed healthy neighbors going quiet for >30 s under control load. Probe
+    // them directly before deleting their entire routing contribution.
+    static constexpr uint32_t NEIGHBOR_SUSPECT_MS = 30000;
+    static constexpr uint32_t NEIGHBOR_HARD_EXPIRY_MS = 120000;
+    static constexpr uint32_t LIVENESS_PROBE_COOLDOWN_MS = 10000;
+    static constexpr uint8_t LIVENESS_PROBE_MAX_FAILURES = 2;
+
     static constexpr uint32_t MAINTENANCE_PERIOD_MS = 1000;
     static constexpr uint32_t CRYST_JITTER_MIN_MS = 200;
     static constexpr uint32_t CRYST_JITTER_MAX_MS = 1500;
@@ -93,12 +97,11 @@ private:
     static constexpr size_t RECENT_DATA_CACHE_SIZE = 64;
     static constexpr size_t RECENT_SEQ_REQ_CACHE_SIZE = 64;
 
-    // Practical/default MAC has no duty throttle, so this remains 60 s. If an
-    // application explicitly enables strict duty limiting before DTPK starts,
-    // this helper can only increase the timeout enough to preserve liveness.
-    uint32_t NEIGHBOR_EXPIRY_MS =
+    // Strict duty limiting is optional, but when enabled its legal off-time may
+    // exceed the normal hard timeout. It may only lengthen hard expiry.
+    uint32_t _neighborHardExpiryMs =
         MAC::getInstance()->recommendedNeighborExpiryMs(
-            BASE_NEIGHBOR_EXPIRY_MS,
+            NEIGHBOR_HARD_EXPIRY_MS,
             HELLO_PERIOD_MS + HELLO_JITTER_MS,
             MAINTENANCE_PERIOD_MS);
 
@@ -168,6 +171,11 @@ private:
     uint16_t _currentlySendingId;
 
     std::unordered_map<uint16_t, uint32_t> _lastHeard;
+    std::unordered_map<uint16_t, uint32_t> _lastLivenessProbe;
+    std::unordered_map<uint16_t, uint8_t> _livenessProbeFailures;
+    // LCMM packet id -> direct neighbor. A successful hop ACK is itself proof
+    // of liveness even if the subsequent CRYST response is lost.
+    std::unordered_map<uint16_t, uint16_t> _livenessProbeByLcmmId;
     std::unordered_map<uint16_t, NeighborState> _neighborState;
     std::unordered_map<uint16_t, CrystAssembly> _crystAssemblies;
     std::unordered_map<uint16_t, PendingSeqRequest> _pendingSeqRequests;
