@@ -10,6 +10,16 @@
 #define RADIOLIB_LORA_DETECTED -702
 #define RADIOLIB_SX126X_SYNC_WORD_PRIVATE 0x12
 
+#define RADIOLIB_SX126X_IRQ_TX_DONE 0x0001u
+#define RADIOLIB_SX126X_IRQ_RX_DONE 0x0002u
+#define RADIOLIB_SX126X_IRQ_PREAMBLE_DETECTED 0x0004u
+#define RADIOLIB_SX126X_IRQ_HEADER_ERR 0x0020u
+#define RADIOLIB_SX126X_IRQ_CRC_ERR 0x0040u
+#define RADIOLIB_SX126X_IRQ_CAD_DONE 0x0080u
+#define RADIOLIB_SX126X_IRQ_CAD_DETECTED 0x0100u
+#define RADIOLIB_SX126X_IRQ_TIMEOUT 0x0200u
+#define RADIOLIB_SX126X_IRQ_ALL 0x03ffu
+
 class SX1262 {
 public:
     float frequency = 0.0f;
@@ -26,6 +36,12 @@ public:
     bool sleeping = false;
     bool standby_mode = false;
     void (*dio1_action)() = nullptr;
+
+    uint32_t irq_flags = 0;
+    uint16_t packet_length = 0;
+    int finish_transmit_calls = 0;
+    int read_data_calls = 0;
+    int clear_irq_calls = 0;
 
     int setFrequency(float value) {
         frequency = value;
@@ -61,6 +77,7 @@ public:
         receiving = true;
         sleeping = false;
         standby_mode = false;
+        irq_flags = 0;
         return RADIOLIB_ERR_NONE;
     }
     int standby() {
@@ -76,19 +93,41 @@ public:
         return RADIOLIB_ERR_NONE;
     }
 
-    int scanChannel() { return scan_channel_result; }
+    int scanChannel() {
+        if (scan_channel_result == RADIOLIB_LORA_DETECTED)
+            irq_flags = RADIOLIB_SX126X_IRQ_CAD_DONE | RADIOLIB_SX126X_IRQ_CAD_DETECTED;
+        else if (scan_channel_result == RADIOLIB_CHANNEL_FREE)
+            irq_flags = RADIOLIB_SX126X_IRQ_CAD_DONE;
+        return scan_channel_result;
+    }
+    uint32_t getIrqFlags() { return irq_flags; }
+    int clearIrqFlags(uint32_t flags) {
+        irq_flags &= ~flags;
+        ++clear_irq_calls;
+        return RADIOLIB_ERR_NONE;
+    }
+
     int getRSSI(bool = false) { return rssi; }
     uint32_t random(uint32_t max_value) {
         return max_value ? (0x1234u % max_value) : 0;
     }
-    uint16_t getPacketLength(bool = true) { return 0; }
-    int readData(uint8_t *, size_t) { return RADIOLIB_ERR_NONE; }
+    uint16_t getPacketLength(bool = true) { return packet_length; }
+    int readData(uint8_t *data, size_t len) {
+        ++read_data_calls;
+        if (data && len) std::memset(data, 0, len);
+        irq_flags = 0;
+        return RADIOLIB_ERR_NONE;
+    }
 
     int startTransmit(const uint8_t *, size_t) {
+        irq_flags = 0;
         return start_transmit_result;
     }
-    int finishTransmit() { return RADIOLIB_ERR_NONE; }
+    int finishTransmit() {
+        ++finish_transmit_calls;
+        irq_flags = 0;
+        return RADIOLIB_ERR_NONE;
+    }
 
-    // Kept for source compatibility with older MAC implementations/audits.
     float getFrequencyError() { return 0.0f; }
 };
