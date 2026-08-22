@@ -6,10 +6,10 @@
 
 DTPK *DTPK::dtpk = nullptr;
 
-void DTPK::initialize(uint8_t KLimit, uint16_t originSequence)
+void DTPK::initialize(uint8_t KLimit, uint16_t originSequence, bool mobileHint)
 {
     if (!dtpk)
-        dtpk = new DTPK(KLimit, originSequence);
+        dtpk = new DTPK(KLimit, originSequence, mobileHint);
 }
 
 DTPK *DTPK::getInstance()
@@ -37,7 +37,16 @@ bool DTPK::isControlType(DTPKPacketType type)
            type == SEQ_REQ || type == ACK || type == NACK_NOTFOUND;
 }
 
-DTPK::DTPK(uint8_t KLimit, uint16_t originSequence)
+uint32_t DTPK::effectiveHelloPeriodMs() const
+{
+    uint32_t period = _mobileHint ? MOBILE_HELLO_PERIOD_MS : HELLO_PERIOD_MS;
+    const uint8_t duty = MAC::getInstance()->getFallbackDutyCyclePercent();
+    if (duty > 0 && duty <= 1)
+        period = std::max<uint32_t>(period, 60000u);
+    return period;
+}
+
+DTPK::DTPK(uint8_t KLimit, uint16_t originSequence, bool mobileHint)
     : _crystDatabase(MAC::getInstance()->getId())
 {
     _Klimit = KLimit;
@@ -45,6 +54,7 @@ DTPK::DTPK(uint8_t KLimit, uint16_t originSequence)
     _timeOfInit = millis();
     _currentTime = _timeOfInit;
     _lastTick = _currentTime;
+    _mobileHint = mobileHint;
 
     _seed = MathExtension.murmur64(
         (static_cast<uint64_t>(MAC::getInstance()->random()) << 32) |
@@ -53,9 +63,9 @@ DTPK::DTPK(uint8_t KLimit, uint16_t originSequence)
 
     _originSequence = originSequence == 0 ? 1 : originSequence;
     _routeVersion = 1;
-    const uint8_t duty = MAC::getInstance()->getFallbackDutyCyclePercent();
-    const uint32_t helloPeriod = (duty > 0 && duty <= 1) ? 60000u : HELLO_PERIOD_MS;
-    _helloRemaining = static_cast<int32_t>(random(100, static_cast<long>(helloPeriod + 1u)));
+    const uint32_t helloPeriod = effectiveHelloPeriodMs();
+    _helloRemaining = static_cast<int32_t>(
+        random(100, static_cast<long>(helloPeriod + 1u)));
     _maintenanceRemaining = static_cast<int32_t>(MAINTENANCE_PERIOD_MS);
 
     _crystTimeout.sendingPacket = false;
@@ -150,9 +160,9 @@ void DTPK::noteHeard(uint16_t neighbor)
 
 void DTPK::expireNeighbours()
 {
-    const uint8_t duty = MAC::getInstance()->getFallbackDutyCyclePercent();
-    const uint32_t helloPeriod = (duty > 0 && duty <= 1) ? 60000u : HELLO_PERIOD_MS;
-    const uint32_t expiry = std::max<uint32_t>(NEIGHBOR_EXPIRY_MS, helloPeriod * 3u);
+    const uint32_t helloPeriod = effectiveHelloPeriodMs();
+    const uint32_t expiry =
+        std::max<uint32_t>(NEIGHBOR_EXPIRY_MS, helloPeriod * 3u);
 
     std::vector<uint16_t> stale;
     stale.reserve(_lastHeard.size());
