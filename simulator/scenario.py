@@ -97,7 +97,12 @@ class Scenario:
         *,
         profile: Optional[Profile] = None,
         binary: Optional[str] = None,
-        tick_ms: float = 50.0,
+        # Real Picopod firmware has no intentional 50 ms loop sleep. Ten
+        # milliseconds keeps ordinary timing experiments much closer to that
+        # continuously-spinning loop while remaining practical for subprocess
+        # simulation. Large 64-128 node scale studies may explicitly choose
+        # 50-100 ms when only eventual routing state, not latency, is measured.
+        tick_ms: float = 10.0,
     ):
         try:
             regional_duty = RADIO_PROFILE_DUTY_PERCENT[self.radio_profile]
