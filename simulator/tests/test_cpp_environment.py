@@ -3,8 +3,8 @@ import sys
 
 import pytest
 
-ROOT = pathlib.Path(__file__).resolve().parents[0]
-sys.path.insert(0, str(ROOT))
+SIM_ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SIM_ROOT))
 
 from cpp_backend import CppNodeProcess
 from cpp_environment import MovingCppNetwork
@@ -38,9 +38,8 @@ def test_real_cpp_link_failure_mid_air_invalidates_then_lcmm_retries():
 
         start = net.now
         net.send(1, 2, b"mid-air-link-failure", timeout_ms=10_000, e2e_ack=True)
-        # First DATA starts at the next 50 ms firmware tick and remains on air
-        # for hundreds of ms.  These environment events therefore happen in
-        # the middle of the actual frame, not before transmit starts.
+        # The environment transition is independent of the firmware state and
+        # occurs while the frame is physically on air.
         net.set_link_at(start + 100, 1, 2, False)
         net.set_link_at(start + 500, 1, 2, True)
         net.run(start + 18_000)
@@ -72,8 +71,6 @@ def test_real_cpp_motion_out_and_back_mid_air_invalidates_first_attempt():
         net.run(start + 18_000)
 
         assert net.rf_metrics.rf_range_drops >= 1
-        # Once the node is stationary/in-range again, normal LCMM retry should
-        # recover without the environment having to know LCMM state.
         assert any(result == 1 for result, _ in net.app_acks(1)), net.nodes[1].events
 
 
