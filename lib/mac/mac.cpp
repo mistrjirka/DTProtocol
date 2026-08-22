@@ -9,14 +9,14 @@ State MAC::state = RECEIVING;
 MAC *MAC::mac = nullptr;
 volatile bool MAC::operationDone = false;
 
-// 125 kHz-safe channel centres. The old edge channels at 433.05 and 434.8
-// cannot fit a 125 kHz LoRa signal wholly inside 433.05-434.79 MHz.
 const double MAC::EU433_CHANNELS[] = {
     433.175, 433.300, 433.425, 433.550, 433.675, 433.800, 433.925,
     434.050, 434.175, 434.300, 434.425, 434.550, 434.675};
 const double MAC::EU868_CHANNELS[] = {868.100, 868.300, 868.500};
+const double MAC::EU869_HIGH_DUTY_CHANNELS[] = {869.525};
 const uint8_t MAC::EU433_CHANNEL_COUNT = 13;
 const uint8_t MAC::EU868_CHANNEL_COUNT = 3;
+const uint8_t MAC::EU869_HIGH_DUTY_CHANNEL_COUNT = 1;
 
 namespace
 {
@@ -40,13 +40,23 @@ MAC::MAC(
     int defaultPower,
     int defaultCodingRate)
     : module(loramodule),
-      channels(selectedRegion == MACRegion::EU868 ? EU868_CHANNELS : EU433_CHANNELS),
-      channelCount(selectedRegion == MACRegion::EU868 ? EU868_CHANNEL_COUNT : EU433_CHANNEL_COUNT),
+      channels(selectedRegion == MACRegion::EU868
+                   ? EU868_CHANNELS
+                   : (selectedRegion == MACRegion::EU869_HIGH_DUTY
+                          ? EU869_HIGH_DUTY_CHANNELS
+                          : EU433_CHANNELS)),
+      channelCount(selectedRegion == MACRegion::EU868
+                       ? EU868_CHANNEL_COUNT
+                       : (selectedRegion == MACRegion::EU869_HIGH_DUTY
+                              ? EU869_HIGH_DUTY_CHANNEL_COUNT
+                              : EU433_CHANNEL_COUNT)),
       region(selectedRegion),
-      // 868.0-868.6 permits 25 mW e.r.p. in the conservative Czech/EU profile.
-      // 13 dBm conducted leaves headroom for antenna gain until the RF path is
-      // characterised. EU433 stays at the traditional 10 dBm conducted cap.
-      maxConductedPowerDbm(selectedRegion == MACRegion::EU868 ? 13 : 10),
+      // The code cannot know antenna/cable gain, so these are deliberately
+      // conducted-power safety caps rather than claims about final e.r.p.
+      maxConductedPowerDbm(selectedRegion == MACRegion::EU869_HIGH_DUTY
+                               ? 20
+                               : (selectedRegion == MACRegion::EU868 ? 13 : 10)),
+      dutyCyclePercent(selectedRegion == MACRegion::EU868 ? 1 : 10),
       id(static_cast<uint16_t>(nodeId)),
       channel(defaultChannel),
       spreading_factor(defaultSpreadingFactor),
@@ -66,8 +76,6 @@ MAC::MAC(
   if (!validChannel(static_cast<uint16_t>(channel)) ||
       !configureRadio(spreading_factor, bandwidth, power, coding_rate))
   {
-    // Leave an unmistakably invalid channel marker. sendData() will fail
-    // instead of pretending a partially configured radio is usable.
     channel = -1;
     state = IDLE;
     return;
@@ -208,23 +216,20 @@ uint32_t MAC::getTransmitWaitMs() const
   uint32_t wait = 0;
   if (deadlinePending(now, carrierBackoffUntil))
     wait = carrierBackoffUntil - now;
-  if (region == MACRegion::EU868 && deadlinePending(now, dutyCycleUntil))
+  if (dutyCyclePercent > 0 && deadlinePending(now, dutyCycleUntil))
     wait = std::max(wait, dutyCycleUntil - now);
   return wait;
 }
 
 void MAC::startCarrierBackoff()
 {
-  // About 6-60 SF9/BW125 symbols. The randomisation is intentionally much
-  // larger than a single CAD operation so peers that observed the same busy
-  // packet do not all re-enter at the same instant.
   const uint32_t delayMs = 25u + module.random(226u);
   carrierBackoffUntil = millis() + delayMs;
 }
 
 void MAC::accountDutyCycle(uint8_t packetLength)
 {
-  if (region != MACRegion::EU868)
+  if (dutyCyclePercent == 0)
     return;
 
   const float airtimeMs = MathExtension.timeOnAir(
@@ -237,10 +242,11 @@ void MAC::accountDutyCycle(uint8_t packetLength)
   if (!(airtimeMs > 0.0f) || !std::isfinite(airtimeMs))
     return;
 
-  // Conservative 1% policy: two transmissions may start no closer than
-  // 100*ToA. This is deliberately stricter than a burst-capable hourly token
-  // bucket and, unlike the old LBT loop, never blocks the cooperative firmware.
-  const double period = std::ceil(static_cast<double>(airtimeMs) * 100.0);
+  // Conservative per-packet spacing fallback. A standards-compliant spectrum
+  // access implementation may later disable this policy, but merely using CAD
+  // is not treated as sufficient evidence of compliance.
+  const double multiplier = 100.0 / static_cast<double>(dutyCyclePercent);
+  const double period = std::ceil(static_cast<double>(airtimeMs) * multiplier);
   const uint32_t periodMs = static_cast<uint32_t>(
       std::min<double>(period, static_cast<double>(0x7fffffffu)));
   dutyCycleUntil = millis() + std::max<uint32_t>(periodMs, 1u);
@@ -293,8 +299,6 @@ int MAC::LORANoiseFloorCalibrate(int channelToMeasure, bool save)
     average += measurements[i];
   average /= NUMBER_OF_MEASUREMENTS - DISCRIMINATE_MEASURMENTS * 2;
 
-  // Store the raw measured floor. Squelch is applied exactly once by the
-  // carrier-sense comparison below.
   if (save)
     noiseFloor[channelToMeasure] = average;
 
@@ -363,12 +367,12 @@ void MAC::handlePacket()
   if ((packet->target == BROADCAST || packet->target == id) && RXCallback)
   {
     RXCallback(packet, length, crcCalculated);
-    return; // ownership transfers to upper layer
+    return;
   }
   if (packet->target != BROADCAST && packet->target != id && RXAlienCallback)
   {
     RXAlienCallback(packet, length, crcCalculated);
-    return; // ownership transfers to callback
+    return;
   }
 
   free(packet);
@@ -381,10 +385,6 @@ bool MAC::transmissionAuthorized()
 
   const State previousMode = getMode();
 
-  // LoRa CAD is important because valid LoRa signals can be decodable below an
-  // instantaneous RSSI/noise-floor threshold. RadioLib's default scanChannel()
-  // settings are based on Semtech AN1200.48. Keep an energy test afterwards to
-  // catch non-LoRa interferers that CAD intentionally ignores.
   setMode(IDLE, true);
   const int cad = module.scanChannel();
   if (cad == RADIOLIB_LORA_DETECTED || cad == RADIOLIB_PREAMBLE_DETECTED)
@@ -404,16 +404,12 @@ bool MAC::transmissionAuthorized()
   rssi /= NUMBER_OF_MEASUREMENTS_LBT;
 
   setMode(previousMode, true);
-
-  // If CAD returned an unexpected radio error, fall back to the energy check
-  // rather than declaring the channel permanently unusable. Configuration and
-  // TX errors are handled separately by sendData().
   return rssi < noiseFloor[channel] + squelch;
 }
 
 bool MAC::waitForTransmissionAuthorization(uint32_t timeout)
 {
-  (void)timeout; // retained for source compatibility; v2 never blocks here.
+  (void)timeout;
   const uint32_t now = millis();
   if (deadlinePending(now, carrierBackoffUntil))
     return false;
@@ -430,10 +426,7 @@ bool MAC::waitForTransmissionAuthorization(uint32_t timeout)
 
 void MAC::calibrateBasedOnLastPacket()
 {
-  // Deliberately disabled in protocol-v2. SX126x frequency-error reporting is
-  // not a safe basis for cumulatively changing the local TX frequency from the
-  // last peer's packet. A future correction loop must be bounded, filtered and
-  // associated with a specific peer/channel.
+  // Disabled in protocol-v2; see RADIO_AUDIT.md.
 }
 
 uint8_t MAC::sendData(
@@ -450,7 +443,7 @@ uint8_t MAC::sendData(
     return MAC_SEND_TOO_LARGE;
 
   const uint32_t now = millis();
-  if (region == MACRegion::EU868 && deadlinePending(now, dutyCycleUntil))
+  if (dutyCyclePercent > 0 && deadlinePending(now, dutyCycleUntil))
     return MAC_SEND_DUTY_CYCLE;
 
   if (!waitForTransmissionAuthorization(timeout))
@@ -470,7 +463,6 @@ uint8_t MAC::sendData(
 
   if (result != RADIOLIB_ERR_NONE)
   {
-    // Do not wedge in SENDING waiting for an IRQ that will never arrive.
     setMode(RECEIVING, true);
     return MAC_SEND_RADIO_ERROR;
   }
@@ -495,8 +487,6 @@ void MAC::loop()
   {
     module.finishTransmit();
     setMode(RECEIVING, true);
-    // Callback observes a radio that is already ready to receive. This avoids
-    // the old illegal intermediate state where upper layers ran while SENDING.
     if (transmitDone)
       transmitDone();
   }
