@@ -54,6 +54,7 @@ enum MACSendResult : uint8_t
   MAC_SEND_TOO_LARGE = 3,
   MAC_SEND_RADIO_ERROR = 4,
   MAC_SEND_BUSY = 5,
+  MAC_SEND_DUTY_CYCLE = 6,
 };
 
 typedef struct __attribute__((packed))
@@ -113,6 +114,11 @@ public:
   uint8_t getNumberOfChannels();
   MACRegion getRegion() const { return region; }
 
+  // Time until MAC policy permits another send. This is deliberately
+  // non-blocking: callers can keep servicing routing/RX while EU868 duty cycle
+  // or randomized carrier-sense backoff is active.
+  uint32_t getTransmitWaitMs() const;
+
   void handlePacket();
   uint8_t sendData(uint16_t target, unsigned char *data,
                    uint8_t size, uint32_t timeout = 5000);
@@ -125,7 +131,10 @@ public:
   void setTransmitDone(TransmitDone callback);
 
 private:
-  static bool operationDone;
+  // Written by the radio ISR and consumed by loop(). `volatile` prevents the
+  // compiler from caching the flag across the ISR boundary. There is only one
+  // outstanding SX126x operation at a time in this MAC state machine.
+  static volatile bool operationDone;
   static MAC *mac;
   static State state;
 
@@ -154,6 +163,11 @@ private:
   PacketReceivedCallback RXCallback;
   PacketReceivedCallback RXAlienCallback;
 
+  // Carrier-sense and regulatory scheduling are timestamps, never blocking
+  // sleeps. All comparisons use wrap-safe unsigned millis arithmetic.
+  uint32_t carrierBackoffUntil;
+  uint32_t dutyCycleUntil;
+
   MAC(
       SX1262 &loramodule,
       int id,
@@ -179,6 +193,9 @@ private:
   bool validChannel(uint16_t channel) const;
   bool configureRadio(int default_spreading_factor, float default_bandwidth,
                       int default_power, int default_coding_rate);
+  static bool deadlinePending(uint32_t now, uint32_t deadline);
+  void startCarrierBackoff();
+  void accountDutyCycle(uint8_t packetLength);
 };
 
 #endif // MAC_LAYER_H
