@@ -51,8 +51,6 @@ MAC::MAC(
                               ? EU869_HIGH_DUTY_CHANNEL_COUNT
                               : EU433_CHANNEL_COUNT)),
       region(selectedRegion),
-      // The code cannot know antenna/cable gain, so these are deliberately
-      // conducted-power safety caps rather than claims about final e.r.p.
       maxConductedPowerDbm(selectedRegion == MACRegion::EU869_HIGH_DUTY
                                ? 20
                                : (selectedRegion == MACRegion::EU868 ? 13 : 10)),
@@ -242,9 +240,6 @@ void MAC::accountDutyCycle(uint8_t packetLength)
   if (!(airtimeMs > 0.0f) || !std::isfinite(airtimeMs))
     return;
 
-  // Conservative per-packet spacing fallback. A standards-compliant spectrum
-  // access implementation may later disable this policy, but merely using CAD
-  // is not treated as sufficient evidence of compliance.
   const double multiplier = 100.0 / static_cast<double>(dutyCyclePercent);
   const double period = std::ceil(static_cast<double>(airtimeMs) * multiplier);
   const uint32_t periodMs = static_cast<uint32_t>(
@@ -426,7 +421,6 @@ bool MAC::waitForTransmissionAuthorization(uint32_t timeout)
 
 void MAC::calibrateBasedOnLastPacket()
 {
-  // Disabled in protocol-v2; see RADIO_AUDIT.md.
 }
 
 uint8_t MAC::sendData(
@@ -473,23 +467,45 @@ uint8_t MAC::sendData(
 
 void MAC::loop()
 {
-  if (!operationDone)
-    return;
-
+  // Consume the ISR wake flag atomically with respect to Arduino interrupts.
+  // An IRQ arriving after the clear remains set for the next loop iteration.
+  noInterrupts();
+  const bool pending = operationDone;
   operationDone = false;
-  if (getMode() == RECEIVING)
-  {
-    handlePacket();
-    return;
-  }
+  interrupts();
 
-  if (getMode() == SENDING)
+  if (!pending)
+    return;
+
+  const uint32_t irq = module.getIrqFlags();
+
+  // DIO1 is shared by TX, RX and synchronous CAD on SX1262. Radio IRQ flags,
+  // not mutable software state, are the source of truth for what completed.
+  if ((irq & RADIOLIB_SX126X_IRQ_TX_DONE) != 0)
   {
-    module.finishTransmit();
+    module.finishTransmit(); // RadioLib clears TX IRQ state here.
     setMode(RECEIVING, true);
     if (transmitDone)
       transmitDone();
+    return;
   }
+
+  if ((irq & RADIOLIB_SX126X_IRQ_RX_DONE) != 0)
+  {
+    // readData() consumes/clears RX flags. The callback may immediately begin
+    // an LCMM ACK transmission; only re-arm RX if it did not change to SENDING.
+    handlePacket();
+    if (getMode() != SENDING)
+      setMode(RECEIVING, true);
+    return;
+  }
+
+  // CAD_DONE/CAD_DETECTED can leave the ISR wake flag set after scanChannel(),
+  // and timeout/error flags should not be mistaken for packet reception.
+  if (irq != 0)
+    module.clearIrqFlags(irq);
+  if (getMode() != SENDING)
+    setMode(RECEIVING, true);
 }
 
 RAM_ATTR void MAC::setFlag(void)
