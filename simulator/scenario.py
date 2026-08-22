@@ -5,7 +5,8 @@ from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Literal, Optional, Tuple
 
 from model import Profile
-from shared_backends import SharedCppNetwork, SharedPythonNetwork
+from shared_backends import SharedPythonNetwork
+from timed_cpp_backend import TimedSharedCppNetwork
 
 
 BackendName = Literal["python", "cpp"]
@@ -114,7 +115,9 @@ class Scenario:
                 profile=profile or Profile.current(), **common
             )
         elif backend == "cpp":
-            network = SharedCppNetwork(binary=binary, tick_ms=tick_ms, **common)
+            network = TimedSharedCppNetwork(
+                binary=binary, tick_ms=tick_ms, **common
+            )
         else:
             raise ValueError(f"unknown backend {backend!r}")
 
