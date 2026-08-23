@@ -28,11 +28,11 @@ static constexpr size_t BLE_ATT_NOTIFICATION_OVERHEAD = 3u;
 
 constexpr size_t bleNotificationBytesForMtu(uint16_t mtu)
 {
-    const uint16_t bounded =
-        mtu < BLE_DEFAULT_ATT_MTU
-            ? BLE_DEFAULT_ATT_MTU
-            : (mtu > BLE_MAX_ATT_MTU ? BLE_MAX_ATT_MTU : mtu);
-    return static_cast<size_t>(bounded) - BLE_ATT_NOTIFICATION_OVERHEAD;
+    return static_cast<size_t>(
+               mtu < BLE_DEFAULT_ATT_MTU
+                   ? BLE_DEFAULT_ATT_MTU
+                   : (mtu > BLE_MAX_ATT_MTU ? BLE_MAX_ATT_MTU : mtu)) -
+           BLE_ATT_NOTIFICATION_OVERHEAD;
 }
 
 #pragma pack(push, 1)
@@ -137,28 +137,33 @@ inline bool parseBLEOutboundMessage(
 
 constexpr size_t maxBLEInboundPayloadForMtu(uint16_t mtu)
 {
-    const size_t capacity = bleNotificationBytesForMtu(mtu);
-    return capacity > sizeof(BLEInboundMessage)
-               ? capacity - sizeof(BLEInboundMessage)
+    return bleNotificationBytesForMtu(mtu) > sizeof(BLEInboundMessage)
+               ? bleNotificationBytesForMtu(mtu) - sizeof(BLEInboundMessage)
                : 0u;
 }
 
 constexpr size_t maxBLEInboundFragmentPayloadForMtu(uint16_t mtu)
 {
-    const size_t capacity = bleNotificationBytesForMtu(mtu);
-    return capacity > sizeof(BLEInboundFragmentMessage)
-               ? capacity - sizeof(BLEInboundFragmentMessage)
+    return bleNotificationBytesForMtu(mtu) >
+                   sizeof(BLEInboundFragmentMessage)
+               ? bleNotificationBytesForMtu(mtu) -
+                     sizeof(BLEInboundFragmentMessage)
                : 0u;
+}
+
+constexpr size_t clampBLENeighborCount(size_t count)
+{
+    return count > UINT8_MAX ? UINT8_MAX : count;
 }
 
 constexpr size_t maxBLENeighborsPerNotificationForMtu(uint16_t mtu)
 {
-    const size_t capacity = bleNotificationBytesForMtu(mtu);
-    const size_t raw = capacity > sizeof(BLENeighborsMessage)
-                           ? (capacity - sizeof(BLENeighborsMessage)) /
-                                 sizeof(BLENeighborInfo)
-                           : 0u;
-    return raw > UINT8_MAX ? UINT8_MAX : raw;
+    return clampBLENeighborCount(
+        bleNotificationBytesForMtu(mtu) > sizeof(BLENeighborsMessage)
+            ? (bleNotificationBytesForMtu(mtu) -
+               sizeof(BLENeighborsMessage)) /
+                  sizeof(BLENeighborInfo)
+            : 0u);
 }
 
 constexpr size_t maxBLEInboundPayloadPerNotification()
