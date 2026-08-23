@@ -17,6 +17,7 @@ shown.
 - `dtprotocol_explainer.py` — eleven self-contained scenes;
 - `render.sh` — clean 1080p render, final pacing, silent audio track and chapters;
 - `write_chapters.py` — derives chapter timestamps from rendered scene lengths;
+- `check_layout.py` — regression check for z-order and the reserved caption band;
 - `requirements.txt` — pinned Python packages;
 - `NARRATION.md` — optional human voice-over script matched to the visuals.
 
@@ -55,12 +56,12 @@ Default output properties:
 - H.264 / yuv420p;
 - silent stereo AAC track for broad player compatibility;
 - seekable MP4 chapters;
-- deliberately paced for the narration (`DTP_VIDEO_PACE=2.70`, about 4¾ minutes).
+- paced for a silent visual explainer (`DTP_VIDEO_PACE=1.45`); narration should be edited against the rendered clips rather than obtained by slowing every animation.
 
 The pacing can be changed without editing scene code:
 
 ```bash
-DTP_VIDEO_PACE=2.25 docs/video/render.sh
+DTP_VIDEO_PACE=1.25 docs/video/render.sh
 ```
 
 
@@ -68,7 +69,7 @@ Rendered scene files can be reused when changing only the final pacing or MP4
 metadata:
 
 ```bash
-DTP_VIDEO_REUSE_RAW=1 DTP_VIDEO_PACE=2.70 \
+DTP_VIDEO_REUSE_RAW=1 DTP_VIDEO_PACE=1.45 \
   docs/video/render.sh build/video
 ```
 
@@ -87,17 +88,25 @@ objects.
 
 ## Scene order
 
-1. Why this is not application-level flooding.
-2. The five cooperating DTPK state machines and the LCMM/MAC layers.
-3. HELLO → CRYST_REQ → transactional multi-chunk CRYST.
-4. Destination generations and the feasibility condition.
-5. DATA while unrelated crystallization is incomplete.
-6. Per-hop LCMM ACK versus end-to-end DTPK ACK and replay handling.
-7. Airtime-aware compression and selective multipart repair.
-8. Response/repair/normal scheduler classes and progress guarantees.
-9. Cut/heal repair, requester-owned backoff and every-fourth-wave flooding.
-10. The measured regression matrices.
-11. The protocol in one sentence.
+1. Open on the failure-prone question: can A send to C while the mesh is still crystallizing?
+2. Show the early DATA path, provisional direct neighbor, and hop-by-hop reverse breadcrumb.
+3. Explain HELLO → CRYST_REQ → transactional multi-chunk CRYST.
+4. Explain destination generations and the feasibility condition.
+5. Separate per-hop LCMM reliability from DTPK end-to-end completion and replay handling.
+6. Show a measured airtime-aware compression case and selective multipart repair.
+7. Break a route and show requester-owned SEQ_REQ backoff plus every-fourth-wave flooding.
+8. Show response/repair/normal scheduler classes and progress guarantees.
+9. Only then name the full architecture as a recap of mechanisms already seen.
+10. Show the measured regression matrices and their limits.
+11. End on the state-preservation invariant.
+
+## Story and animation rules
+
+The editorial order follows Grant Sanderson's public advice for mathematical
+exposition: motivate early, put concrete examples before general frameworks,
+do not begin with definitions, and make every screen movement communicate the
+same point as the explanation. Manim renders individual visual clips; pacing,
+chapters, and any voice-over are assembled afterward.
 
 ## Design rules used in the video
 
@@ -107,3 +116,19 @@ objects.
 - no walls of prose while an animation is moving;
 - no claim of a proof where the repository contains only bounded empirical tests;
 - exact terminology and measured numbers from the current implementation.
+
+## Editorial references
+
+The storytelling/layout pass was checked against:
+
+- Grant Sanderson's public advice for new math explainers:
+  https://www.3blue1brown.com/about/
+- Summer of Math Exposition judging criteria (clarity, motivation, novelty,
+  memorability): https://www.3blue1brown.com/blog/some1/
+- 3Blue1Brown's ManimGL workflow demo:
+  https://www.3blue1brown.com/lessons/manim-demo/
+
+The useful constraints for this video are concrete: motivate the question early,
+show an example before naming the general machinery, do not animate text merely
+because Manim can animate it, and keep narration/editing as a separate
+post-production concern.

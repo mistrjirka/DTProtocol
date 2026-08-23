@@ -24,6 +24,26 @@ PURPLE = "#B189E7"
 FONT = "DejaVu Sans"
 MONO = "DejaVu Sans Mono"
 
+# Explicit render layers. ManimGL otherwise uses creation order when z_index is
+# equal, which made later path highlights and connectors paint over node labels
+# and cards. The values are deliberately sparse so scene-specific overlays can
+# sit between the standard classes.
+Z_EDGE = 5
+Z_ROUTE = 10
+Z_CONNECTOR = 15
+Z_NODE = 30
+Z_PANEL = 40
+Z_BADGE = 50
+Z_PACKET = 60
+Z_MARK = 70
+Z_CAPTION = 90
+Z_TITLE = 100
+
+# The bottom 0.9-ish frame units are reserved for make_caption(). Content that
+# descends below this is visually competing with the caption even with correct
+# z-order.
+CONTENT_BOTTOM_Y = -2.65
+
 
 def text_mob(text, size=34, color=WHITE_SOFT, bold=False, font=FONT):
     weight = "BOLD" if bold else "NORMAL"
@@ -36,6 +56,15 @@ def fit_width(mob, width):
     return mob
 
 
+def keep_above_caption(mob, margin=0.10):
+    """Move content up if it enters the persistent bottom caption band."""
+    minimum = CONTENT_BOTTOM_Y + margin
+    bottom = mob.get_bottom()[1]
+    if bottom < minimum:
+        mob.shift(UP * (minimum - bottom))
+    return mob
+
+
 def make_title(text, accent=BLUE):
     label = text_mob(text, 34, WHITE_SOFT, True)
     fit_width(label, 12.1)
@@ -43,7 +72,7 @@ def make_title(text, accent=BLUE):
     line = Line(LEFT * 6.35, RIGHT * 6.35, color=GRID, stroke_width=2)
     line.next_to(label, DOWN, buff=0.18)
     accent_line = Line(line.get_left(), line.get_left() + RIGHT * 1.2, color=accent, stroke_width=5)
-    return VGroup(label, line, accent_line)
+    return VGroup(label, line, accent_line).set_z_index(Z_TITLE)
 
 
 def make_caption(text, accent=BLUE):
@@ -61,7 +90,7 @@ def make_caption(text, accent=BLUE):
     label.move_to(box)
     group = VGroup(box, label)
     group.to_edge(DOWN, buff=0.25)
-    return group
+    return group.set_z_index(Z_CAPTION)
 
 
 def make_badge(text, color=BLUE, size=24):
@@ -76,7 +105,7 @@ def make_badge(text, color=BLUE, size=24):
         fill_opacity=0.16,
     )
     label.move_to(box)
-    return VGroup(box, label)
+    return VGroup(box, label).set_z_index(Z_BADGE)
 
 
 def make_node(name, color=BLUE, radius=0.34):
@@ -84,12 +113,12 @@ def make_node(name, color=BLUE, radius=0.34):
     rim = Circle(radius=radius).set_stroke(color, width=4)
     label = text_mob(name, 27, WHITE_SOFT, True)
     label.move_to(rim)
-    return VGroup(halo, rim, label)
+    return VGroup(halo, rim, label).set_z_index(Z_NODE)
 
 
 def make_edge(a, b, color=GRID, width=5, dashed=False):
     cls = DashedLine if dashed else Line
-    return cls(a.get_center(), b.get_center(), color=color, stroke_width=width)
+    return cls(a.get_center(), b.get_center(), color=color, stroke_width=width).set_z_index(Z_EDGE)
 
 
 def make_packet(label, color=BLUE, size=22):
@@ -104,7 +133,7 @@ def make_packet(label, color=BLUE, size=22):
         fill_opacity=0.20,
     )
     text.move_to(box)
-    return VGroup(box, text)
+    return VGroup(box, text).set_z_index(Z_PACKET)
 
 
 def make_card(title, rows, width=3.4, accent=BLUE, row_size=23):
@@ -133,7 +162,7 @@ def make_card(title, rows, width=3.4, accent=BLUE, row_size=23):
     )
     row_mobs.move_to(body)
     content = VGroup(body, row_mobs)
-    return VGroup(VGroup(header, title_text), content).arrange(DOWN, buff=0.08)
+    return VGroup(VGroup(header, title_text), content).arrange(DOWN, buff=0.08).set_z_index(Z_PANEL)
 
 
 def make_layer(name, subtitle, color, width=4.2):
@@ -150,7 +179,7 @@ def make_layer(name, subtitle, color, width=4.2):
     sub = text_mob(subtitle, 19, MUTED)
     title.move_to(box.get_center() + UP * 0.14)
     sub.move_to(box.get_center() + DOWN * 0.19)
-    return VGroup(box, title, sub)
+    return VGroup(box, title, sub).set_z_index(Z_PANEL)
 
 
 def make_metric(number, label, color=GREEN, width=2.55):
@@ -168,7 +197,7 @@ def make_metric(number, label, color=GREEN, width=2.55):
         fill_opacity=0.97,
     )
     group.move_to(box)
-    return VGroup(box, group)
+    return VGroup(box, group).set_z_index(Z_PANEL)
 
 
 class DTScene(Scene):
@@ -207,50 +236,38 @@ class DTScene(Scene):
 class Opening(DTScene):
     def construct(self):
         self.prepare()
-        title = text_mob("DTProtocol v4", 76, WHITE_SOFT, True)
-        subtitle = text_mob("Route knowledge first. Data follows a path.", 32, BLUE_2)
-        group = VGroup(title, subtitle).arrange(DOWN, buff=0.22).move_to(UP * 1.7)
+        title = text_mob("Can the mesh send before it has settled?", 58, WHITE_SOFT, True)
+        subtitle = text_mob("A route exists to C. The rest of the network is still crystallizing.", 29, BLUE_2)
+        fit_width(subtitle, 11.5)
+        VGroup(title, subtitle).arrange(DOWN, buff=0.22).move_to(UP * 2.35)
 
-        positions = [
-            LEFT * 4.8 + DOWN * 0.4,
-            LEFT * 2.6 + UP * 0.6,
-            LEFT * 0.6 + DOWN * 0.3,
-            RIGHT * 1.5 + UP * 0.7,
-            RIGHT * 3.7 + DOWN * 0.1,
-            RIGHT * 5.1 + UP * 1.1,
-            RIGHT * 0.3 + DOWN * 1.8,
-            LEFT * 2.5 + DOWN * 2.0,
-        ]
-        nodes = VGroup(*[make_node(str(i + 1), BLUE if i not in (0, 5) else GREEN) for i in range(8)])
-        for node, pos in zip(nodes, positions):
-            node.move_to(pos)
-        pairs = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (2, 6), (6, 4), (1, 7), (7, 6)]
-        edges = VGroup(*[make_edge(nodes[a], nodes[b]) for a, b in pairs])
+        a, b, c, d = [make_node(name, GREEN if name in "AC" else BLUE) for name in "ABCD"]
+        nodes = VGroup(a, b, c, d).arrange(RIGHT, buff=2.0).move_to(UP * 0.55)
+        edges = VGroup(*[make_edge(nodes[i], nodes[i + 1]) for i in range(3)])
 
-        self.play(FadeIn(group, shift=UP * 0.2), run_time=1.0)
-        self.play(ShowCreation(edges), LaggedStart(*[FadeIn(n, scale=0.75) for n in nodes], lag_ratio=0.08), run_time=1.2)
+        known = VGroup(
+            Line(a.get_center(), b.get_center(), color=GREEN, stroke_width=8),
+            Line(b.get_center(), c.get_center(), color=GREEN, stroke_width=8),
+        ).set_z_index(Z_ROUTE)
+        unknown = DashedLine(c.get_center(), d.get_center(), color=PURPLE, stroke_width=5).set_z_index(Z_EDGE)
 
-        caption = self.show_caption("The network does not flood every application message.", BLUE)
-        flood = VGroup(*[make_packet("DATA", RED, 17).move_to(nodes[i]) for i in (1, 2, 7)])
-        self.play(LaggedStart(*[FadeIn(p, scale=0.8) for p in flood], lag_ratio=0.12), run_time=0.6)
-        self.play(*[FadeOut(p, shift=DOWN * 0.08) for p in flood], run_time=0.4)
+        table = make_card("A knows", ["B via B", "C via B", "D unknown"], 3.2, GREEN, 22)
+        table.move_to(LEFT * 3.4 + DOWN * 1.55)
+        keep_above_caption(table)
+        pending = make_card("still in progress", ["C ↔ D snapshot", "not committed"], 3.2, PURPLE, 22)
+        pending.move_to(RIGHT * 3.4 + DOWN * 1.55)
+        keep_above_caption(pending)
 
-        caption = self.show_caption("Nodes exchange compact route state; DATA then follows one selected route.", GREEN, caption)
-        route_edges = VGroup(
-            Line(nodes[0].get_center(), nodes[1].get_center(), color=GREEN, stroke_width=8),
-            Line(nodes[1].get_center(), nodes[2].get_center(), color=GREEN, stroke_width=8),
-            Line(nodes[2].get_center(), nodes[3].get_center(), color=GREEN, stroke_width=8),
-            Line(nodes[3].get_center(), nodes[4].get_center(), color=GREEN, stroke_width=8),
-            Line(nodes[4].get_center(), nodes[5].get_center(), color=GREEN, stroke_width=8),
-        )
-        self.play(ShowCreation(route_edges), run_time=0.8)
-        packet = make_packet("DATA", GREEN)
-        path = VMobject().set_points_as_corners([nodes[i].get_center() for i in range(6)])
-        packet.move_to(nodes[0])
-        self.add(packet)
-        self.play(MoveAlongPath(packet, path), run_time=2.0, rate_func=linear)
-        self.remove(packet)
-        self.wait(1.2)
+        self.play(FadeIn(title, shift=UP * 0.12), FadeIn(subtitle, shift=UP * 0.08), run_time=0.8)
+        self.play(ShowCreation(edges), LaggedStart(*[FadeIn(n, scale=0.8) for n in nodes], lag_ratio=0.1), run_time=0.9)
+        self.play(ShowCreation(known), ShowCreation(unknown), FadeIn(table), FadeIn(pending), run_time=0.8)
+        caption = self.show_caption("Does A have to wait for D, or can it use the route it already trusts?", YELLOW)
+
+        question = make_packet("DATA ?", YELLOW, 22).move_to(a)
+        self.play(FadeIn(question, scale=0.8), run_time=0.25)
+        self.play(question.animate.move_to((a.get_center() + b.get_center()) / 2), run_time=0.65)
+        self.play(Indicate(known, color=GREEN), Indicate(pending, color=PURPLE), run_time=0.65)
+        self.wait(0.7)
         self.fade_scene()
 
 
@@ -289,7 +306,7 @@ class Architecture(DTScene):
             Arrow(repair.get_right(), sched.get_left() + DOWN * 0.3, buff=0.1, color=YELLOW),
             Arrow(sched.get_bottom(), lcmm.get_left(), buff=0.1, color=ORANGE),
             Arrow(lcmm.get_bottom(), mac.get_top(), buff=0.08, color=GREEN),
-        )
+        ).set_z_index(Z_CONNECTOR)
         self.play(LaggedStart(*[GrowArrow(a) for a in arrows], lag_ratio=0.08), run_time=1.4)
 
         caption = self.show_caption("Each layer has a different definition of success.", BLUE)
@@ -297,7 +314,8 @@ class Architecture(DTScene):
             make_metric("frame", "MAC completed one radio frame", PURPLE, 3.2),
             make_metric("hop", "LCMM received a link ACK", GREEN, 3.2),
             make_metric("message", "DTPK received final acceptance", BLUE, 3.2),
-        ).arrange(RIGHT, buff=0.3).scale(0.78).move_to(DOWN * 2.7 + LEFT * 1.8)
+        ).arrange(RIGHT, buff=0.3).scale(0.78).move_to(DOWN * 2.30 + LEFT * 1.8)
+        keep_above_caption(metrics)
         self.play(LaggedStart(*[FadeIn(m, shift=UP * 0.12) for m in metrics], lag_ratio=0.15), run_time=1.0)
         self.wait(1.7)
         self.fade_scene()
@@ -331,7 +349,7 @@ class Crystallization(DTScene):
         self.travel(p0, a, b, 0.72)
         mark0 = make_badge("received", GREEN, 18).move_to(staging[1][0].get_center() + UP * 0.18)
         self.play(FadeIn(mark0, scale=0.8), run_time=0.35)
-        old_box = SurroundingRectangle(old, color=GREEN, buff=0.12)
+        old_box = SurroundingRectangle(old, color=GREEN, buff=0.12).set_z_index(Z_MARK)
         self.play(ShowCreation(old_box), run_time=0.35)
 
         caption = self.show_caption("The previous complete table remains active until every chunk is present.", GREEN, caption)
@@ -347,9 +365,11 @@ class Crystallization(DTScene):
 
         report = make_card("Advertisement received from B", ["D  seq17  metric2"], 3.4, YELLOW, 22)
         local = make_card("Candidate stored at A", ["D  via B  seq17  metric3"], 4.0, BLUE, 22)
-        report.move_to(LEFT * 2.5 + DOWN * 2.7)
-        local.move_to(RIGHT * 2.6 + DOWN * 2.7)
-        rewrite = Arrow(report.get_right(), local.get_left(), buff=0.15, color=YELLOW)
+        report.move_to(LEFT * 2.5 + DOWN * 2.28)
+        local.move_to(RIGHT * 2.6 + DOWN * 2.28)
+        keep_above_caption(report)
+        keep_above_caption(local)
+        rewrite = Arrow(report.get_right(), local.get_left(), buff=0.15, color=YELLOW).set_z_index(Z_CONNECTOR)
         self.play(FadeIn(report), GrowArrow(rewrite), FadeIn(local), run_time=0.9)
         caption = self.show_caption("A receiver rewrites each route as: via sender, neighbour metric plus one.", YELLOW, caption)
         self.wait(1.4)
@@ -372,20 +392,22 @@ class Feasibility(DTScene):
 
         caption = self.show_caption("Assume A has advertised D at generation 12 with feasible distance 2.", YELLOW)
         state = make_card("A: feasibility state for D", ["generation 12", "feasible distance 2"], 3.8, YELLOW, 22)
-        state.move_to(LEFT * 3.7 + DOWN * 2.7)
+        state.move_to(LEFT * 3.7 + DOWN * 2.25)
+        keep_above_caption(state)
         self.play(FadeIn(state), run_time=0.6)
 
         self.play(FadeOut(edges[3]), FadeOut(edges[4]), run_time=0.5)
-        cut1 = Cross(edges[3], stroke_color=RED, stroke_width=7)
-        cut2 = Cross(edges[4], stroke_color=RED, stroke_width=7)
+        cut1 = Cross(edges[3], stroke_color=RED, stroke_width=7).set_z_index(Z_MARK)
+        cut2 = Cross(edges[4], stroke_color=RED, stroke_width=7).set_z_index(Z_MARK)
         self.play(ShowCreation(cut1), ShowCreation(cut2), run_time=0.45)
 
         candidate = make_card("B reports a candidate", ["generation 12", "neighbour metric 2"], 3.7, BLUE, 22)
-        candidate.move_to(RIGHT * 3.4 + DOWN * 2.7)
+        candidate.move_to(RIGHT * 3.4 + DOWN * 2.25)
+        keep_above_caption(candidate)
         self.play(FadeIn(candidate), run_time=0.6)
-        inequality = text_mob("2 < 2   is false", 34, RED, True, MONO).move_to(DOWN * 0.8)
+        inequality = text_mob("2 < 2   is false", 34, RED, True, MONO).move_to(DOWN * 0.8).set_z_index(Z_BADGE)
         self.play(FadeIn(inequality, scale=0.85), run_time=0.45)
-        blocked = DashedLine(a.get_center(), b.get_center(), color=RED, stroke_width=7)
+        blocked = DashedLine(a.get_center(), b.get_center(), color=RED, stroke_width=7).set_z_index(Z_ROUTE)
         self.play(ShowCreation(blocked), run_time=0.5)
         caption = self.show_caption("Same-generation candidates must improve the recorded feasible distance.", RED, caption)
         self.wait(0.8)
@@ -406,7 +428,7 @@ class Feasibility(DTScene):
             Line(a.get_center(), b.get_center(), color=GREEN, stroke_width=8),
             Line(b.get_center(), c.get_center(), color=GREEN, stroke_width=8),
             Line(c.get_center(), d.get_center(), color=GREEN, stroke_width=8),
-        )
+        ).set_z_index(Z_ROUTE)
         self.play(ShowCreation(route), run_time=0.8)
         caption = self.show_caption("Freshness makes a route feasible; distance chooses among feasible routes.", GREEN, caption)
         self.wait(1.3)
@@ -433,8 +455,11 @@ class EarlyData(DTScene):
         self.travel(make_packet("DATA", GREEN), b, c, 0.65)
 
         direct = make_badge("provisional direct route to B", BLUE, 19).next_to(c, DOWN, buff=0.28)
-        crumb = DashedLine(c.get_center(), a.get_center(), color=YELLOW, stroke_width=4)
-        crumb_label = make_badge("reverse breadcrumb", YELLOW, 18).move_to(crumb.get_center() + DOWN * 0.25)
+        crumb = VGroup(
+            DashedLine(c.get_center(), b.get_center(), color=YELLOW, stroke_width=4),
+            DashedLine(b.get_center(), a.get_center(), color=YELLOW, stroke_width=4),
+        ).set_z_index(Z_CONNECTOR)
+        crumb_label = make_badge("reverse breadcrumb: C → B → A", YELLOW, 18).move_to(b.get_center() + DOWN * 0.62)
         self.play(FadeIn(direct, shift=UP * 0.08), ShowCreation(crumb), FadeIn(crumb_label), run_time=0.75)
         caption = self.show_caption("The true one-hop sender becomes a provisional reverse route; the original source gets a breadcrumb.", YELLOW, caption)
 
@@ -474,7 +499,7 @@ class Reliability(DTScene):
         self.travel(make_packet("E2E ACK 7", PURPLE, 18), d, r, 0.58)
         lost = make_packet("E2E ACK 7", PURPLE, 18).move_to((r.get_center() + s.get_center()) / 2)
         self.play(FadeIn(lost, scale=0.8), run_time=0.25)
-        cross = Cross(lost, stroke_color=RED, stroke_width=6)
+        cross = Cross(lost, stroke_color=RED, stroke_width=6).set_z_index(Z_MARK)
         self.play(ShowCreation(cross), FadeOut(lost), run_time=0.35)
 
         caption = self.show_caption("If the final ACK is lost, the source retries with the same identity.", ORANGE, caption)
@@ -495,24 +520,24 @@ class MultipartCompression(DTScene):
         self.prepare("Large messages: optimize airtime, then repair only what is missing", ORANGE)
 
         raw = RoundedRectangle(width=5.4, height=0.72, corner_radius=0.12, stroke_color=BLUE, fill_color=BLUE, fill_opacity=0.2)
-        raw_label = text_mob("raw application payload: 1000 bytes", 25, WHITE_SOFT, True).move_to(raw)
+        raw_label = text_mob("measured test payload: 5,200 bytes", 25, WHITE_SOFT, True).move_to(raw)
         raw_group = VGroup(raw, raw_label).move_to(UP * 2.0)
         compressed = RoundedRectangle(width=2.0, height=0.72, corner_radius=0.12, stroke_color=GREEN, fill_color=GREEN, fill_opacity=0.22)
         compressed_label = text_mob("encoded", 24, WHITE_SOFT, True).move_to(compressed)
         compressed_group = VGroup(compressed, compressed_label).move_to(UP * 0.95 + LEFT * 1.7)
-        airtime_raw = make_badge("5 reliable frames", BLUE, 20).next_to(raw_group, RIGHT, buff=0.25)
-        airtime_comp = make_badge("2 reliable frames", GREEN, 20).next_to(compressed_group, RIGHT, buff=0.25)
+        airtime_raw = make_badge("23 raw fragments", BLUE, 20).next_to(raw_group, RIGHT, buff=0.25)
+        airtime_comp = make_badge("590 B → 3 fragments", GREEN, 20).next_to(compressed_group, RIGHT, buff=0.25)
 
         self.play(FadeIn(raw_group), FadeIn(airtime_raw), run_time=0.65)
         caption = self.show_caption("Compression is selected by complete LoRa airtime, not by byte count alone.", ORANGE)
         self.play(Transform(raw_group.copy(), compressed_group), FadeIn(airtime_comp), run_time=0.8)
-        decision = make_badge("lower airtime → use encoded bytes", GREEN, 21).move_to(RIGHT * 3.6 + UP * 0.95)
+        decision = make_badge("~37.8 s modeled airtime saved", GREEN, 21).move_to(RIGHT * 3.6 + UP * 0.95)
         self.play(FadeIn(decision, shift=LEFT * 0.1), run_time=0.5)
 
         caption = self.show_caption("If encoded bytes still exceed one frame, fragmentation happens after compression.", BLUE, caption)
         chunks = VGroup(*[make_packet(f"frag {i}", BLUE, 19) for i in range(5)]).arrange(RIGHT, buff=0.24).move_to(DOWN * 0.5)
         self.play(LaggedStart(*[FadeIn(ch, shift=DOWN * 0.1) for ch in chunks], lag_ratio=0.1), run_time=0.9)
-        missing_cross = Cross(chunks[2], stroke_color=RED, stroke_width=6)
+        missing_cross = Cross(chunks[2], stroke_color=RED, stroke_width=6).set_z_index(Z_MARK)
         self.play(ShowCreation(missing_cross), run_time=0.35)
 
         receiver = make_card("destination assembly", ["0 ✓", "1 ✓", "2 missing", "3 ✓", "4 ✓"], 3.1, PURPLE, 21)
@@ -535,6 +560,7 @@ class MultipartCompression(DTScene):
             make_badge("16 KiB default message cap", ORANGE, 18),
             make_badge("34 B status for 16 KiB", YELLOW, 18),
         ).arrange(RIGHT, buff=0.18).scale(0.9).to_edge(DOWN, buff=0.95)
+        keep_above_caption(stats)
         self.play(LaggedStart(*[FadeIn(s, shift=UP * 0.08) for s in stats], lag_ratio=0.08), run_time=0.8)
         caption = self.show_caption("Selective repair keeps multipart overhead bounded even when one fragment is lost.", GREEN, caption)
         self.wait(1.4)
@@ -573,7 +599,8 @@ class Scheduler(DTScene):
             self.play(FadeOut(token), run_time=0.2)
 
         wait = make_card("one local E2E waiter", ["blocks a second local app send", "does not stop relay/control work"], 5.2, PURPLE, 23)
-        wait.move_to(DOWN * 2.35)
+        wait.move_to(DOWN * 2.05)
+        keep_above_caption(wait)
         bypass = VGroup(
             make_badge("HELLO", GREEN, 18),
             make_badge("CRYST", BLUE, 18),
@@ -601,10 +628,10 @@ class Repair(DTScene):
         alt_edges = VGroup(make_edge(a, alt, GREEN), make_edge(alt, e, GREEN))
         self.play(ShowCreation(main_edges), ShowCreation(alt_edges), LaggedStart(*[FadeIn(n) for n in nodes], lag_ratio=0.08), run_time=1.0)
 
-        old_path = VGroup(*[Line(x.get_center(), y.get_center(), color=BLUE_2, stroke_width=8) for x, y in ((a, b), (b, c), (c, e), (e, d))])
+        old_path = VGroup(*[Line(x.get_center(), y.get_center(), color=BLUE_2, stroke_width=8) for x, y in ((a, b), (b, c), (c, e), (e, d))]).set_z_index(Z_ROUTE)
         self.play(ShowCreation(old_path), run_time=0.65)
         caption = self.show_caption("The preferred path disappears. Feasibility blocks stale same-generation detours.", RED)
-        cut = Cross(main_edges[1], stroke_color=RED, stroke_width=8)
+        cut = Cross(main_edges[1], stroke_color=RED, stroke_width=8).set_z_index(Z_MARK)
         self.play(ShowCreation(cut), FadeOut(old_path), run_time=0.55)
 
         seq = make_packet("SEQ_REQ", YELLOW, 19)
@@ -612,7 +639,7 @@ class Repair(DTScene):
         self.travel(seq.copy(), b, c, 0.45)
         lost = seq.copy().move_to((c.get_center() + e.get_center()) / 2)
         self.play(FadeIn(lost, scale=0.8), run_time=0.2)
-        self.play(ShowCreation(Cross(lost, stroke_color=RED, stroke_width=6)), FadeOut(lost), run_time=0.35)
+        self.play(ShowCreation(Cross(lost, stroke_color=RED, stroke_width=6).set_z_index(Z_MARK)), FadeOut(lost), run_time=0.35)
 
         timeline = VGroup(
             make_badge("5 s", YELLOW, 18),
@@ -622,6 +649,7 @@ class Repair(DTScene):
             make_badge("40 s", YELLOW, 18),
             make_badge("60 s cap", YELLOW, 18),
         ).arrange(RIGHT, buff=0.18).scale(0.88).move_to(DOWN * 2.45)
+        keep_above_caption(timeline)
         self.play(LaggedStart(*[FadeIn(t, shift=UP * 0.08) for t in timeline], lag_ratio=0.1), run_time=1.0)
         caption = self.show_caption("The requester retries the logical repair with backoff; every fourth wave floods as an escape hatch.", YELLOW, caption)
 
@@ -636,13 +664,13 @@ class Repair(DTScene):
             Line(a.get_center(), alt.get_center(), color=GREEN, stroke_width=8),
             Line(alt.get_center(), e.get_center(), color=GREEN, stroke_width=8),
             Line(e.get_center(), d.get_center(), color=GREEN, stroke_width=8),
-        )
+        ).set_z_index(Z_ROUTE)
         self.play(ShowCreation(new_path), run_time=0.8)
         caption = self.show_caption("Fresh CRYST state makes the longer surviving path feasible.", GREEN, caption)
 
         before = make_metric("2,630", "SEQ_REQ transmissions in hard seed 69", RED, 3.8)
         after = make_metric("290", "after one-shot-hop repair", GREEN, 3.8)
-        arrow = Arrow(LEFT * 0.7, RIGHT * 0.7, color=YELLOW)
+        arrow = Arrow(LEFT * 0.7, RIGHT * 0.7, color=YELLOW).set_z_index(Z_CONNECTOR)
         compare = VGroup(before, arrow, after).arrange(RIGHT, buff=0.3).scale(0.82).move_to(DOWN * 1.15)
         self.play(FadeIn(compare, shift=UP * 0.1), run_time=0.8)
         caption = self.show_caption("Removing five LCMM retries from every SEQ_REQ hop cut the feedback storm by about 89% in that trace.", GREEN, caption)
@@ -673,6 +701,7 @@ class Validation(DTScene):
             make_badge("long hardware soak", PURPLE, 18),
             make_badge("duplicate node IDs", PURPLE, 18),
         ).arrange(RIGHT, buff=0.2).scale(0.92).move_to(DOWN * 2.55)
+        keep_above_caption(limits)
         self.play(LaggedStart(*[FadeIn(l, shift=UP * 0.08) for l in limits], lag_ratio=0.08), run_time=0.8)
         self.wait(1.5)
         self.fade_scene()
@@ -691,7 +720,7 @@ class Closing(DTScene):
         nodes = VGroup(*[make_node(str(i + 1), BLUE if i not in (0, 5) else GREEN, 0.28) for i in range(6)])
         nodes.arrange(RIGHT, buff=1.45).move_to(DOWN * 1.5)
         edges = VGroup(*[make_edge(nodes[i], nodes[i + 1], GRID, 4) for i in range(5)])
-        route = VGroup(*[Line(nodes[i].get_center(), nodes[i + 1].get_center(), color=GREEN, stroke_width=7) for i in range(5)])
+        route = VGroup(*[Line(nodes[i].get_center(), nodes[i + 1].get_center(), color=GREEN, stroke_width=7) for i in range(5)]).set_z_index(Z_ROUTE)
         self.play(ShowCreation(edges), LaggedStart(*[FadeIn(n) for n in nodes], lag_ratio=0.08), run_time=0.8)
         self.play(ShowCreation(route), run_time=0.65)
         packet = make_packet("DATA", GREEN, 18).move_to(nodes[0])

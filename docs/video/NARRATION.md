@@ -1,110 +1,143 @@
 # Optional narration
 
-The rendered video works without narration. This script is written for a calm,
-technical delivery at roughly 145–155 words per minute. Leave the short pauses in
-place; the animation carries part of the explanation.
+The rendered video is designed to work silently. If narration is recorded, add it
+in the edit rather than synchronizing speech inside Manim. This script follows the
+visual order and is intentionally conversational rather than documentation read
+aloud.
 
-## 1. The idea
+## 1. Can a half-crystallized mesh send?
 
-DTProtocol is a proactive LoRa mesh protocol. Application messages are not
-flooded through the network. Nodes first exchange route knowledge. A message then
-follows one selected path.
+Start with the uncomfortable case. Node A already has a route to C through B, but
+state involving D is still incomplete. Does A have to wait for the whole network
+to settle before it can send anything useful?
 
-## 2. Architecture
+It does not. There is no global ready bit in DTProtocol. The question is only
+whether this destination already has a selected, feasible route.
 
-The implementation is easier to understand as cooperating state machines. The
-data plane owns message identity, replay protection, hop limits, and end-to-end
-results. Neighbour synchronization owns HELLO, CRYST requests, snapshot chunks,
-and liveness. The routing database selects feasible routes. Sequence repair
-restores liveness when feasibility blocks every known candidate. A scheduler
-feeds all of this into LCMM and the MAC.
+## 2. Using a route before full convergence
 
-These layers do not mean the same thing by success. The MAC completes one radio
-frame. LCMM confirms one next hop. DTPK completes a logical application message.
+A sends DATA to B, and B forwards it to C using the route that already exists.
+The unfinished C-to-D snapshot keeps progressing independently.
 
-## 3. Crystallization
+The first valid DATA from a true one-hop sender is useful evidence too. C can
+provisionally learn B as a direct neighbor. For the end-to-end response, each
+forwarding hop leaves a short-lived reverse breadcrumb, so the ACK returns along
+C to B to A even before proactive reverse routing has converged.
 
-A HELLO carries only a boot incarnation and route-state version. When that digest
-is missing or newer, the neighbour asks directly for a CRYST snapshot.
+The important point is not that startup traffic gets special treatment. It is
+that complete old state remains usable while incomplete new state is isolated.
 
-A large snapshot can span several frames. Those chunks are assembled away from
-the active routing table. Until every chunk is present, the previous complete
-state remains usable. The new contribution is committed atomically.
+## 3. Transactional crystallization
 
-A route advertised by a neighbour is stored as “via that neighbour, metric plus
-one.”
+A HELLO is only a digest: boot incarnation plus route-state version. If a neighbor
+is missing that version, it asks for a CRYST snapshot.
 
-## 4. Feasibility
+A snapshot may take several frames. Those chunks are assembled away from the
+active routing table. Losing the second chunk does not leave the router with half
+of a new worldview. The previous complete contribution stays active until the
+whole replacement is present, then the update is committed at once.
 
-Distance alone is not enough to prevent count-to-infinity loops. Each destination
-also has a generation and a feasible distance. A same-generation candidate must
-report a strictly better neighbour metric than the state this node previously
-advertised.
+An advertised route is rewritten locally as “via this neighbor, metric plus one.”
 
-When every candidate is blocked, a sequence request reaches the destination. The
-destination advances its generation, advertises fresh state, and a valid longer
-route can become feasible.
+## 4. Loop-safe feasibility
 
-## 5. Messages during startup
+Shortest path alone is not enough when stale information is circulating. Each
+destination also has a generation and a feasible distance.
 
-There is no global ready phase. If A already has a selected route to C, it may
-send to C while unrelated state involving D is still incomplete.
+For the same generation, a neighbor has to advertise a strictly better metric
+than the feasible distance already recorded. If it cannot, that candidate is
+blocked even if it looks tempting locally.
 
-Direct DATA is also evidence of a one-hop link. The immediate sender gets a
-provisional reverse route. A bounded breadcrumb records the ingress path back to
-the original source, so acknowledgements and immediate replies can return before
-proactive reverse routing has fully converged.
+When all known candidates are blocked, a sequence request eventually reaches the
+destination. The destination advances its generation. That fresh generation can
+make a longer surviving path feasible again.
 
-## 6. Reliability
+Freshness decides whether a route is safe to consider. Distance decides which
+safe route wins.
 
-Every reliable hop uses LCMM acknowledgement and bounded retry. The destination
-then returns one DTPK end-to-end result.
+## 5. Per-hop reliability and end-to-end completion
 
-Retries retain the identity made from source, boot incarnation, and packet ID. If
-the final acknowledgement is lost, the source resends the same identity. The
-destination recognizes the replay, acknowledges it again, and does not call the
-application twice.
+LCMM answers a local question: did the next hop receive this frame? DTPK answers
+a different one: did the final destination accept this logical message?
 
-## 7. Compression and multipart messages
+A reliable DATA frame gets bounded link retries on every hop. At the destination,
+replay identity includes source, boot incarnation, and packet ID.
 
-Compression is chosen by predicted LoRa airtime, not merely by byte count. A
-smaller payload that occupies the same LoRa symbol groups is rejected. A useful
-candidate is decoded locally and compared byte for byte before transmission.
+If the final end-to-end ACK is lost, the source retries the same identity. The
+destination recognizes the replay, sends the ACK again, and does not call the
+application a second time. Exactly-once application delivery comes from replay
+handling, not from pretending the radio never duplicates anything.
 
-Messages that still exceed one frame are divided into 230-byte fragments. The
-destination exposes nothing until the complete message exists. If one fragment
-is missing, it sends a bitmap and the source retransmits only that fragment.
+## 6. Compression and multipart repair
 
-## 8. Scheduling
+Compression is not selected because the byte string merely got shorter. DTPK
+estimates the complete LoRa cost after headers, fragment boundaries, and reliable
+link ACKs.
 
-Responses have first priority. Repair traffic gets a bounded burst. Normal work
-must still run. Waiting for one local end-to-end result does not pause HELLO,
-CRYST, relayed DATA, or acknowledgements.
+In the measured regression example on screen, a repetitive 5,200-byte payload
+would require 23 raw fragments. Heatshrink encodes it to 590 bytes, which needs
+three fragments and saves about 37.8 seconds of modeled reliable-link airtime on
+the configured test PHY. The source decodes the candidate locally and compares
+it byte for byte before sending it.
 
-## 9. Repair after a cut
+If a message still needs several fragments, the destination exposes nothing to
+the application until the whole message exists. Missing pieces are represented
+by a compact bitmap, and only those pieces are sent again.
 
-A sequence-repair wave is sent once at each hop. The requester, not every relay,
-owns persistent retry. Delays grow from five seconds up to sixty seconds, and
-every fourth attempt floods to escape stale directed candidates.
+## 7. Repair after a cut
 
-The old design also gave every directed hop five LCMM attempts. In a dense
-half-duplex mesh, that multiplied control traffic and delayed the CRYST state
-needed to finish repair. In the representative twenty-node trace, sequence
-requests fell from two thousand six hundred and thirty to two hundred and ninety.
+Now break the preferred route. A sequence-repair wave is forwarded once at each
+hop. The requester, not every relay, owns persistence: retry delays grow from five
+seconds toward a sixty-second cap, and every fourth attempt floods to escape a
+stale directed path.
 
-## 10. Validation
+The previous design also gave every directed SEQ_REQ hop five LCMM attempts. In a
+dense half-duplex mesh, those nested retries amplified repair traffic and delayed
+the CRYST information required to finish repair.
 
-The current revision passes three hundred and twenty-five real-C++ tests in both
-normal and sanitizer builds. The startup matrix passes nine hundred of nine
-hundred cases. The cut-and-heal matrix reaches one hundred of one hundred initial
-and healed topologies, one hundred successful post-heal messages, and no routing
-loops.
+In the representative twenty-node seed 69 trace, SEQ_REQ transmissions over the
+post-heal window fell from 2,630 to 290, roughly an eighty-nine percent reduction.
+The topology then converged instead of remaining incorrect at the old deadline.
 
-Those are bounded results. Capture effects, hidden terminals, brownouts, long
-hardware soaks, and duplicate physical node IDs still require physical testing.
+## 8. Scheduling and progress
+
+Reliability is useless if one class of reliable work can starve everything else.
+The transmit scheduler therefore separates immediate responses, repair work, and
+normal work.
+
+Responses go first. Repair gets a bounded burst. Normal traffic must still get a
+turn. Waiting for one local end-to-end result does not freeze HELLO, CRYST,
+relayed DATA, ACKs, or NACKs.
+
+## 9. Architecture recap
+
+With the concrete mechanisms in view, the stack is easier to name. The data plane
+owns message identity, replay, hop limits, and end-to-end completion. Neighbor
+synchronization owns HELLO and transactional CRYST state. CrystDatabase owns
+candidate routes and feasibility. Sequence repair restores liveness when every
+candidate is blocked. The scheduler feeds those jobs into LCMM and the MAC.
+
+The layers deliberately have different success conditions: one radio frame, one
+confirmed hop, and one completed logical application message are not the same
+thing.
+
+## 10. What has actually been tested
+
+The current protocol revision passes 325 host scenarios in the normal build and
+again under address and undefined-behavior sanitizers. The startup matrix passes
+900 of 900 cases. The cut-and-heal matrix reaches 100 of 100 healed topologies,
+100 successful post-heal application deliveries, and zero routing loops in that
+bounded test set.
+
+Those results are evidence, not a proof about arbitrary radio conditions. Capture,
+hidden terminals, exact MCU scheduling, brownouts, long hardware soaks, and
+field mistakes such as duplicate physical node IDs still need real hardware.
 
 ## 11. Summary
 
-The central rule is simple: keep complete route state usable while new state is
-incomplete. Feasibility provides safety. Destination-generation repair provides
-liveness. Layered acknowledgements provide reliable application delivery.
+The design can be reduced to one rule: do not destroy complete route knowledge
+while replacement knowledge is incomplete.
+
+Transactional snapshots preserve usable state. Feasibility prevents stale route
+loops. Destination generations restore liveness. Layered acknowledgements and
+replay identity make application delivery reliable on top of unreliable hops.

@@ -35,11 +35,11 @@ def main() -> int:
         raise SystemExit("pace must be positive")
 
     titles = {
-        "Opening": "The idea",
-        "Architecture": "Architecture",
+        "Opening": "Can a half-crystallized mesh send?",
+        "Architecture": "Architecture recap",
         "Crystallization": "Transactional crystallization",
         "Feasibility": "Loop-safe feasibility",
-        "EarlyData": "Messages before full convergence",
+        "EarlyData": "Using a route before full convergence",
         "Reliability": "Hop and end-to-end reliability",
         "MultipartCompression": "Compression and multipart repair",
         "Scheduler": "Scheduler and progress",

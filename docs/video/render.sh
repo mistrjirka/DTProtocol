@@ -8,20 +8,20 @@ MANIM="$VENV/bin/manimgl"
 OUT=${1:-"$ROOT/build/video"}
 RAW="$OUT/raw"
 FINAL="$OUT/DTProtocol-v4-architecture.mp4"
-PACE=${DTP_VIDEO_PACE:-2.70}
+PACE=${DTP_VIDEO_PACE:-1.45}
 REUSE_RAW=${DTP_VIDEO_REUSE_RAW:-0}
 REVISION=$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)
 
 SCENES=(
   Opening
-  Architecture
+  EarlyData
   Crystallization
   Feasibility
-  EarlyData
   Reliability
   MultipartCompression
-  Scheduler
   Repair
+  Scheduler
+  Architecture
   Validation
   Closing
 )
@@ -41,6 +41,10 @@ fi
 command -v ffmpeg >/dev/null
 command -v ffprobe >/dev/null
 command -v xvfb-run >/dev/null
+
+# Catch the most damaging composition regressions before spending time on a
+# full render: path layers behind nodes and a reserved bottom caption band.
+xvfb-run -a "$VENV/bin/python" "$ROOT/docs/video/check_layout.py"
 
 if [[ "$REUSE_RAW" == 1 ]]; then
   mkdir -p "$RAW"
