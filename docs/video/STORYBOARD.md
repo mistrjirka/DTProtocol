@@ -62,11 +62,11 @@ Use A → B → C → E → D as the old route and A → X → E → D as the su
 
 ### 8. Scheduler
 
-Explain priority as a service rule, not a wall of implementation text: response traffic first, bounded repair burst, then normal traffic. Keep only one token moving at a time.
+Explain priority as a service rule, not a wall of implementation text: response traffic first, bounded repair burst, then normal traffic. Keep only one token moving at a time and place it outside the lane text. Then clear the lanes before rebuilding the separate E2E-waiter explanation.
 
 ### 9. Architecture
 
-Now reveal the component diagram. The viewer has already seen the concrete behaviors represented by the boxes, so the diagram acts as a recap rather than an opening abstraction.
+Now reveal the component diagram. The viewer has already seen the concrete behaviors represented by the boxes, so the diagram acts as a recap rather than an opening abstraction. After the relationships are visible, clear the dense component diagram before showing the three different success levels: frame, hop, and message.
 
 ### 10. Validation
 

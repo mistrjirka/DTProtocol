@@ -341,7 +341,7 @@ class Opening(DTScene):
 
 class Architecture(DTScene):
     def construct(self):
-        self.prepare("One protocol, five cooperating state machines", BLUE)
+        self.prepare("How the pieces fit together", BLUE)
 
         app = make_layer("Application / Bluetooth", "payloads and callbacks", GREEN, 4.5)
         data = make_layer("Data plane", "identity, replay, hop limit, E2E ACK/NACK", BLUE, 4.5)
@@ -377,15 +377,17 @@ class Architecture(DTScene):
         ), Z_CONNECTOR)
         self.play(LaggedStart(*[GrowArrow(a) for a in arrows], lag_ratio=0.08), run_time=1.4)
 
-        caption = self.show_caption("Each layer has a different definition of success.", BLUE)
+        caption = self.show_caption("Route knowledge and application traffic share one bounded transmit path.", BLUE)
+        self.wait(0.65)
+        self.play(FadeOut(layers), FadeOut(arrows), run_time=0.52)
+        caption = self.show_caption("Success means something different at each layer.", BLUE, caption)
         metrics = VGroup(
             make_metric("frame", "MAC completed one radio frame", PURPLE, 3.2),
             make_metric("hop", "LCMM received a link ACK", GREEN, 3.2),
             make_metric("message", "DTPK received final acceptance", BLUE, 3.2),
-        ).arrange(RIGHT, buff=0.3).scale(0.78).move_to(DOWN * 2.30 + LEFT * 1.8)
-        keep_above_caption(metrics)
+        ).arrange(RIGHT, buff=0.42).scale(0.90).move_to(UP * 0.15)
         self.play(LaggedStart(*[FadeIn(m, shift=UP * 0.12) for m in metrics], lag_ratio=0.15), run_time=1.0)
-        self.wait(1.7)
+        self.wait(1.55)
         self.fade_scene()
 
 
@@ -633,12 +635,12 @@ class MultipartCompression(DTScene):
         a2 = make_card("destination assembly", ["0  ✓", "1  missing", "2  ✓"], 3.1, PURPLE, 21).move_to(a1)
         self.clean_replace(a1, a2, 0.3)
 
-        caption = self.show_caption("Assume link retries for fragment 1 were exhausted: the receiver asks only for what is missing.", YELLOW, caption)
+        caption = self.show_caption("Fragment 1 exhausted its link retries. The receiver asks only for the missing piece.", YELLOW, caption)
         self.travel(make_packet("STATUS 010", YELLOW, 16), d_node, relay, 0.48)
         self.travel(make_packet("STATUS 010", YELLOW, 16), relay, s_node, 0.48)
         self.travel(make_packet("frag 1 only", YELLOW, 16), s_node, relay, 0.48)
         self.travel(make_packet("frag 1 only", YELLOW, 16), relay, d_node, 0.48)
-        caption = self.show_caption("Only after the complete logical message exists does the destination deliver it and acknowledge completion.", GREEN, caption)
+        caption = self.show_caption("Only after every fragment is present does the destination deliver once and send a message ACK.", GREEN, caption)
         complete = make_card("destination assembly", ["0  ✓", "1  ✓", "2  ✓", "deliver once"], 3.1, GREEN, 21).move_to(a2)
         self.clean_replace(a2, complete, 0.45)
         self.travel(make_packet("message ACK", GREEN, 16), d_node, relay, 0.48)
@@ -662,34 +664,43 @@ class Scheduler(DTScene):
             name_mob = text_mob(name, 28, color, True).move_to(box.get_left() + RIGHT * 1.0)
             detail_mob = text_mob(detail, 23, WHITE_SOFT).move_to(box.get_center() + LEFT * 0.5)
             gate = make_badge("eligible", color, 18).move_to(box.get_right() + LEFT * 0.75)
-            lane = VGroup(box, name_mob, detail_mob, gate)
+            lane = set_layer(VGroup(box, name_mob, detail_mob, gate), Z_PANEL)
             lane.move_to(UP * (1.35 - i * 1.25))
             lanes.add(lane)
         self.play(LaggedStart(*[FadeIn(lane, shift=RIGHT * 0.1) for lane in lanes], lag_ratio=0.12), run_time=1.0)
 
         caption = self.show_caption("Responses win first. Repair gets a bounded burst. Normal traffic must still run.", ORANGE)
         tokens = [
-            make_packet("ACK", GREEN, 18).move_to(lanes[0].get_left() + RIGHT * 3.3),
-            make_packet("SEQ_REQ", YELLOW, 18).move_to(lanes[1].get_left() + RIGHT * 3.3),
-            make_packet("DATA", BLUE, 18).move_to(lanes[2].get_left() + RIGHT * 3.3),
+            make_packet("ACK", GREEN, 18),
+            make_packet("SEQ_REQ", YELLOW, 18),
+            make_packet("DATA", BLUE, 18),
         ]
-        for token in tokens:
-            self.play(FadeIn(token, scale=0.8), run_time=0.20)
-            self.play(token.animate.shift(RIGHT * 5.4), run_time=0.65)
+        # Do not sweep tokens through the explanatory labels. A token appears at
+        # the lane boundary, the chosen lane is highlighted, and the token is
+        # consumed. The order itself carries the scheduling idea.
+        for lane, token, color in zip(lanes, tokens, (GREEN, YELLOW, BLUE)):
+            token.next_to(lane, LEFT, buff=0.22)
+            self.play(FadeIn(token, scale=0.86), run_time=0.20)
+            self.outline_pulse(lane, color, 0.34, buff=0.06)
             self.play(FadeOut(token), run_time=0.18)
 
-        wait = make_card("one local E2E waiter", ["blocks a second local app send", "does not stop relay/control work"], 5.2, PURPLE, 23)
-        wait.move_to(DOWN * 2.05)
-        keep_above_caption(wait)
+        # Reset before explaining the independent E2E waiter. Keeping both the
+        # scheduler lanes and waiter diagram on screen made the old version read
+        # like a dense dashboard rather than a causal explanation.
+        self.play(FadeOut(lanes), run_time=0.42)
+        caption = self.show_caption("Waiting for one application ACK does not pause crystallization or relay traffic.", PURPLE, caption)
+        wait = make_card("one local E2E waiter", ["blocks a second local app send", "relay and control work continue"], 5.4, PURPLE, 23)
+        wait.move_to(UP * 0.55)
         bypass = VGroup(
             make_badge("HELLO", GREEN, 18),
             make_badge("CRYST", BLUE, 18),
             make_badge("relayed DATA", ORANGE, 18),
             make_badge("ACK / NACK", PURPLE, 18),
-        ).arrange(RIGHT, buff=0.22).next_to(wait, UP, buff=0.28)
-        self.play(FadeIn(wait), LaggedStart(*[FadeIn(b, shift=UP * 0.08) for b in bypass], lag_ratio=0.1), run_time=0.8)
-        caption = self.show_caption("Waiting for an application ACK does not pause crystallization or turn relays into stop-and-wait nodes.", PURPLE, caption)
-        self.wait(1.4)
+        ).arrange(RIGHT, buff=0.22).move_to(DOWN * 1.05)
+        still = text_mob("still runs", 22, MUTED, True).next_to(bypass, UP, buff=0.18)
+        self.play(FadeIn(wait, shift=UP * 0.08), run_time=0.48)
+        self.play(FadeIn(still), LaggedStart(*[FadeIn(b, shift=UP * 0.08) for b in bypass], lag_ratio=0.1), run_time=0.72)
+        self.wait(1.35)
         self.fade_scene()
 
 
