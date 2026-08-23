@@ -44,6 +44,10 @@ DATA frame also establishes its sender's reverse one-hop route before the
 application callback, so immediate responses work during asymmetric startup.
 See [STARTUP_MESSAGE_DELIVERY.md](STARTUP_MESSAGE_DELIVERY.md).
 
+A chaptered ManimGL walkthrough of the architecture, crystallization, early DATA,
+reliability, multipart transfer, compression and cut/heal repair is available in
+[`docs/video`](docs/video/README.md).
+
 ## ESP32 quick start
 
 Initialize the RadioLib `SX1262` object first, then MAC and DTPK:

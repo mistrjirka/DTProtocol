@@ -8,7 +8,9 @@ MANIM="$VENV/bin/manimgl"
 OUT=${1:-"$ROOT/build/video"}
 RAW="$OUT/raw"
 FINAL="$OUT/DTProtocol-v4-architecture.mp4"
-PACE=${DTP_VIDEO_PACE:-1.45}
+PACE=${DTP_VIDEO_PACE:-2.70}
+REUSE_RAW=${DTP_VIDEO_REUSE_RAW:-0}
+REVISION=$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)
 
 SCENES=(
   Opening
@@ -40,14 +42,24 @@ command -v ffmpeg >/dev/null
 command -v ffprobe >/dev/null
 command -v xvfb-run >/dev/null
 
-rm -rf "$OUT"
-mkdir -p "$RAW"
-
-for scene in "${SCENES[@]}"; do
-  echo "Rendering $scene"
-  xvfb-run -a "$MANIM" \
-    "$SCRIPT" "$scene" -w --hd --video_dir "$RAW" --quiet
-done
+if [[ "$REUSE_RAW" == 1 ]]; then
+  mkdir -p "$RAW"
+  for scene in "${SCENES[@]}"; do
+    test -s "$RAW/$scene.mp4" || {
+      echo "Missing reusable scene: $RAW/$scene.mp4" >&2
+      exit 1
+    }
+  done
+  rm -f "$OUT/without-chapters.mp4" "$OUT/chapters.ffmeta" "$FINAL"
+else
+  rm -rf "$OUT"
+  mkdir -p "$RAW"
+  for scene in "${SCENES[@]}"; do
+    echo "Rendering $scene"
+    xvfb-run -a "$MANIM" \
+      "$SCRIPT" "$scene" -w --hd --video_dir "$RAW" --quiet
+  done
+fi
 
 concat="$OUT/concat.txt"
 : >"$concat"
@@ -75,7 +87,11 @@ python3 "$ROOT/docs/video/write_chapters.py" \
 ffmpeg -y -v warning \
   -i "$OUT/without-chapters.mp4" \
   -i "$OUT/chapters.ffmeta" \
-  -map 0 -map_metadata 1 -c copy -movflags +faststart "$FINAL"
+  -map 0 -map_metadata 1 \
+  -metadata title="DTProtocol v4 architecture" \
+  -metadata artist="DTProtocol project" \
+  -metadata comment="Rendered from repository revision $REVISION" \
+  -c copy -movflags +faststart "$FINAL"
 rm "$OUT/without-chapters.mp4"
 
 ffprobe -v error \

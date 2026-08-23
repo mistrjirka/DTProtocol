@@ -8,6 +8,10 @@ route candidates, snapshots, packets, retransmissions, queue classes and link
 failures move on screen. Captions stay short and name only the invariant being
 shown.
 
+- [Rendered 1080p MP4](releases/DTProtocol-v4-architecture.mp4)
+- [Poster image](releases/DTProtocol-v4-architecture-poster.jpg)
+- [SHA-256 checksums](releases/SHA256SUMS)
+
 ## Contents
 
 - `dtprotocol_explainer.py` — eleven self-contained scenes;
@@ -51,13 +55,35 @@ Default output properties:
 - H.264 / yuv420p;
 - silent stereo AAC track for broad player compatibility;
 - seekable MP4 chapters;
-- deliberately slowed final pacing (`DTP_VIDEO_PACE=1.45`).
+- deliberately paced for the narration (`DTP_VIDEO_PACE=2.70`, about 4¾ minutes).
 
 The pacing can be changed without editing scene code:
 
 ```bash
-DTP_VIDEO_PACE=1.25 docs/video/render.sh
+DTP_VIDEO_PACE=2.25 docs/video/render.sh
 ```
+
+
+Rendered scene files can be reused when changing only the final pacing or MP4
+metadata:
+
+```bash
+DTP_VIDEO_REUSE_RAW=1 DTP_VIDEO_PACE=2.70 \
+  docs/video/render.sh build/video
+```
+
+## Git LFS
+
+The rendered MP4 in `docs/video/releases/` is tracked with Git LFS. After a
+fresh clone:
+
+```bash
+git lfs install
+git lfs pull --include="docs/video/releases/*.mp4"
+```
+
+The Python source, render scripts, poster image, and narration remain normal Git
+objects.
 
 ## Scene order
 
