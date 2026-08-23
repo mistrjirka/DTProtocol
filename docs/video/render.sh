@@ -6,6 +6,10 @@ SCRIPT="$ROOT/docs/video/dtprotocol_explainer.py"
 VENV=${MANIMGL_VENV:-"$ROOT/.venv-manimgl"}
 MANIM="$VENV/bin/manimgl"
 OUT=${1:-"$ROOT/build/video"}
+# FFmpeg resolves paths inside concat manifests relative to the manifest itself.
+# Normalize OUT once so both default and user-supplied relative paths produce
+# absolute scene paths instead of accidentally duplicating the output prefix.
+OUT=$(realpath -m "$OUT")
 RAW="$OUT/raw"
 FINAL="$OUT/DTProtocol-v4-architecture.mp4"
 PACE=${DTP_VIDEO_PACE:-1.45}
@@ -14,8 +18,8 @@ REVISION=$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null || printf unknow
 
 SCENES=(
   Opening
-  EarlyData
   Crystallization
+  EarlyData
   Feasibility
   Reliability
   MultipartCompression
@@ -54,7 +58,7 @@ if [[ "$REUSE_RAW" == 1 ]]; then
       exit 1
     }
   done
-  rm -f "$OUT/without-chapters.mp4" "$OUT/chapters.ffmeta" "$FINAL"
+  rm -f "$OUT/without-chapters.mp4" "$OUT/chapters.ffmeta" "$FINAL" "$POSTER"
 else
   rm -rf "$OUT"
   mkdir -p "$RAW"
@@ -98,7 +102,14 @@ ffmpeg -y -v warning \
   -c copy -movflags +faststart "$FINAL"
 rm "$OUT/without-chapters.mp4"
 
+# Stable poster frame from the hook after all main elements are visible and no
+# transition is in progress. Keeping this in the render pipeline prevents a
+# poster captured from a transient fade/overlay state.
+ffmpeg -nostdin -y -v warning \
+  -ss "${DTP_VIDEO_POSTER_TIME:-3.20}" -i "$RAW/Opening.mp4" \
+  -frames:v 1 -q:v 2 "$POSTER"
+
 ffprobe -v error \
   -show_entries format=duration,size:stream=width,height,r_frame_rate,codec_name \
   -of default=nw=1 "$FINAL"
-printf '\nCreated %s\n' "$FINAL"
+printf '\nCreated %s\nCreated %s\n' "$FINAL" "$POSTER"

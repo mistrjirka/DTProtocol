@@ -3,10 +3,11 @@
 This directory contains the source for the animated DTProtocol v4 architecture
 video. It uses **ManimGL**, the 3Blue1Brown branch of Manim.
 
-The video is intentionally visual rather than a sequence of presentation slides:
-route candidates, snapshots, packets, retransmissions, queue classes and link
-failures move on screen. Captions stay short and name only the invariant being
-shown.
+The video is intentionally visual rather than a sequence of presentation slides.
+Crystallization is built in the same order a viewer should understand it: physical
+reach, direct discovery, staged snapshot, atomic commit, then route use. Packets
+move one hop at a time. Captions name the current invariant rather than replacing
+the animation with prose.
 
 - [Rendered 1080p MP4](releases/DTProtocol-v4-architecture.mp4)
 - [Poster image](releases/DTProtocol-v4-architecture-poster.jpg)
@@ -17,8 +18,10 @@ shown.
 - `dtprotocol_explainer.py` — eleven self-contained scenes;
 - `render.sh` — clean 1080p render, final pacing, silent audio track and chapters;
 - `write_chapters.py` — derives chapter timestamps from rendered scene lengths;
-- `check_layout.py` — regression check for z-order and the reserved caption band;
+- `check_layout.py` — geometry/layer contracts for clipped links, packet clearance, and the caption band;
 - `requirements.txt` — pinned Python packages;
+- `STORYBOARD.md` — narrative/visual grammar and scene-level QC requirements;
+- `make_qc_contact_sheets.sh` — dense sampled-frame sheets for visual transition review;
 - `NARRATION.md` — optional human voice-over script matched to the visuals.
 
 ## Arch Linux setup
@@ -43,10 +46,11 @@ MANIMGL_VENV="$PWD/.venv-manimgl" \
   docs/video/render.sh
 ```
 
-The result is:
+The results are:
 
 ```text
 build/video/DTProtocol-v4-architecture.mp4
+build/video/DTProtocol-v4-architecture-poster.jpg
 ```
 
 Default output properties:
@@ -56,7 +60,8 @@ Default output properties:
 - H.264 / yuv420p;
 - silent stereo AAC track for broad player compatibility;
 - seekable MP4 chapters;
-- paced for a silent visual explainer (`DTP_VIDEO_PACE=1.45`); narration should be edited against the rendered clips rather than obtained by slowing every animation.
+- paced for a silent visual explainer (`DTP_VIDEO_PACE=1.45`); narration should be edited against the rendered clips rather than obtained by slowing every animation;
+- poster extracted from a deliberate stable Opening frame (`DTP_VIDEO_POSTER_TIME=3.20`), never from a transition frame.
 
 The pacing can be changed without editing scene code:
 
@@ -88,17 +93,17 @@ objects.
 
 ## Scene order
 
-1. Open on the failure-prone question: can A send to C while the mesh is still crystallizing?
-2. Show the early DATA path, provisional direct neighbor, and hop-by-hop reverse breadcrumb.
-3. Explain HELLO → CRYST_REQ → transactional multi-chunk CRYST.
-4. Explain destination generations and the feasibility condition.
+1. Open on the question: can A send to C while unrelated mesh state is still crystallizing?
+2. Build crystallization from scratch: no learned links, one physically correct radio-range circle at a time, direct discovery, staged CRYST chunks, then atomic route commit.
+3. Send DATA A → B → C while a separate CRYST transaction remains pending, then return the E2E ACK hop by hop over the reverse breadcrumb.
+4. Explain destination generations and the feasibility condition without animating a packet across a failed link.
 5. Separate per-hop LCMM reliability from DTPK end-to-end completion and replay handling.
-6. Show a measured airtime-aware compression case and selective multipart repair.
-7. Break a route and show requester-owned SEQ_REQ backoff plus every-fourth-wave flooding.
+6. Show the measured airtime-aware compression case, then a three-fragment hop-by-hop transfer with selective repair of one missing fragment.
+7. Break C–E, let directed repair reach the break, show the periodic flood over surviving links, return fresh state, and immediately use the repaired route.
 8. Show response/repair/normal scheduler classes and progress guarantees.
 9. Only then name the full architecture as a recap of mechanisms already seen.
 10. Show the measured regression matrices and their limits.
-11. End on the state-preservation invariant.
+11. End on local usefulness: committed knowledge works while replacement knowledge is still incomplete.
 
 ## Story and animation rules
 
@@ -132,3 +137,17 @@ The useful constraints for this video are concrete: motivate the question early,
 show an example before naming the general machinery, do not animate text merely
 because Manim can animate it, and keep narration/editing as a separate
 post-production concern.
+
+## Visual QC
+
+A successful Manim render is not considered sufficient. Before publishing a new
+release, generate dense contact sheets from every scene and inspect transition
+frames as well as stable states:
+
+```bash
+docs/video/make_qc_contact_sheets.sh build/video/raw build/video/qc-sheets
+```
+
+The source-level layout check also rejects the failure modes that caused the old
+poster/video defects: center-to-center node links, semantic glyph morphing, and
+packet paths whose boxes can intrude into node labels.

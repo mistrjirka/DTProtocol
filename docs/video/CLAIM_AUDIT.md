@@ -25,22 +25,22 @@ The release startup matrix contains 900 deterministic real-C++ runs: direct
 single-frame, direct multipart, and partially converged four-node-line traffic at
 0%, 5%, and 10% independent DATA/link-ACK loss. Result: 900/900 passed.
 
-## 2. Provisional direct neighbor and reverse breadcrumb
+## 2. Reverse breadcrumb before proactive reverse convergence
 
-Claim: valid direct DATA may establish only its immediate MAC sender as a
-provisional one-hop route. Relayed DATA must not make the original source appear
-direct. ACK/NACK/status traffic may use the bounded ingress breadcrumb before
-proactive reverse routing has converged.
+Claim: ACK/NACK/status traffic may use the bounded ingress breadcrumb before
+proactive reverse routing has converged. The animation draws that breadcrumb as
+`C → B → A` and returns the E2E ACK one physical hop at a time; it does not imply
+a C-to-A radio link.
 
 Evidence:
 
-- direct-neighbor handling in `lib/DTPK/DTPKReceive.cpp`
 - reverse-breadcrumb state in `include/DTPK.h` / `lib/DTPK/DTPKReceive.cpp`
-- focused startup tests covering direct learning, relay non-learning, multi-hop
-  debug echo, breadcrumb expiry, and later proactive-route recovery
+- focused startup tests covering multi-hop early replies, breadcrumb expiry, and
+  later proactive-route recovery
 
-The corrected animation explicitly draws the breadcrumb as `C → B → A`; it does
-not imply a physical C-to-A link.
+The implementation also has separate direct-neighbor learning rules, but the
+current explainer deliberately leaves that detail out of this scene to keep the
+visual argument focused.
 
 ## 3. Transactional CRYST snapshots
 
