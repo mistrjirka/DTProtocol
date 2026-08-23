@@ -1,4 +1,4 @@
-# DTProtocol v2 architecture and simplification review
+# DTProtocol v4 architecture and simplification review
 
 This document describes the protocol as a set of responsibilities and state
 machines rather than as the current source-file layout. It also records which
@@ -7,7 +7,7 @@ simplifications still need stronger proof.
 
 ## The protocol from far away
 
-DTProtocol v2 performs two distinct jobs:
+DTProtocol v4 performs two distinct jobs:
 
 1. **Reliable routed message delivery** over an unreliable half-duplex LoRa
    link.
@@ -158,7 +158,7 @@ flowchart TD
     DB[Replace that neighbour's contribution]
     SEL[Lowest-metric feasible route selection]
     BLOCK{Known destination exists\nbut all candidates blocked?}
-    SEQ[SEQ_REQ\ncandidate-guided reliable repair\n+ periodic flood escape]
+    SEQ[SEQ_REQ\ncandidate-guided one-shot hops\n+ persistent origin retry\n+ periodic flood escape]
     ORIGIN[Destination advances generation]
     ADV[HELLO + CRYST advertise new generation]
     HARD[120 s with no valid frame]
@@ -194,10 +194,12 @@ Important distinctions:
   route database.
 - **SEQ_REQ is the liveness counterpart of feasibility.** Feasibility can safely
   reject a longer same-generation route; the destination must then originate a
-  newer generation. Normal retries follow the freshest known candidate with a
-  reliable unicast. Every eighth retry deliberately floods, escaping stale
-  candidate cycles. Backoff remains bounded until fresh state is learned or all
-  knowledge of that destination disappears.
+  newer generation. A repair wave follows a candidate-guided path and is sent
+  once at each hop. The requester owns persistent 5–60 second exponential retry,
+  and every fourth attempt floods to escape stale candidate cycles. This avoids
+  multiplying one logical repair by five LCMM retries at every hop while keeping
+  recovery self-stabilizing until fresh state is learned or all knowledge of the
+  destination disappears.
 
 ## State ownership
 

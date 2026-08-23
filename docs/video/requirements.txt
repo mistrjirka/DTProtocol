@@ -1,0 +1,3 @@
+manimgl==1.7.2
+# ManimGL still imports pkg_resources; newer setuptools releases remove it.
+setuptools<81
