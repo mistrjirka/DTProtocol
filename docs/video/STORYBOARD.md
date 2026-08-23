@@ -50,7 +50,7 @@ Move DATA and link ACKs hop-by-hop. Lose the final E2E ACK, retry with the same 
 1. Use the measured 5,200 B → 590 B example only to explain the airtime-aware compression decision (23 raw fragments → 3 compressed fragments, ~37.8 s modeled saving).
 2. Clear that graphic before introducing the network.
 3. Send three fragments S → R → D step by step.
-4. Lose fragment 1 after link retries are conceptually exhausted.
+4. Lose fragment 1 after link retries are conceptually exhausted; show the red loss marker briefly, then remove it before fragment 2 moves through the same link.
 5. Show destination state 0 ✓, 1 missing, 2 ✓.
 6. Remove the loss marker before sending STATUS 010 back D → R → S.
 7. Retransmit only fragment 1 S → R → D.

@@ -563,6 +563,9 @@ class Reliability(DTScene):
 
         caption = self.show_caption("If the final ACK is lost, the source retries with the same identity.", ORANGE, caption)
         self.play(FadeOut(cross), run_time=0.20)
+        # Cross is a compound VGroup in ManimGL; remove it explicitly so its
+        # child strokes cannot survive and visually mark the healthy link.
+        self.remove(cross)
         self.travel(make_packet("retry DATA 7", ORANGE, 18), s, r, 0.65)
         self.travel(make_packet("retry DATA 7", ORANGE, 18), r, d, 0.65)
         replay = make_badge("replay hit: ACK again, do not deliver again", YELLOW, 20).next_to(d, DOWN, buff=0.32)
@@ -621,12 +624,14 @@ class MultipartCompression(DTScene):
         self.play(FadeIn(lost), run_time=0.18)
         loss_mark = set_layer(Cross(lost, stroke_color=RED, stroke_width=6), Z_MARK)
         self.play(ShowCreation(loss_mark), FadeOut(lost), run_time=0.35)
+        self.wait(0.18)
+        self.play(FadeOut(loss_mark), run_time=0.20)
+        self.remove(loss_mark)
 
         self.travel(make_packet("frag 2", BLUE, 17), s_node, relay, 0.48)
         self.travel(make_packet("frag 2", BLUE, 17), relay, d_node, 0.48)
         a2 = make_card("destination assembly", ["0  ✓", "1  missing", "2  ✓"], 3.1, PURPLE, 21).move_to(a1)
         self.clean_replace(a1, a2, 0.3)
-        self.play(FadeOut(loss_mark), run_time=0.20)
 
         caption = self.show_caption("Assume link retries for fragment 1 were exhausted: the receiver asks only for what is missing.", YELLOW, caption)
         self.travel(make_packet("STATUS 010", YELLOW, 16), d_node, relay, 0.48)
