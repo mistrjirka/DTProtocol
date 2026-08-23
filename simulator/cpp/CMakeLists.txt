@@ -103,6 +103,8 @@ add_test(NAME production_mac_eu869_high_duty
          COMMAND dtprotocol_mac_contract eu869-high-duty)
 add_test(NAME production_mac_eu433
          COMMAND dtprotocol_mac_contract eu433)
+add_test(NAME production_mac_sf8
+         COMMAND dtprotocol_mac_contract sf8)
 
 # -----------------------------------------------------------------------------
 # Crystallization database contract: freshness (destination generation) must

@@ -21,8 +21,16 @@ int main(int argc, char **argv) {
     int expected_power = 13;
     uint8_t expected_channels = 3;
     uint8_t recommended_duty = 1;
+    int spreading_factor = 9;
 
-    if (argc > 1 && std::strcmp(argv[1], "eu869-high-duty") == 0) {
+    if (argc > 1 && std::strcmp(argv[1], "sf8") == 0) {
+        region = MACRegion::EU433;
+        expected_frequency = 433.175f;
+        expected_power = 10;
+        expected_channels = 13;
+        recommended_duty = 10;
+        spreading_factor = 8;
+    } else if (argc > 1 && std::strcmp(argv[1], "eu869-high-duty") == 0) {
         region = MACRegion::EU869_HIGH_DUTY;
         expected_frequency = 869.525f;
         expected_power = 20;
@@ -43,7 +51,7 @@ int main(int argc, char **argv) {
         42,
         region,
         0,
-        9,
+        spreading_factor,
         125.0f,
         15,
         22,
@@ -67,8 +75,17 @@ int main(int argc, char **argv) {
     assert(closeEnough(radio.frequency, expected_frequency));
     assert(closeEnough(radio.bandwidth, 125.0f));
     assert(radio.output_power == expected_power);
-    assert(radio.spreading_factor == 9);
+    assert(radio.spreading_factor == spreading_factor);
     assert(radio.coding_rate == 7);
+    const uint16_t example_frame_bytes = 180;
+    const uint32_t expected_airtime = static_cast<uint32_t>(std::ceil(
+        MathExtension.timeOnAir(
+            example_frame_bytes,
+            DEFAULT_PREAMBLE_LENGTH,
+            static_cast<uint8_t>(spreading_factor),
+            125.0f,
+            7)));
+    assert(mac->estimateFrameAirtimeMs(example_frame_bytes) == expected_airtime);
     assert(mac->getNoiseFloorOfChannel(expected_channels) == 255);
 
     const uint32_t neighborExpiry =
@@ -109,15 +126,18 @@ int main(int argc, char **argv) {
 
     // CAD is optional and supplementary. When explicitly enabled, a detected
     // matching LoRa signal fails closed. The stub models the recommended
-    // 4-symbol CAD plus ~0.5 symbol post-processing: ~18.432 ms at SF9/BW125.
+    // 4-symbol CAD plus ~0.5 symbol post-processing at the configured SF/BW.
     mac->setCadCarrierSenseEnabled(true);
     radio.scan_channel_result = RADIOLIB_LORA_DETECTED;
     const int scansBeforeCad = radio.scan_channel_calls;
     const uint64_t cadStartUs = micros();
     assert(mac->sendData(7, const_cast<unsigned char *>(payload), sizeof(payload), 100) == MAC_SEND_CHANNEL_BUSY_TIMEOUT);
     assert(radio.scan_channel_calls == scansBeforeCad + 1);
-    assert(radio.last_cad_duration_us >= 18'000);
-    assert(radio.last_cad_duration_us <= 19'000);
+    const uint64_t expectedCadUs = static_cast<uint64_t>(std::llround(
+        4.5 * static_cast<double>(1u << spreading_factor) /
+        125000.0 * 1000000.0));
+    assert(radio.last_cad_duration_us + 500 >= expectedCadUs);
+    assert(radio.last_cad_duration_us <= expectedCadUs + 500);
     assert(micros() - cadStartUs >= radio.last_cad_duration_us);
     assert(mac->getMode() == RECEIVING);
     delay(mac->getTransmitWaitMs());

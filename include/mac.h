@@ -136,6 +136,7 @@ public:
   bool isCadCarrierSenseEnabled() const { return cadCarrierSenseEnabled; }
 
   uint32_t getTransmitWaitMs() const;
+  uint32_t estimateFrameAirtimeMs(uint16_t frameBytes) const;
   bool isReady() const { return ready; }
   int16_t getLastRadioError() const { return lastRadioError; }
 

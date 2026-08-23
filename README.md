@@ -36,21 +36,23 @@ Application DATA uses:
 Initialize the RadioLib `SX1262` object first, then MAC and DTPK:
 
 ```cpp
-MAC::initialize(
-    radio,
-    nodeId,
-    MACRegion::EU868,
-    0,       // channel
-    9,       // spreading factor
-    125.0f,  // bandwidth kHz
-    15,      // squelch margin
-    13,      // conducted power dBm
-    7);      // coding-rate denominator
+if (!MAC::initialize(
+        radio,
+        nodeId,
+        MACRegion::EU868,
+        0,       // channel
+        9,       // spreading factor
+        125.0f,  // bandwidth kHz
+        15,      // squelch margin
+        13,      // conducted power dBm
+        7))      // coding-rate denominator
+    handleFatalRadioError();
 
-DTPK::initialize(
-    20,
-    persistentBootSequence,
-    isMobileDevice);
+if (!DTPK::initialize(
+        20,
+        persistentBootSequence,
+        isMobileDevice))
+    handleFatalProtocolError();
 ```
 
 `persistentBootSequence` must be nonzero and advance after every real reboot.

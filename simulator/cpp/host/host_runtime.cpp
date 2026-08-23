@@ -106,6 +106,17 @@ uint32_t MAC::getTransmitWaitMs() const {
         remaining_wait(g_duty_until_ms));
 }
 
+uint32_t MAC::estimateFrameAirtimeMs(uint16_t frameBytes) const {
+    const float airtime = MathExtension.timeOnAir(
+        frameBytes, 8, 9, 125.0f, 7);
+    if (!(airtime > 0.0f) || !std::isfinite(airtime))
+        return 0;
+    const double rounded = std::ceil(static_cast<double>(airtime));
+    return rounded >= static_cast<double>(UINT32_MAX)
+               ? UINT32_MAX
+               : static_cast<uint32_t>(rounded);
+}
+
 uint8_t MAC::getFallbackDutyCyclePercent() const {
     const float clamped = std::max(0.0f, std::min(100.0f, g_duty_cycle_percent));
     return static_cast<uint8_t>(std::lround(clamped));

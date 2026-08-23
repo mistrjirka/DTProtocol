@@ -396,12 +396,8 @@ LCMM::ACKWaitingSingle LCMM::prepareAckWaitingSingle(
   // by up to a complete LoRa symbol group.
   const uint16_t fullFrameBytes = static_cast<uint16_t>(
       MAC_OVERHEAD + sizeof(LCMMPacketData) + static_cast<size_t>(size));
-  const float airtimeFloat = MathExtension.timeOnAir(
-      fullFrameBytes, 8, 9, 125.0f, 7);
   const uint32_t airtimeMs =
-      airtimeFloat > 0.0f && std::isfinite(airtimeFloat)
-          ? static_cast<uint32_t>(std::ceil(airtimeFloat))
-          : 0u;
+      MAC::getInstance()->estimateFrameAirtimeMs(fullFrameBytes);
 
   const uint64_t timeoutWithAirtime =
       static_cast<uint64_t>(timeout) + airtimeMs;

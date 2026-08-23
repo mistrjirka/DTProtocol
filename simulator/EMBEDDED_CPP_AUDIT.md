@@ -1,5 +1,14 @@
 # Embedded C++ audit
 
+> **Historical pre-v3 audit.** This document records defects found in the old
+> implementation and is retained for provenance. Many listed issues—including
+> forwarding size/ownership, NACK semantics, hop limits, wrap-safe timers, radio
+> error propagation and ISR classification—are fixed in DTProtocol v3 and covered
+> by current host, simulator and sanitizer tests. Do not treat the numbered list
+> below as the current defect state; use the repository `README.md`,
+> `PROTOCOL_ARCHITECTURE.md`, and the test suite for current behavior.
+
+
 This is a defect/maintainability audit of the current reference stack, separate from crystallization's algorithmic correctness.
 
 ## Critical / likely reliability bugs

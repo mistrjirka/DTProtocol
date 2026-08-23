@@ -59,6 +59,7 @@ public:
     bool isReady() const { return true; }
     void setTransmitDone(TransmitDone callback);
     uint32_t getTransmitWaitMs() const;
+    uint32_t estimateFrameAirtimeMs(uint16_t frameBytes) const;
     uint8_t getFallbackDutyCyclePercent() const;
     uint32_t recommendedNeighborExpiryMs(
         uint32_t baseMs,

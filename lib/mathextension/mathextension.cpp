@@ -137,7 +137,7 @@ float MathExtensionClass::timeOnAir(
 
 int MathExtensionClass::getRandomNumber(int range_from, int range_to)
 {
-    return random(range_from, range_to);
+    return static_cast<int>(random(range_from, range_to));
 }
 
 MathExtensionClass MathExtension;

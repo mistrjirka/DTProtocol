@@ -243,6 +243,22 @@ uint32_t MAC::getTransmitWaitMs() const
   return wait;
 }
 
+uint32_t MAC::estimateFrameAirtimeMs(uint16_t frameBytes) const
+{
+  const float airtime = MathExtension.timeOnAir(
+      frameBytes,
+      DEFAULT_PREAMBLE_LENGTH,
+      static_cast<uint8_t>(spreading_factor),
+      bandwidth,
+      static_cast<uint8_t>(coding_rate));
+  if (!(airtime > 0.0f) || !std::isfinite(airtime))
+    return 0;
+  const double rounded = std::ceil(static_cast<double>(airtime));
+  return rounded >= static_cast<double>(UINT32_MAX)
+             ? UINT32_MAX
+             : static_cast<uint32_t>(rounded);
+}
+
 void MAC::startCarrierBackoff()
 {
   const uint32_t delayMs = 25u + module.random(226u);

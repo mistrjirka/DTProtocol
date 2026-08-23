@@ -1,5 +1,13 @@
 # DTPK asymptotic complexity notes
 
+> **Historical pre-v3 analysis.** The warnings below about unprotected relays,
+> missing hop limits, count-to-infinity and single-frame CRYST limits describe the
+> predecessor protocol. V3 uses reliable forwarded hops, a finite hop limit,
+> destination sequence feasibility and chunked transactional snapshots. The
+> asymptotic lower-bound discussion remains useful, but implementation-specific
+> claims below are not a current-state audit.
+
+
 Notation:
 
 - `n`: number of nodes/destinations

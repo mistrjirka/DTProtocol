@@ -1,5 +1,12 @@
 # Radio / 868 MHz audit
 
+> **Historical design research.** This file explains the radio decisions that led
+> to the current regional profiles and MAC implementation. Sections describing
+> “current” anti-patterns refer to the earlier firmware unless explicitly marked
+> otherwise. The active configuration/API is documented in the repository
+> `README.md` and verified by `simulator/cpp/mac_contract_tests.cpp`.
+
+
 ## Recommended regional abstraction
 
 The MAC should not contain one hard-coded channel array. Introduce a `RadioRegionProfile` containing at least:
