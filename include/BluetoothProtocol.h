@@ -18,10 +18,22 @@ static constexpr char MSG_CHAR_UUID[] =
 static constexpr char NEIGHCOUNT_CHAR_UUID[] =
     "beb5483e-36e1-4688-b7f5-ea07361b26a9";
 
-// The ESP32 server requests MTU 247. ATT notifications then have at most
-// MTU-3 bytes of application payload.
-static constexpr uint16_t BLE_REQUESTED_MTU = 247;
-static constexpr size_t BLE_MAX_NOTIFICATION_BYTES = BLE_REQUESTED_MTU - 3u;
+// ATT starts at MTU 23 unless the central negotiates a larger value. The GATT
+// notification payload is always the negotiated MTU minus the three-byte ATT
+// opcode/handle overhead; merely requesting 247 does not make it effective.
+static constexpr uint16_t BLE_DEFAULT_ATT_MTU = 23;
+static constexpr uint16_t BLE_REQUESTED_ATT_MTU = 247;
+static constexpr uint16_t BLE_MAX_ATT_MTU = 517;
+static constexpr size_t BLE_ATT_NOTIFICATION_OVERHEAD = 3u;
+
+constexpr size_t bleNotificationBytesForMtu(uint16_t mtu)
+{
+    const uint16_t bounded =
+        mtu < BLE_DEFAULT_ATT_MTU
+            ? BLE_DEFAULT_ATT_MTU
+            : (mtu > BLE_MAX_ATT_MTU ? BLE_MAX_ATT_MTU : mtu);
+    return static_cast<size_t>(bounded) - BLE_ATT_NOTIFICATION_OVERHEAD;
+}
 
 #pragma pack(push, 1)
 struct BLEMessageHeader
@@ -68,9 +80,13 @@ struct BLENeighborInfo
     uint16_t distance;
 };
 
+// Route tables are paged so the complete table remains enumerable even when
+// the peer keeps the default 23-byte ATT MTU.
 struct BLENeighborsMessage
 {
     BLEMessageHeader header;
+    uint16_t totalCount;
+    uint16_t offset;
     uint8_t count;
     BLENeighborInfo neighbors[];
 };
@@ -90,7 +106,7 @@ inline bool parseBLEOutboundMessage(
     size_t maximumPayload,
     BLEOutboundView &result)
 {
-    if (!bytes || size < sizeof(BLEOutboundMessage))
+    if (!bytes || size < sizeof(BLEOutboundMessage) || size > UINT16_MAX)
         return false;
 
     BLEMessageHeader header{};
@@ -119,20 +135,45 @@ inline bool parseBLEOutboundMessage(
     return true;
 }
 
+constexpr size_t maxBLEInboundPayloadForMtu(uint16_t mtu)
+{
+    const size_t capacity = bleNotificationBytesForMtu(mtu);
+    return capacity > sizeof(BLEInboundMessage)
+               ? capacity - sizeof(BLEInboundMessage)
+               : 0u;
+}
+
+constexpr size_t maxBLEInboundFragmentPayloadForMtu(uint16_t mtu)
+{
+    const size_t capacity = bleNotificationBytesForMtu(mtu);
+    return capacity > sizeof(BLEInboundFragmentMessage)
+               ? capacity - sizeof(BLEInboundFragmentMessage)
+               : 0u;
+}
+
+constexpr size_t maxBLENeighborsPerNotificationForMtu(uint16_t mtu)
+{
+    const size_t capacity = bleNotificationBytesForMtu(mtu);
+    const size_t raw = capacity > sizeof(BLENeighborsMessage)
+                           ? (capacity - sizeof(BLENeighborsMessage)) /
+                                 sizeof(BLENeighborInfo)
+                           : 0u;
+    return raw > UINT8_MAX ? UINT8_MAX : raw;
+}
+
 constexpr size_t maxBLEInboundPayloadPerNotification()
 {
-    return BLE_MAX_NOTIFICATION_BYTES - sizeof(BLEInboundMessage);
+    return maxBLEInboundPayloadForMtu(BLE_REQUESTED_ATT_MTU);
 }
 
 constexpr size_t maxBLEInboundFragmentPayload()
 {
-    return BLE_MAX_NOTIFICATION_BYTES - sizeof(BLEInboundFragmentMessage);
+    return maxBLEInboundFragmentPayloadForMtu(BLE_REQUESTED_ATT_MTU);
 }
 
 constexpr size_t maxBLENeighborsPerNotification()
 {
-    return (BLE_MAX_NOTIFICATION_BYTES - sizeof(BLENeighborsMessage)) /
-           sizeof(BLENeighborInfo);
+    return maxBLENeighborsPerNotificationForMtu(BLE_REQUESTED_ATT_MTU);
 }
 
 static_assert(sizeof(BLEMessageHeader) == 5, "BLE header wire size changed");
@@ -141,8 +182,11 @@ static_assert(sizeof(BLEInboundMessage) == 7, "BLE inbound prefix changed");
 static_assert(sizeof(BLEInboundFragmentMessage) == 11,
               "BLE inbound fragment prefix changed");
 static_assert(sizeof(BLEAckMessage) == 10, "BLE ACK wire size changed");
-static_assert(sizeof(BLENeighborsMessage) == 6, "BLE neighbor prefix changed");
-static_assert(maxBLENeighborsPerNotification() == 59,
-              "MTU-247 neighbor capacity changed");
+static_assert(sizeof(BLENeighborsMessage) == 10,
+              "BLE paged-neighbor prefix changed");
+static_assert(bleNotificationBytesForMtu(BLE_DEFAULT_ATT_MTU) == 20,
+              "default ATT notification capacity changed");
+static_assert(maxBLENeighborsPerNotificationForMtu(BLE_DEFAULT_ATT_MTU) == 2,
+              "default-MTU neighbor page capacity changed");
 
 #endif

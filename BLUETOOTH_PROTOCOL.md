@@ -12,8 +12,9 @@ to a phone without exposing MAC or LCMM framing.
 | Route count | `beb5483e-36e1-4688-b7f5-ea07361b26a9` | read, notify; little-endian `uint16_t` |
 
 Both notifying characteristics include a Client Characteristic Configuration
-Descriptor (`0x2902`). The server requests MTU 247, giving a 244-byte ATT
-notification payload when the client accepts that MTU.
+Descriptor (`0x2902`). The server requests ATT MTU 247 but sizes every outgoing
+frame from the peer MTU actually recorded for the connection. Until negotiation,
+it uses the Bluetooth default MTU 23 and therefore a 20-byte notification value.
 
 All multi-byte integers below are little-endian. Every message starts with:
 
@@ -41,8 +42,10 @@ callback. DTProtocol sends a short payload in one LoRa packet and automatically
 uses selective-repair multipart transfer for a larger payload.
 
 The maximum accepted payload is `DTPK::maximumMessageSize()` (16 KiB by
-default, configurable at compile time). Only one source-side multipart message
-is active at once; a busy or invalid request returns a negative ACK.
+default, configurable at compile time). BLE callbacks only copy validated-size
+commands into a bounded queue. `Bluetooth::loop()` is the sole owner that calls
+DTProtocol, so the Bluetooth host task cannot mutate the radio/protocol queues
+concurrently.
 
 ## Delivery result: type `0x02`
 
@@ -63,7 +66,8 @@ u16 sender_node_id
 u8  payload[]
 ```
 
-This form is used when the complete payload fits in one ATT notification.
+This form is used when the complete payload fits in one notification at the
+currently negotiated ATT MTU.
 
 ## LoRa to phone, fragmented: type `0x05`
 
@@ -75,40 +79,42 @@ u16 payload_offset
 u8  payload_chunk[]
 ```
 
-Fragments are queued and emitted one per firmware loop rather than submitted as
-a burst to the BLE stack. The client reassembles by `(sender_node_id,
-message_id)`, places each chunk at `payload_offset`, and completes when all bytes
-from zero through `complete_payload_length - 1` are present.
+Chunks are generated just before transmission using `peer_mtu - 3`, not queued
+as a burst sized for a hoped-for MTU. One notification is submitted every 30 ms
+to avoid unbounded Bluedroid backlog. The client reassembles by
+`(sender_node_id, message_id)` and places each chunk at `payload_offset`.
 
-## Route list: type `0x04`
+## Paged route list: type `0x04`
 
 ```text
 header
+u16 complete_route_count
+u16 first_route_index
 u8  included_count
 repeat included_count times:
     u16 destination_node_id
     u16 hop_distance
 ```
 
-The separate route-count characteristic contains the full current count. One
-message notification contains at most 59 entries at MTU 247. The current gateway
-sends the first 59 routes; a future paged route-list message should be added if a
-phone must enumerate larger tables rather than only display the total count.
+Every page fits the actual peer MTU. At the default MTU 23, two routes fit per
+page; at MTU 247, 58 fit. The separate route-count characteristic contains the
+same complete count. A page beginning at index zero replaces the client's old
+snapshot.
 
-## Connection behavior
+## Queue and connection behavior
 
-- The device advertises the service at boot and restarts advertising 250 ms
-after a disconnect.
-- Route updates are sent on connection, when requested by the application, and
-periodically every five seconds while connected.
-- Pending message notifications are discarded on disconnect so a later client
-does not receive stale traffic.
-- `Bluetooth::loop()` is the single owner that advances both BLE notifications
-and `DTPK::loop()` on the ESP32 firmware targets.
+- Callback-to-loop writes: two complete commands, plus eight negative-result IDs.
+- Pending LoRa-to-phone messages: four logical messages. Payloads are fragmented
+  lazily, so a 16 KiB message does not create thousands of tiny heap objects at
+  MTU 23.
+- Control notifications: 32; delivery ACKs have priority over route pages.
+- Notifications remain queued until the client enables the CCCD.
+- All pending traffic is discarded on disconnect, and advertising restarts after
+  250 ms.
+- `BluetoothDiagnostics` exposes dropped-write, inbound-message and control-frame
+  counters for device diagnostics.
 
 ## Laptop smoke-test client
-
-Install Bleak and run the included client:
 
 ```bash
 python -m pip install bleak
@@ -117,6 +123,5 @@ python tools/dtpk_ble_client.py \
   --name DTPK-StickLiteV3 --recipient 3 --text 'hello over LoRa'
 ```
 
-The client subscribes to both characteristics, validates encoded frame lengths,
-prints route updates and end-to-end delivery results, and reassembles type
-`0x05` inbound fragments.
+The client validates frame lengths, reassembles application fragments and paged
+route snapshots, and waits for the DTProtocol end-to-end result.

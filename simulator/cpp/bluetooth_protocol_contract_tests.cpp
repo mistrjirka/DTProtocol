@@ -9,8 +9,14 @@ int main()
 {
     static_assert(static_cast<uint8_t>(CRYST) == 0x30u);
     static_assert(static_cast<uint8_t>(SEQ_REQ) == 0x36u);
+    static_assert(bleNotificationBytesForMtu(23) == 20u);
+    static_assert(bleNotificationBytesForMtu(247) == 244u);
+    static_assert(maxBLEInboundPayloadForMtu(23) == 13u);
+    static_assert(maxBLEInboundFragmentPayloadForMtu(23) == 9u);
     static_assert(maxBLEInboundPayloadPerNotification() == 237u);
     static_assert(maxBLEInboundFragmentPayload() == 233u);
+    static_assert(maxBLENeighborsPerNotificationForMtu(23) == 2u);
+    static_assert(maxBLENeighborsPerNotification() == 58u);
     assert(dtpkWireVersionSupported(static_cast<uint8_t>(DATA_SINGLE)));
     assert(!dtpkWireVersionSupported(0x01u));
     assert(!dtpkWireVersionSupported(0x41u));

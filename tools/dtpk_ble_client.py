@@ -30,7 +30,7 @@ OUTBOUND_PREFIX = struct.Struct("<BHHH")
 ACK_FRAME = struct.Struct("<BHHHBH")
 INBOUND_PREFIX = struct.Struct("<BHHH")
 INBOUND_FRAGMENT_PREFIX = struct.Struct("<BHHHHH")
-NEIGHBOR_PREFIX = struct.Struct("<BHHB")
+NEIGHBOR_PREFIX = struct.Struct("<BHHHHB")
 NEIGHBOR = struct.Struct("<HH")
 
 
@@ -57,6 +57,7 @@ class GatewayClient:
     def __init__(self) -> None:
         self.fragments: Dict[Tuple[int, int], FragmentAssembly] = {}
         self.pending_acks: Dict[int, asyncio.Future[Tuple[bool, int]]] = {}
+        self.routes: Dict[int, Tuple[int, int]] = {}
         self._next_message_id = 0
 
     def next_message_id(self) -> int:
@@ -111,16 +112,22 @@ class GatewayClient:
             return
 
         if kind == NEIGHBORS and len(data) >= NEIGHBOR_PREFIX.size:
-            _, _, _, count = NEIGHBOR_PREFIX.unpack_from(data)
+            _, _, _, total, offset, count = NEIGHBOR_PREFIX.unpack_from(data)
             expected = NEIGHBOR_PREFIX.size + count * NEIGHBOR.size
-            if expected != len(data):
+            if expected != len(data) or offset + count > total:
                 print(f"invalid route-list notification: {data.hex()}")
                 return
-            routes = [
+            if offset == 0:
+                self.routes.clear()
+            page = [
                 NEIGHBOR.unpack_from(data, NEIGHBOR_PREFIX.size + index * NEIGHBOR.size)
                 for index in range(count)
             ]
-            print("routes:", ", ".join(f"{node}:{hops}h" for node, hops in routes))
+            for index, route in enumerate(page):
+                self.routes[offset + index] = route
+            if offset + count >= total:
+                ordered = [self.routes[index] for index in range(total) if index in self.routes]
+                print("routes:", ", ".join(f"{node}:{hops}h" for node, hops in ordered))
             return
 
         print(f"unknown notification type=0x{kind:02x}: {data.hex()}")
