@@ -158,7 +158,7 @@ void Bluetooth::handleConnection(bool connected)
 void Bluetooth::clearCallbackQueues()
 {
     if (!callbackMutex ||
-        xSemaphoreTake(callbackMutex, pdMS_TO_TICKS(20)) != pdTRUE)
+        xSemaphoreTake(callbackMutex, 0) != pdTRUE)
         return;
     pendingWrites.clear();
     pendingWriteErrors.clear();
@@ -272,7 +272,7 @@ void Bluetooth::handleWrite(const std::string &value)
     const size_t maximumWireSize =
         sizeof(BLEOutboundMessage) + DTPK::maximumMessageSize();
     if (!callbackMutex ||
-        xSemaphoreTake(callbackMutex, pdMS_TO_TICKS(20)) != pdTRUE)
+        xSemaphoreTake(callbackMutex, 0) != pdTRUE)
     {
         droppedWrites.fetch_add(1, std::memory_order_relaxed);
         return;
@@ -346,7 +346,7 @@ void Bluetooth::processPendingWrite()
     }
 
     const uint16_t phoneMessageId = view.header.messageId;
-    const uint16_t packetId = dtpk->sendPacket(
+    (void)dtpk->sendPacket(
         view.recipientId,
         const_cast<unsigned char *>(view.payload),
         view.payloadSize,
@@ -356,8 +356,6 @@ void Bluetooth::processPendingWrite()
             Bluetooth::getInstance()->sendAckMessage(
                 phoneMessageId, result != 0, ping);
         });
-    if (packetId == 0)
-        sendAckMessage(phoneMessageId, false, 0);
 }
 
 void Bluetooth::handleDTPKPacket(DTPKPacketGeneric *packet, uint16_t size)
