@@ -108,7 +108,7 @@ rm "$OUT/without-chapters.mp4"
 # poster captured from a transient fade/overlay state.
 ffmpeg -nostdin -y -v warning \
   -ss "${DTP_VIDEO_POSTER_TIME:-3.20}" -i "$RAW/Opening.mp4" \
-  -frames:v 1 -q:v 2 "$POSTER"
+  -frames:v 1 -q:v 2 -update 1 "$POSTER"
 
 ffprobe -v error \
   -show_entries format=duration,size:stream=width,height,r_frame_rate,codec_name \
