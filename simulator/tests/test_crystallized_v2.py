@@ -434,9 +434,11 @@ def test_sequence_repair_uses_directed_unicast_with_periodic_flood_escape():
     directed = node.txq[0]
     assert directed.packet.kind == "SEQ_REQ"
     # Both candidates are feasible here; repair uses the shortest one. Seqno
-    # freshness is not a path metric.
+    # freshness is not a path metric. The directed path is still selected, but
+    # each logical wave is sent once per hop: persistent DTPK retry and periodic
+    # flood escape provide recovery without LCMM amplification.
     assert directed.next_hop == 2
-    assert directed.lcmm_ack is True
+    assert directed.lcmm_ack is False
     assert directed.packet.repair_flood is False
 
     node.feasibility[4] = FeasibilityState(sequence=1, feasible_distance=1)
@@ -444,9 +446,9 @@ def test_sequence_repair_uses_directed_unicast_with_periodic_flood_escape():
     # is the feasible repair successor.
     assert node._sequence_request_next_hop(4) == 3
 
-    # The eighth retry upgrades the queued directed request instead of being
+    # The fourth retry upgrades the queued directed request instead of being
     # hidden by same-destination coalescing.
-    node.pending_seq_requests[4] = (3, 7)
+    node.pending_seq_requests[4] = (3, 3)
     node._retry_sequence_request(4, 3)
     assert len(node.txq) == 1
     fallback = node.txq[0]
@@ -507,3 +509,88 @@ def test_tx_scheduler_preserves_response_priority_and_repairs_fairness():
 
     # The normal packet now gets one slot before the fifth repair request.
     assert node.txq[node._select_tx_index()].packet.kind == "HELLO"
+
+
+
+def test_direct_and_broadcast_cryst_snapshots_coexist_in_python_queue():
+    sim = Simulator(seed=191, profile=Profile.crystallized_v2())
+    node = sim.add_node(1, start=False)
+    node.up = True
+
+    broadcast = Packet(
+        "CRYST",
+        101,
+        advertisements=(),
+        wire_dtpk_size=DTPK_CRYST_V2_HEADER,
+        sender_sequence=1,
+        route_version=1,
+        chunk_index=0,
+        chunk_count=1,
+    )
+    direct = Packet(
+        "CRYST",
+        102,
+        advertisements=(),
+        wire_dtpk_size=DTPK_CRYST_V2_HEADER,
+        sender_sequence=1,
+        route_version=1,
+        chunk_index=0,
+        chunk_count=1,
+    )
+    node.enqueue(TxRequest(broadcast, None, lcmm_ack=False))
+    node.enqueue(TxRequest(direct, 2, lcmm_ack=True, priority=True))
+
+    queued = [request for request in node.txq if request.packet.kind == "CRYST"]
+    assert len(queued) == 2
+    assert {(request.next_hop, request.lcmm_ack) for request in queued} == {
+        (None, False),
+        (2, True),
+    }
+
+    # A newer direct response replaces only the older direct response, leaving
+    # the independently scheduled broadcast snapshot intact.
+    newer_direct = direct.clone()
+    newer_direct.packet_id = 103
+    node.enqueue(TxRequest(newer_direct, 2, lcmm_ack=True, priority=True))
+    queued = [request for request in node.txq if request.packet.kind == "CRYST"]
+    assert len(queued) == 2
+    assert {request.packet.packet_id for request in queued} == {101, 103}
+
+
+def test_sequence_retry_stops_when_any_feasible_route_returns():
+    """SEQ_REQ repairs route starvation; it must not enforce generation uniformity."""
+    sim = Simulator(seed=192, profile=Profile.crystallized_v2())
+    node = sim.add_node(1, start=False)
+    node.up = True
+    node.origin_sequence = 10
+
+    # The request was created while no route was feasible. Before its retry,
+    # an ordinary older-generation but feasible route returns and is selected.
+    node.pending_seq_requests[4] = (7, 3)
+    node.routes[4] = Route(2, 2, 2, 6)
+    node.enqueue(
+        TxRequest(
+            Packet(
+                "SEQ_REQ",
+                501,
+                original_sender=1,
+                final_target=4,
+                requested_sequence=7,
+                repair_flood=False,
+                hop_limit=255,
+            ),
+            2,
+            lcmm_ack=True,
+            priority=True,
+        )
+    )
+
+    node._retry_sequence_request(4, 7)
+
+    assert 4 not in node.pending_seq_requests
+    assert not any(
+        request.packet.kind == "SEQ_REQ"
+        and request.packet.original_sender == 1
+        and request.packet.final_target == 4
+        for request in node.txq
+    )

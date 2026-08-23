@@ -11,9 +11,17 @@ int main()
                   "compression envelope changed");
     static_assert(DATASIZE_LCMM == 244, "LCMM payload capacity changed");
     static_assert(sizeof(DTPKPacketGeneric) == 11, "single-data header changed");
+    static_assert(sizeof(DTPKPacketNack) == 13,
+                  "extended transient NACK header changed");
     static_assert(sizeof(DTPKPacketFragment) == 14, "fragment header changed");
     static_assert(sizeof(DTPKPacketFragmentQuery) == 15, "query header changed");
     static_assert(sizeof(DTPKPacketFragmentStatus) == 14, "status header changed");
+    static_assert(DTPK_FLAG_DEBUG_ECHO == 0x04u,
+                  "debug echo application flag changed");
+    static_assert(DTPK_FLAG_NACK_FINAL_REJECT == 0x08u,
+                  "terminal NACK flag changed");
+    static_assert(DTPK_APPLICATION_FLAGS_MASK == DTPK_FLAG_DEBUG_ECHO,
+                  "transport flags must not be application-settable");
 
     constexpr size_t singlePayload =
         DATASIZE_LCMM - sizeof(DTPKPacketGeneric);

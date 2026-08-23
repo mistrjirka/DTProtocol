@@ -10,6 +10,7 @@ MAC_OVERHEAD = 8
 LCMM_OVERHEAD = 3
 LCMM_RX_HEADER = MAC_OVERHEAD + LCMM_OVERHEAD
 DTPK_GENERIC_HEADER = 11
+DTPK_NACK_HEADER = 13
 DTPK_CRYST_HEADER = 3
 DTPK_CRYST_V2_HEADER = 11  # type:u8,origin-seq:u16,route-version:u32,chunk-index:u16,chunk-count:u16
 DTPK_HELLO_SIZE = 7
@@ -27,6 +28,11 @@ DTPK_FRAGMENT_ASSEMBLY_EXPIRY_MS = 120_000
 DTPK_FRAGMENT_QUERY_INTERVAL_MS = 5_000
 DTPK_FRAGMENT_SOURCE_HOP_BUDGET_MS = 20_000
 DTPK_FRAGMENT_RELAY_HOP_BUDGET_MS = 10_000
+DTPK_SINGLE_RETRY_BASE_MS = 30_000
+DTPK_SINGLE_RETRY_PER_HOP_MS = 5_000
+DTPK_SINGLE_RETRY_MAX_MS = 60_000
+DTPK_SINGLE_LINK_FAILURE_BACKOFF_MS = 5_000
+DTPK_SINGLE_RETRY_MIN_REMAINING_MS = 20_000
 DTPK_CRYST_ASSEMBLY_EXPIRY_MS = 30_000
 DTPK_MAX_CRYST_CHUNKS = 16
 NEIGHBOR_RECORD_SIZE = 5
@@ -72,6 +78,10 @@ class Profile:
     session_gc_enabled: bool = True
     max_lcmm_attempts: int = 3
     e2e_timeout_ms: int = 5_000
+    single_e2e_retry: bool = False
+    transient_route_nack: bool = False
+    defer_cryst_req_during_e2e: bool = False
+    refresh_route_before_send: bool = False
 
     sequence_numbers: bool = False
     feasibility_condition: bool = False
@@ -154,6 +164,10 @@ class Profile:
             state_digest_requests=True,
             seqno_requests=True,
             cryst_missing_self_reply=False,
+            single_e2e_retry=True,
+            transient_route_nack=True,
+            defer_cryst_req_during_e2e=True,
+            refresh_route_before_send=True,
         )
 
 
@@ -243,6 +257,8 @@ class Packet:
     query_id: int = 0
     missing_fragments: Tuple[int, ...] = ()
     hop_limit: int = 0
+    nack_final_reject: bool = False
+    failed_router: Optional[int] = None
 
     def clone(self) -> "Packet":
         return copy.copy(self)
@@ -256,6 +272,8 @@ class TxRequest:
     dtpk_ack: bool = False
     timeout_ms: int = 5_000
     priority: bool = False
+    single_retry: bool = False
+    failure_previous_hop: Optional[int] = None
 
 
 @dataclass

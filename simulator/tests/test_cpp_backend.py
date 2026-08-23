@@ -14,6 +14,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def test_host_runner_quit_is_graceful():
+    node = CppNodeProcess(1, seed=10_001)
+    node.close()
+    assert node.proc.returncode == 0
+
+
 def test_real_cpp_two_nodes_discover_each_other():
     with CppNetwork(seed=11, tick_ms=50) as net:
         net.add_node(1)

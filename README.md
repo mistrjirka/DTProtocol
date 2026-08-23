@@ -13,25 +13,36 @@ application. Upgrade one routing domain together.
 
 Each node periodically broadcasts a small HELLO containing its boot incarnation
 and current route-state version. A neighbor that is missing that version sends a
-reliable CRYST request. The response is a complete, chunked route snapshot that
-is applied transactionally only after every chunk arrives.
+reliable CRYST request. The response is an immediate direct, reliable,
+chunked route snapshot; it is applied transactionally only after every chunk
+arrives. Ordinary unsolicited snapshots remain jittered broadcasts.
 
 A route candidate is usable only when it satisfies the destination-sequence
 feasibility rule. Sequence numbers prove freshness and loop safety; among
 feasible candidates the lowest metric wins. When every known candidate is
 blocked, a directed generation request asks the destination to originate newer
-state. Periodic flood fallback prevents stale local knowledge from trapping the
-repair request.
+state. Each SEQ_REQ wave is sent once per hop; its origin retries the logical
+request with exponential backoff, and every fourth attempt floods. This avoids
+multiplying one repair by five LCMM attempts at every hop while still escaping
+stale local candidates.
 
 Application DATA uses:
 
 - per-hop LCMM ACK and up to five retries;
 - a finite 255-hop bound;
-- replay identity `{sender, boot incarnation, packet id}`;
+- replay identity `{sender, boot incarnation, packet id}` with one bounded
+  sliding replay window per recently active source;
 - optional end-to-end ACK/NACK;
 - selective-repair multipart transfer for payloads larger than one LoRa frame;
 - transparent heatshrink compression only when the configured PHY predicts less
   reliable-link airtime after all headers and fragment boundaries.
+
+There is no global startup barrier: a known destination can carry DATA while
+other CRYST snapshots are still propagating. Incomplete multi-chunk snapshots
+are transactional and do not replace the previously committed routes. A direct
+DATA frame also establishes its sender's reverse one-hop route before the
+application callback, so immediate responses work during asymmetric startup.
+See [STARTUP_MESSAGE_DELIVERY.md](STARTUP_MESSAGE_DELIVERY.md).
 
 ## ESP32 quick start
 
@@ -74,6 +85,43 @@ Bluetooth::getInstance()->loop();
 A mobile node advertises every second while isolated, then relaxes to four
 seconds after contact. Static nodes use ten seconds. The mobility hint affects
 only local discovery cadence, never route validity or metric.
+
+## Application metadata flags
+
+Ordinary `sendPacket()` derives all transport bits internally. Applications
+that need an assigned metadata bit can use `sendPacketWithFlags()`. Unknown or
+transport-owned bits are masked:
+
+```cpp
+DTPK::getInstance()->sendPacketWithFlags(
+    destination,
+    payload,
+    payloadSize,
+    60000,
+    DTPK_FLAG_DEBUG_ECHO,
+    false); // no end-to-end ACK callback
+```
+
+`DTPK_FLAG_DEBUG_ECHO` marks a diagnostic reply so another debug node never
+repeats it. The bit survives relays, compression, multipart assembly, and is
+visible in the final application callback.
+
+The per-source replay table defaults to 256 source slots, matching the validated
+255-node network envelope. Memory-constrained deployments may override
+`DTPK_REPLAY_SOURCE_SLOTS`; reducing it permits old identities to age out sooner
+under high fan-in, so the value should cover every concurrently active sender.
+
+Local application admission is independently bounded:
+
+```cpp
+#define DTPK_MAX_LOCAL_PENDING_MESSAGES 8u
+#include <DTPK.h>
+```
+
+The limit counts acknowledged, multipart, retrying, and fire-and-forget messages
+originated by this node. A full local budget rejects the new call visibly before
+payload allocation, while ACK/NACK, relayed DATA, CRYST, and repair traffic retain
+separate capacity and continue converging.
 
 ## Automatic compression
 
@@ -121,6 +169,9 @@ Important simulator documents:
 - [accuracy and validation boundary](simulator/SIMULATOR_VALIDATION.md)
 - [bounded ILP optimization oracle](simulator/OPTIMIZATION_ORACLE.md)
 - [bounded protocol-synthesis direction](simulator/PROTOCOL_SYNTHESIS.md)
+- [messages during startup crystallization](STARTUP_MESSAGE_DELIVERY.md)
+- `simulator/startup_message_matrix.py` for the reproducible real-C++ matrix
+- [test coverage and remaining gaps](TEST_COVERAGE_AUDIT.md)
 
 ## RF-model boundary
 

@@ -136,3 +136,34 @@ def test_real_cpp_reboot_incarnation_prevents_false_duplicate_delivery():
         assert len(received) == 7, received
         assert received[-1][1][3] == b"after-reboot".hex()
         assert any(result == 1 for result, _ in net.app_acks(1))
+
+
+@requires_cpp
+def test_real_cpp_converges_and_delivers_across_millis_wraparound():
+    wrap = 1 << 32
+    with MovingCppNetwork(seed=95_001, tick_ms=25) as net:
+        net.add_node(1)
+        net.add_node(2)
+        net.add_link(1, 2, latency_ms=0, jitter_ms=0)
+
+        # Start shortly before Arduino's 32-bit millis() rolls over without
+        # scheduling billions of synthetic ticks. The firmware sees the same
+        # modulo-2^32 values a continuously running MCU would see.
+        net.now = float(wrap - 20_000)
+        net._ticks_scheduled_until = net.now
+        net.run(net.now + 60_000)
+        assert net.routes(1).get(2) == (2, 1)
+        assert net.routes(2).get(1) == (1, 1)
+
+        payload = b"across-millis-wrap"
+        assert net.send(
+            1, 2, payload, timeout_ms=60_000, e2e_ack=True
+        ) != 0
+        net.run(net.now + 90_000)
+        received = [
+            event
+            for event in net.nodes[2].events
+            if event[0] == "APP_RX" and event[1][3] == payload.hex()
+        ]
+        assert len(received) == 1
+        assert any(result == 1 for result, _ping in net.app_acks(1))

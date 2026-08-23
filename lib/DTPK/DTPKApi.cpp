@@ -9,6 +9,17 @@ std::vector<NeighborRecord> DTPK::getNeighbours()
     return _crystDatabase.getListOfNeighbours();
 }
 
+bool DTPK::getRouteDetails(
+    uint16_t destination,
+    RoutingRecord &result) const
+{
+    const RoutingRecord *route = _crystDatabase.getRouting(destination);
+    if (!route)
+        return false;
+    result = *route;
+    return true;
+}
+
 void DTPK::controlDeamon()
 {
     const uint32_t elapsed = _currentTime - _lastTick;
@@ -39,6 +50,7 @@ void DTPK::controlDeamon()
     {
         expireNeighbours();
         expireAssemblies();
+        expireReverseBreadcrumbs();
         processSequenceRequests();
         retrySequenceRequests();
         maintainFragmentAssemblies();
@@ -69,9 +81,14 @@ void DTPK::loop()
     _currentTime = millis();
 
     receivingDeamon();
+    // Complete end-to-end transactions and apply any deferred local generation
+    // before queued DATA is eligible for transmission. This also makes ACK
+    // callbacks safely reentrant.
+    timeoutDeamon();
+    applyPendingOriginSequence();
+    scheduleSingleRetries();
     pumpMultipartSend();
     sendingDeamon();
-    timeoutDeamon();
     controlDeamon();
 
     _lastTick = _currentTime;
@@ -85,9 +102,41 @@ uint16_t DTPK::sendPacket(
     bool dtpkAck,
     PacketAckCallback callback)
 {
-    RoutingRecord *routing = _crystDatabase.getRouting(target);
-    if (!routing || (size > 0 && !payload) || size > maximumMessageSize())
+    return sendPacketWithFlags(
+        target,
+        payload,
+        size,
+        timeout,
+        DTPK_FLAG_NONE,
+        dtpkAck,
+        callback);
+}
+
+uint16_t DTPK::sendPacketWithFlags(
+    uint16_t target,
+    unsigned char *payload,
+    size_t size,
+    int32_t timeout,
+    uint8_t applicationFlags,
+    bool dtpkAck,
+    PacketAckCallback callback)
+{
+    _currentTime = millis();
+    RoutingRecord routing{};
+    bool reversePath = false;
+    if ((size > 0 && !payload) || size > maximumMessageSize() ||
+        !resolveRoute(target, 256u, routing, reversePath))
     {
+        if (callback)
+            callback(0, 0);
+        return 0;
+    }
+    if (pendingLocalApplicationTransactions() >=
+        static_cast<size_t>(DTPK_MAX_LOCAL_PENDING_MESSAGES))
+    {
+        // Fail synchronously and visibly before compression or payload
+        // allocation. Protocol control, relayed DATA and response traffic do
+        // not pass through this local-application admission gate.
         if (callback)
             callback(0, 0);
         return 0;
@@ -96,8 +145,11 @@ uint16_t DTPK::sendPacket(
     uint8_t *compressed = nullptr;
     size_t transmittedSize = size;
     const uint8_t *transmittedPayload = payload;
-    uint8_t payloadFlags =
-        dtpkAck ? DTPK_FLAG_E2E_ACK_REQUESTED : DTPK_FLAG_NONE;
+    uint8_t payloadFlags = static_cast<uint8_t>(
+        applicationFlags & DTPK_APPLICATION_FLAGS_MASK);
+    if (dtpkAck)
+        payloadFlags = static_cast<uint8_t>(
+            payloadFlags | DTPK_FLAG_E2E_ACK_REQUESTED);
     if (tryCompressPayload(payload, size, compressed, transmittedSize))
     {
         transmittedPayload = compressed;
@@ -130,6 +182,9 @@ uint16_t DTPK::sendPacket(
         packet->originalSender = MAC::getInstance()->getId();
         packet->finalTarget = target;
         packet->flags = payloadFlags;
+        // Hop limit measures distance travelled from this packet's source,
+        // not the length of the selected route to its destination. A packet
+        // sent through a reverse breadcrumb is still a new source packet.
         packet->hopLimit = DTPK_DEFAULT_HOP_LIMIT;
         if (transmittedSize > 0)
             memcpy(packet->data, transmittedPayload, transmittedSize);
@@ -140,7 +195,7 @@ uint16_t DTPK::sendPacket(
         addPacketToSendingQueue(
             reinterpret_cast<DTPKPacketUnknown *>(packet),
             wireSize,
-            routing->router,
+            routing.router,
             timeout,
             0,
             true,
@@ -190,7 +245,8 @@ uint16_t DTPK::sendPacket(
     _multipartSend.target = target;
     _multipartSend.totalSize = static_cast<uint16_t>(transmittedSize);
     _multipartSend.flags = static_cast<uint8_t>(
-        payloadFlags & static_cast<uint8_t>(DTPK_FLAG_COMPRESSED));
+        payloadFlags & static_cast<uint8_t>(
+            DTPK_FLAG_COMPRESSED | DTPK_APPLICATION_FLAGS_MASK));
     _multipartSend.fragmentCount = count;
     _multipartSend.nextInitialFragment = 0;
     _multipartSend.nextQueryAt = _currentTime + FRAGMENT_QUERY_INTERVAL_MS;
@@ -199,7 +255,7 @@ uint16_t DTPK::sendPacket(
     _multipartSend.payload = copy;
     _multipartSend.retransmit.fill(0);
 
-    const uint64_t routeHops = std::max<uint64_t>(1u, routing->distance);
+    const uint64_t routeHops = std::max<uint64_t>(1u, routing.distance);
     // Source fragments are serialized by LCMM. Relays pipeline the stream, so
     // route distance contributes fill/drain and ACK latency rather than
     // multiplying every fragment. Include one complete selective-repair round.
@@ -257,13 +313,77 @@ void DTPK::receiveAck(uint16_t id, bool success)
         return;
 
     self->_currentTime = millis();
+    if (self->_localNoE2ELcmmId == id)
+        self->_localNoE2ELcmmId = 0;
     auto multipart = self->_multipartLcmmIds.find(id);
     if (multipart != self->_multipartLcmmIds.end())
     {
         self->_multipartLcmmIds.erase(multipart);
         if (self->_multipartSend.active)
+        {
             self->_multipartSend.nextQueryAt =
                 self->_currentTime + self->multipartQueryDelayMs();
+            if (!success)
+            {
+                DTPKPacketWaiting *waiting = self->findWaitingPacket(
+                    self->_multipartSend.id,
+                    self->_multipartSend.sourceSequence,
+                    self->_multipartSend.target);
+                if (waiting)
+                    waiting->routeRepairNeeded = true;
+            }
+        }
+    }
+
+    auto relayed = self->_relayedLcmmIds.find(id);
+    if (relayed != self->_relayedLcmmIds.end())
+    {
+        const RelayFailureContext context = relayed->second;
+        self->_relayedLcmmIds.erase(relayed);
+        if (!success)
+        {
+            self->sendNackPacket(
+                context.originalSender,
+                context.previousHop,
+                context.id,
+                context.sourceSequence,
+                context.failedDestination,
+                false);
+        }
+    }
+
+    auto single = self->_singleLcmmIds.find(id);
+    if (single != self->_singleLcmmIds.end())
+    {
+        const PacketIdentity identity = single->second;
+        self->_singleLcmmIds.erase(single);
+        for (DTPKPacketWaiting &waiting : self->_packetWaiting)
+        {
+            if (waiting.id != identity.id ||
+                waiting.sourceSequence != identity.sourceSequence ||
+                identity.originalSender != MAC::getInstance()->getId())
+                continue;
+            waiting.retryQueued = false;
+            if (!success)
+            {
+                waiting.routeRepairNeeded = true;
+                waiting.failedRouter = waiting.lastRouter;
+                waiting.nextRetryAt =
+                    self->_currentTime +
+                    self->singleLinkFailureBackoffMs(waiting.retryCount);
+            }
+            else
+            {
+                waiting.failedRouter = 0;
+                waiting.routeRepairNeeded = false;
+                if (static_cast<int32_t>(
+                        self->_currentTime - waiting.nextRetryAt) >= 0)
+                    waiting.nextRetryAt =
+                        self->_currentTime +
+                        self->singleRetryDelayMs(waiting.target);
+            }
+            break;
+        }
     }
 
     auto evidence = self->_directAckNeighborByLcmmId.find(id);

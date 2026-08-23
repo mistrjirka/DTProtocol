@@ -203,7 +203,10 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
         else:
             request_timeout = 5000
         request_timeout = int(request_timeout)
-        return max(1, request_timeout // 3 if request_timeout > 0 else 1)
+        # Production bounds one LCMM link-ACK silence interval independently
+        # from the full application deadline. A long logical timeout must not
+        # monopolize the half-duplex radio after one lost link ACK.
+        return min(3000, max(1, request_timeout if request_timeout > 0 else 1))
 
     def _remaining_hop_timeout_ms(self, sender_id: int, packet) -> float:
         key = self._deadline_key(sender_id, packet)
@@ -211,9 +214,11 @@ class TimedSharedPythonNetwork(SharedPythonNetwork):
         if deadline is not None:
             return max(1.0, float(deadline) - float(self.now))
         frame_bytes = self._frame_bytes(packet)
+        link_ack_frame_bytes = MAC_OVERHEAD + 3
         return float(
             self._production_hop_timeout_base_ms(sender_id, packet)
             + math.ceil(self.airtime_ms(frame_bytes))
+            + math.ceil(self.airtime_ms(link_ack_frame_bytes))
         )
 
     def add_node(

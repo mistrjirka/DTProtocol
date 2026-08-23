@@ -31,6 +31,13 @@ bool DTPK::sequenceNewer(uint16_t a, uint16_t b)
     return static_cast<uint16_t>(a - b) < 0x8000u;
 }
 
+bool DTPK::packetIdNewer(uint16_t a, uint16_t b)
+{
+    if (a == b)
+        return false;
+    return static_cast<uint16_t>(a - b) < 0x8000u;
+}
+
 bool DTPK::versionNewer(uint32_t a, uint32_t b)
 {
     if (a == b)
@@ -38,12 +45,20 @@ bool DTPK::versionNewer(uint32_t a, uint32_t b)
     return static_cast<uint32_t>(a - b) < 0x80000000u;
 }
 
-bool DTPK::isControlType(DTPKPacketType type)
+bool DTPK::maySendDuringEndToEndWait(DTPKPacketType type)
 {
-    // Fragment data is allowed through the local E2E gate: it is one part of
-    // the already-active logical message, not a second application transaction.
-    return type == CRYST || type == HELLO || type == CRYST_REQ ||
-           type == SEQ_REQ || type == ACK || type == NACK_NOTFOUND ||
+    // A second independent application transaction is gated. Route-state
+    // broadcasts and sequence repair must continue because the active DATA may
+    // itself need a replacement route. Response traffic remains highest
+    // priority, LCMM waits are independently bounded, and repair bursts are
+    // capped by MAX_REPAIR_BURST.
+    // CRYST_REQ is the exception: it is a reliable neighbor-sync request and
+    // can consume five full silence intervals when that peer is unavailable.
+    // Deferring one request is safe because the already-known active route and
+    // SEQ_REQ/CRYST repair remain live; the queued request is coalesced and sent
+    // immediately after the application transaction closes.
+    return type == CRYST || type == HELLO || type == SEQ_REQ ||
+           type == ACK || type == NACK_NOTFOUND ||
            type == DATA_FRAGMENT || type == FRAGMENT_STATUS ||
            type == FRAGMENT_QUERY;
 }
@@ -56,6 +71,106 @@ bool DTPK::hasOutstandingEndToEndAck() const
         _packetWaiting.begin(),
         _packetWaiting.end(),
         [](const DTPKPacketWaiting &waiting) { return !waiting.gotAck; });
+}
+
+size_t DTPK::pendingLocalApplicationTransactions() const
+{
+    // Every source-side E2E or multipart transaction owns one waiting record.
+    // A queued same-identity DATA_SINGLE can be its message-level retry and must
+    // not be counted twice. No-ACK local DATA has no waiting record, so count
+    // its queued source packet directly.
+    size_t count = _packetWaiting.size();
+    if (_localNoE2ELcmmId != 0)
+        ++count;
+    MAC *mac = MAC::getInstance();
+    const uint16_t localId = mac ? mac->getId() : 0;
+    for (const DTPKPacketRequest &request : _packetRequests)
+    {
+        if (!request.packet || request.packet->type != DATA_SINGLE)
+            continue;
+        const DTPKPacketGeneric *generic =
+            reinterpret_cast<const DTPKPacketGeneric *>(request.packet);
+        if (generic->originalSender != localId)
+            continue;
+
+        const bool representedByWaiting = std::any_of(
+            _packetWaiting.begin(),
+            _packetWaiting.end(),
+            [generic](const DTPKPacketWaiting &waiting) {
+                return waiting.id == generic->id &&
+                       waiting.sourceSequence == generic->sourceSequence &&
+                       waiting.target == generic->finalTarget;
+            });
+        if (!representedByWaiting)
+            ++count;
+    }
+    return count;
+}
+
+bool DTPK::hasUrgentRouteRepair() const
+{
+    return std::any_of(
+        _packetWaiting.begin(),
+        _packetWaiting.end(),
+        [](const DTPKPacketWaiting &waiting) {
+            return !waiting.gotAck && waiting.routeRepairNeeded;
+        });
+}
+
+bool DTPK::canAdvanceOriginSequence() const
+{
+    return !_multipartSend.active && _packetWaiting.empty() &&
+           !LCMM::getInstance()->isSending();
+}
+
+void DTPK::requestOriginSequenceAdvance(uint16_t requestedSequence)
+{
+    const uint16_t normalized = requestedSequence == 0 ? 1 : requestedSequence;
+    const uint16_t baseline =
+        _pendingOriginSequence != 0 &&
+                sequenceNewer(_pendingOriginSequence, _originSequence)
+            ? _pendingOriginSequence
+            : _originSequence;
+    if (sequenceNewer(normalized, baseline))
+        _pendingOriginSequence = normalized;
+    applyPendingOriginSequence();
+}
+
+void DTPK::applyPendingOriginSequence()
+{
+    if (_pendingOriginSequence == 0 ||
+        !sequenceNewer(_pendingOriginSequence, _originSequence))
+    {
+        _pendingOriginSequence = 0;
+        return;
+    }
+    if (!canAdvanceOriginSequence())
+        return;
+
+    _originSequence = _pendingOriginSequence;
+    _pendingOriginSequence = 0;
+    ++_routeVersion;
+    if (_routeVersion == 0)
+        _routeVersion = 1;
+
+    const uint16_t localId = MAC::getInstance()->getId();
+    for (DTPKPacketRequest &request : _packetRequests)
+    {
+        if (!request.packet ||
+            (request.packet->type != DATA_SINGLE &&
+             request.packet->type != DATA_FRAGMENT &&
+             request.packet->type != FRAGMENT_QUERY))
+            continue;
+        DTPKPacketGeneric *generic =
+            reinterpret_cast<DTPKPacketGeneric *>(request.packet);
+        if (generic->originalSender != localId)
+            continue;
+        generic->sourceSequence = _originSequence;
+        rememberData(localId, _originSequence, generic->id);
+    }
+
+    sendHello();
+    sendCrystPacket();
 }
 
 bool DTPK::hasKnownDirectNeighbor() const
@@ -103,6 +218,7 @@ DTPK::DTPK(uint16_t originSequence, bool mobileHint)
             "persist a monotonic sequence in production");
     }
     _originSequence = originSequence;
+    _pendingOriginSequence = 0;
     _routeVersion = 1;
     const uint32_t helloPeriod = effectiveHelloPeriodMs();
     _helloRemaining = static_cast<int32_t>(
@@ -131,12 +247,42 @@ uint16_t DTPK::nextPacketId()
 bool DTPK::hasSeenData(uint16_t originalSender, uint16_t sourceSequence,
                        uint16_t id) const
 {
-    for (const PacketIdentity &entry : _recentData)
+    if (originalSender == 0 || sourceSequence == 0 || id == 0)
+        return true;
+
+    for (const ReplayWindow &window : _replayWindows)
     {
-        if (entry.originalSender == originalSender &&
-            entry.sourceSequence == sourceSequence &&
-            entry.id == id)
+        if (window.originalSender != originalSender)
+            continue;
+
+        if (window.sourceSequence == sourceSequence)
+        {
+            if (window.newestId == 0)
+                return false;
+            if (id == window.newestId)
+                return (window.seenIds & 1ull) != 0;
+            if (packetIdNewer(id, window.newestId))
+                return false;
+            if (packetIdNewer(window.newestId, id))
+            {
+                const uint16_t offset =
+                    static_cast<uint16_t>(window.newestId - id);
+                if (offset >= REPLAY_WINDOW_BITS)
+                    return true; // too old to be a new in-window packet
+                return (window.seenIds & (1ull << offset)) != 0;
+            }
+            // Exactly half the serial space is ambiguous. Reject rather than
+            // risking a duplicate application delivery.
             return true;
+        }
+
+        if (sequenceNewer(window.sourceSequence, sourceSequence))
+            return true; // delayed packet from an older boot incarnation
+        if (sequenceNewer(sourceSequence, window.sourceSequence))
+            return false; // newer incarnation starts a fresh replay window
+        // Exactly half the serial space is ambiguous in RFC-1982 arithmetic.
+        // Reject rather than risking a second application delivery.
+        return true;
     }
     return false;
 }
@@ -144,13 +290,75 @@ bool DTPK::hasSeenData(uint16_t originalSender, uint16_t sourceSequence,
 void DTPK::rememberData(uint16_t originalSender, uint16_t sourceSequence,
                         uint16_t id)
 {
-    if (hasSeenData(originalSender, sourceSequence, id))
+    if (originalSender == 0 || sourceSequence == 0 || id == 0)
         return;
-    PacketIdentity &entry = _recentData[_recentDataNext];
-    entry.originalSender = originalSender;
-    entry.sourceSequence = sourceSequence;
-    entry.id = id;
-    _recentDataNext = (_recentDataNext + 1) % RECENT_DATA_CACHE_SIZE;
+
+    ReplayWindow *slot = nullptr;
+    ReplayWindow *oldest = nullptr;
+    uint32_t oldestAge = 0;
+    for (ReplayWindow &window : _replayWindows)
+    {
+        if (window.originalSender == originalSender)
+        {
+            slot = &window;
+            break;
+        }
+        if (window.originalSender == 0 && !slot)
+            slot = &window;
+        const uint32_t age =
+            static_cast<uint32_t>(_currentTime - window.lastUpdate);
+        if (!oldest || age > oldestAge)
+        {
+            oldest = &window;
+            oldestAge = age;
+        }
+    }
+    if (!slot)
+        slot = oldest;
+    if (!slot)
+        return;
+
+    if (slot->originalSender != originalSender ||
+        slot->sourceSequence == 0 ||
+        sequenceNewer(sourceSequence, slot->sourceSequence))
+    {
+        slot->originalSender = originalSender;
+        slot->sourceSequence = sourceSequence;
+        slot->newestId = id;
+        slot->seenIds = 1ull;
+        slot->lastUpdate = _currentTime;
+        return;
+    }
+    if (slot->sourceSequence != sourceSequence)
+        return; // stale or serially ambiguous incarnation
+
+    if (slot->newestId == 0)
+    {
+        slot->newestId = id;
+        slot->seenIds = 1ull;
+    }
+    else if (id == slot->newestId)
+    {
+        slot->seenIds |= 1ull;
+    }
+    else if (packetIdNewer(id, slot->newestId))
+    {
+        const uint16_t advance =
+            static_cast<uint16_t>(id - slot->newestId);
+        slot->seenIds =
+            advance >= REPLAY_WINDOW_BITS
+                ? 1ull
+                : static_cast<uint64_t>((slot->seenIds << advance) | 1ull);
+        slot->newestId = id;
+    }
+    else if (packetIdNewer(slot->newestId, id))
+    {
+        const uint16_t offset =
+            static_cast<uint16_t>(slot->newestId - id);
+        if (offset < REPLAY_WINDOW_BITS)
+            slot->seenIds |= 1ull << offset;
+    }
+    slot->lastUpdate = _currentTime;
 }
 
 bool DTPK::hasSeenSeqRequest(uint16_t originalSender, uint16_t id,
@@ -300,9 +508,32 @@ void DTPK::retrySequenceRequests()
         PendingSeqRequest &pending = it->second;
 
         RoutingRecord *route = _crystDatabase.getRouting(destination);
-        if (route != nullptr &&
-            !sequenceNewer(pending.requestedSequence, route->sequence))
+        if (route != nullptr)
         {
+            // A sequence request is a liveness repair for the state in which no
+            // feasible route can be selected. Once any feasible route exists,
+            // continuing to chase the originally requested generation is both
+            // unnecessary and harmful: an older lower-metric route may quite
+            // correctly win route selection while a newer candidate remains
+            // available. Repeatedly advancing the destination in that state
+            // creates a self-sustaining generation/CRYST storm.
+            const uint16_t localId = MAC::getInstance()->getId();
+            auto queuedEnd = std::remove_if(
+                _packetRequests.begin(),
+                _packetRequests.end(),
+                [destination, localId](DTPKPacketRequest &request) {
+                    if (!request.packet || request.packet->type != SEQ_REQ)
+                        return false;
+                    DTPKPacketSeqRequest *packet =
+                        reinterpret_cast<DTPKPacketSeqRequest *>(request.packet);
+                    if (packet->destination != destination ||
+                        packet->originalSender != localId)
+                        return false;
+                    free(request.packet);
+                    request.packet = nullptr;
+                    return true;
+                });
+            _packetRequests.erase(queuedEnd, _packetRequests.end());
             it = _pendingSeqRequests.erase(it);
             continue;
         }
@@ -333,11 +564,12 @@ void DTPK::retrySequenceRequests()
                 retryDelay;
         if (due)
         {
-            // Candidate-guided reliable unicast is the normal repair path. A
-            // periodic flood remains an explicit escape from stale candidate
-            // cycles or missing local contributions.
+            // Candidate-guided one-shot unicast is the normal repair path.
+            // Logical retries persist here with backoff; a periodic flood is an
+            // explicit escape from stale candidates or missing contributions.
             const bool flood =
-                ((static_cast<uint32_t>(pending.attempts) + 1u) % 8u) == 0u;
+                ((static_cast<uint32_t>(pending.attempts) + 1u) %
+                 SEQ_REQ_FLOOD_INTERVAL) == 0u;
             sendSeqRequest(
                 destination,
                 pending.requestedSequence,
@@ -361,7 +593,8 @@ void DTPK::addPacketToSendingQueue(
     bool lcmmAck,
     bool dtpkAck,
     PacketAckCallback callback,
-    bool priority)
+    bool priority,
+    uint16_t failurePreviousHop)
 {
     if (!packet)
         return;
@@ -391,7 +624,8 @@ void DTPK::addPacketToSendingQueue(
         lcmmAck,
         dtpkAck,
         callback,
-        queueClass});
+        queueClass,
+        failurePreviousHop});
 }
 
 void DTPK::sendingDeamon()
@@ -423,7 +657,25 @@ void DTPK::sendingDeamon()
         if (request.timeLeftToSend > 0)
             continue;
         const DTPKPacketType type = request.packet->type;
-        if (hasOutstandingEndToEndAck() && !isControlType(type))
+        bool relayedApplication = false;
+        bool immediateApplicationResponse = false;
+        if (type == DATA_SINGLE)
+        {
+            const DTPKPacketGeneric *generic =
+                reinterpret_cast<const DTPKPacketGeneric *>(request.packet);
+            relayedApplication =
+                generic->originalSender != MAC::getInstance()->getId();
+            immediateApplicationResponse =
+                (generic->flags & DTPK_FLAG_DEBUG_ECHO) != 0;
+        }
+        const bool urgentCrystRequest =
+            type == CRYST_REQ && hasUrgentRouteRepair();
+        if (hasOutstandingEndToEndAck() &&
+            !maySendDuringEndToEndWait(type) &&
+            !urgentCrystRequest &&
+            !isActiveSingleRetry(request) &&
+            !relayedApplication &&
+            !immediateApplicationResponse)
             continue;
         if (request.queueClass == TX_RESPONSE && response == none)
             response = i;
@@ -446,15 +698,59 @@ void DTPK::sendingDeamon()
         return;
 
     DTPKPacketRequest &request = _packetRequests[selected];
+    if (request.packet->type == DATA_SINGLE ||
+        request.packet->type == DATA_FRAGMENT ||
+        request.packet->type == FRAGMENT_QUERY)
+    {
+        // A packet can wait behind another end-to-end transaction or radio
+        // policy for long enough that its originally selected next hop becomes
+        // stale. Resolve the final destination again immediately before LCMM
+        // takes ownership; ACK/NACK/status packets deliberately retain their
+        // reverse breadcrumb instead.
+        DTPKPacketGeneric *generic =
+            reinterpret_cast<DTPKPacketGeneric *>(request.packet);
+        RoutingRecord fresh{};
+        bool reversePath = false;
+        bool haveFresh = false;
+        DTPKPacketWaiting *waiting = nullptr;
+        if (generic->originalSender == MAC::getInstance()->getId())
+            waiting = findWaitingPacket(
+                generic->id,
+                generic->sourceSequence,
+                generic->finalTarget);
+        if (waiting)
+            haveFresh = resolveRetryRoute(*waiting, fresh, reversePath);
+        else
+        {
+            const uint16_t maxDistance =
+                generic->hopLimit == DTPK_DEFAULT_HOP_LIMIT
+                    ? 256u
+                    : static_cast<uint16_t>(generic->hopLimit) + 1u;
+            haveFresh = resolveRoute(
+                generic->finalTarget,
+                maxDistance,
+                fresh,
+                reversePath);
+        }
+        if (haveFresh)
+        {
+            request.target = fresh.router;
+            // Re-routing changes only the next hop. hopLimit records hops
+            // already travelled from the packet's original source.
+        }
+    }
+    const uint32_t lcmmTimeout = request.lcmmAck
+        ? static_cast<uint32_t>(std::min<int32_t>(
+              LCMM_LINK_ACK_WAIT_MS,
+              std::max<int32_t>(1, request.timeout)))
+        : static_cast<uint32_t>(std::max<int32_t>(1, request.timeout));
     const uint16_t lcmmId = LCMM::getInstance()->sendPacketSingle(
         request.lcmmAck,
         request.target,
         reinterpret_cast<unsigned char *>(request.packet),
         static_cast<uint8_t>(request.size),
         DTPK::receiveAck,
-        request.timeout > 0
-            ? static_cast<uint32_t>(std::max<int32_t>(1, request.timeout / 3))
-            : 1u,
+        lcmmTimeout,
         5);
 
     if (lcmmId == 0)
@@ -475,11 +771,61 @@ void DTPK::sendingDeamon()
             return;
         }
 
-        if (request.callback)
-            request.callback(0, 0);
-        free(request.packet);
+        RelayFailureContext relayFailure{};
+        bool reportRelayFailure = false;
+        if (request.packet->type == DATA_SINGLE ||
+            request.packet->type == DATA_FRAGMENT)
+        {
+            DTPKPacketGeneric *generic =
+                reinterpret_cast<DTPKPacketGeneric *>(request.packet);
+            if (request.packet->type == DATA_SINGLE && !request.dtpkAck)
+            {
+                DTPKPacketWaiting *waiting = findWaitingPacket(
+                    generic->id,
+                    generic->sourceSequence,
+                    generic->finalTarget);
+                if (waiting)
+                {
+                    waiting->retryQueued = false;
+                    waiting->routeRepairNeeded = true;
+                    waiting->failedRouter = request.target;
+                    waiting->nextRetryAt =
+                        _currentTime +
+                        singleLinkFailureBackoffMs(waiting->retryCount);
+                }
+            }
+            if (request.failurePreviousHop != 0)
+            {
+                relayFailure.originalSender = generic->originalSender;
+                relayFailure.sourceSequence = generic->sourceSequence;
+                relayFailure.id = generic->id;
+                relayFailure.failedDestination = generic->finalTarget;
+                relayFailure.previousHop = request.failurePreviousHop;
+                reportRelayFailure = true;
+            }
+        }
+
+        // Drop all references into the vector before enqueueing a NACK or
+        // invoking application code; either action may grow _packetRequests.
+        PacketAckCallback failureCallback = request.callback;
+        DTPKPacketUnknown *failedPacket = request.packet;
+        request.packet = nullptr;
         _packetRequests.erase(
             _packetRequests.begin() + static_cast<long>(selected));
+        free(failedPacket);
+
+        if (reportRelayFailure)
+        {
+            sendNackPacket(
+                relayFailure.originalSender,
+                relayFailure.previousHop,
+                relayFailure.id,
+                relayFailure.sourceSequence,
+                relayFailure.failedDestination,
+                false);
+        }
+        if (failureCallback)
+            failureCallback(0, 0);
         return;
     }
 
@@ -505,9 +851,38 @@ void DTPK::sendingDeamon()
             multipart->sourceSequence == _multipartSend.sourceSequence &&
             multipart->originalSender == MAC::getInstance()->getId() &&
             multipart->finalTarget == _multipartSend.target)
-            _multipartLcmmIds[lcmmId] = 1;
+        {
+            uint8_t marker = 0; // zero identifies a status query
+            if (request.packet->type == DATA_FRAGMENT)
+            {
+                const DTPKPacketFragment *fragment =
+                    reinterpret_cast<const DTPKPacketFragment *>(
+                        request.packet);
+                marker = static_cast<uint8_t>(fragment->fragmentIndex + 1u);
+            }
+            _multipartLcmmIds[lcmmId] = marker;
+        }
     }
 
+    if (request.failurePreviousHop != 0 &&
+        (request.packet->type == DATA_SINGLE ||
+         request.packet->type == DATA_FRAGMENT))
+    {
+        const DTPKPacketGeneric *generic =
+            reinterpret_cast<const DTPKPacketGeneric *>(request.packet);
+        RelayFailureContext context{};
+        context.originalSender = generic->originalSender;
+        context.sourceSequence = generic->sourceSequence;
+        context.id = generic->id;
+        context.failedDestination = generic->finalTarget;
+        context.previousHop = request.failurePreviousHop;
+        _relayedLcmmIds[lcmmId] = context;
+    }
+
+    const DTPKPacketGeneric *sentGeneric =
+        request.packet->type == DATA_SINGLE
+            ? reinterpret_cast<const DTPKPacketGeneric *>(request.packet)
+            : nullptr;
     if (request.dtpkAck)
     {
         const DTPKPacketGeneric *generic =
@@ -522,7 +897,54 @@ void DTPK::sendingDeamon()
         waiting.gotAck = false;
         waiting.success = false;
         waiting.callback = request.callback;
+        waiting.lastRouter = request.target;
+        waiting.retryQueued = request.packet->type == DATA_SINGLE;
+        if (request.packet->type == DATA_SINGLE)
+        {
+            waiting.retryPacket = static_cast<DTPKPacketUnknown *>(
+                malloc(request.size));
+            if (waiting.retryPacket)
+            {
+                memcpy(waiting.retryPacket, request.packet, request.size);
+                waiting.retrySize = request.size;
+                waiting.nextRetryAt =
+                    _currentTime + singleRetryDelayMs(waiting.target);
+            }
+        }
         _packetWaiting.push_back(waiting);
+        if (request.packet->type == DATA_SINGLE)
+        {
+            PacketIdentity identity{};
+            identity.originalSender = generic->originalSender;
+            identity.sourceSequence = generic->sourceSequence;
+            identity.id = generic->id;
+            _singleLcmmIds[lcmmId] = identity;
+        }
+    }
+    else if (sentGeneric && sentGeneric->originalSender == MAC::getInstance()->getId())
+    {
+        DTPKPacketWaiting *waiting = findWaitingPacket(
+            sentGeneric->id,
+            sentGeneric->sourceSequence,
+            sentGeneric->finalTarget);
+        if (waiting)
+        {
+            // scheduleSingleRetries marked this copy queued. Keep the marker
+            // until LCMM reports success/failure so a route change cannot queue
+            // another same-identity retry while this one is still in flight.
+            waiting->lastRouter = request.target;
+            waiting->nextRetryAt =
+                _currentTime + singleRetryDelayMs(waiting->target);
+            PacketIdentity identity{};
+            identity.originalSender = sentGeneric->originalSender;
+            identity.sourceSequence = sentGeneric->sourceSequence;
+            identity.id = sentGeneric->id;
+            _singleLcmmIds[lcmmId] = identity;
+        }
+        else
+        {
+            _localNoE2ELcmmId = lcmmId;
+        }
     }
 
     free(request.packet);

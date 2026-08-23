@@ -35,6 +35,7 @@ default memory-safe API cap is 16 KiB and can be changed at compile time:
 ```cpp
 #define DTPK_MAX_MESSAGE_SIZE (16u * 1024u)
 #define DTPK_MAX_FRAGMENT_ASSEMBLIES 2u
+#define DTPK_MAX_LOCAL_PENDING_MESSAGES 8u
 #include <DTPK.h>
 ```
 
@@ -93,6 +94,11 @@ A full table evicts its oldest incomplete assembly. Incomplete assemblies also
 expire after 120 seconds. Applications for smaller MCUs should lower either
 compile-time limit.
 
+Small local sends are bounded separately by `DTPK_MAX_LOCAL_PENDING_MESSAGES`
+(default 8). That admission limit applies only to messages originated by the
+local application; it does not consume or cap ACK/NACK, routing repair, relayed
+DATA, or CRYST capacity.
+
 ## API
 
 Existing code works without modification:
@@ -141,3 +147,11 @@ The real C++ host protocol tests include:
 
 The Python reference simulator mirrors the same frame sizes, source sequencing,
 transactional reassembly, expiry, queries, status bitmaps, and selective repair.
+
+## Application metadata flags
+
+Multipart fragments preserve bits from `DTPK_APPLICATION_FLAGS_MASK` across
+selective retransmission and transactional reassembly. Transport-owned ACK and
+compression bits are still derived internally. The final application callback
+therefore receives the same assigned application metadata as a single-frame
+message.

@@ -103,5 +103,56 @@ int main() {
     assert(!retrySuccess);
     assert(lcmm->getLastSendResult() == MAC_SEND_RADIO_ERROR);
 
+    // Retry timing is based on unsigned millis() deltas. Verify that a reliable
+    // send waiting for its link ACK terminates exactly once across the 32-bit
+    // Arduino clock wrap instead of hanging for another 49 days.
+    hostsim::set_time_ms(0xfffffff0ULL);
+    int wrapCallbacks = 0;
+    bool wrapSuccess = true;
+    const uint16_t wrapId = lcmm->sendPacketSingle(
+        true,
+        2,
+        payload,
+        sizeof(payload),
+        [&](uint16_t, bool success) {
+            ++wrapCallbacks;
+            wrapSuccess = success;
+        },
+        100,
+        1);
+    assert(wrapId != 0);
+    assert(hostsim::pop_tx(frame));
+    hostsim::phy_done(frame.token);
+    hostsim::set_time_ms(0x1'0000'0000ULL + 10'000ULL);
+    lcmm->loop();
+    assert(!lcmm->isSending());
+    assert(wrapCallbacks == 1);
+    assert(!wrapSuccess);
+
+    // Oversized LCMM payloads must fail synchronously and leave no hidden
+    // sender state behind. This is an application-visible configuration error,
+    // not something that retries can repair.
+    {
+        bool callbackCalled = false;
+        bool callbackSuccess = true;
+        unsigned char oversized[DATASIZE_LCMM + 1u] = {};
+        const uint16_t oversizedId = LCMM::getInstance()->sendPacketSingle(
+            true,
+            2,
+            oversized,
+            static_cast<uint8_t>(sizeof(oversized)),
+            [&callbackCalled, &callbackSuccess](uint16_t, bool success) {
+                callbackCalled = true;
+                callbackSuccess = success;
+            },
+            3000,
+            3);
+        assert(oversizedId == 0);
+        assert(callbackCalled);
+        assert(!callbackSuccess);
+        assert(LCMM::getInstance()->getLastSendResult() == MAC_SEND_TOO_LARGE);
+        assert(!LCMM::getInstance()->isSending());
+    }
+
     return 0;
 }

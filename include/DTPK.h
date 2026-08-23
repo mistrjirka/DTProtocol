@@ -50,6 +50,9 @@ public:
         bool dtpkAck;
         PacketAckCallback callback;
         uint8_t queueClass;
+        // For relayed application DATA, a failed next-hop LCMM transaction must
+        // report a transient NACK to the immediately previous hop.
+        uint16_t failurePreviousHop;
     };
 
     struct DTPKPacketWaiting
@@ -62,6 +65,17 @@ public:
         bool gotAck;
         bool success;
         PacketAckCallback callback;
+        // Single-frame E2E transactions retain one bounded source copy. A
+        // retry reuses the same identity, so the destination can ACK again
+        // without delivering the application payload twice.
+        DTPKPacketUnknown *retryPacket = nullptr;
+        size_t retrySize = 0;
+        uint32_t nextRetryAt = 0;
+        bool retryQueued = false;
+        uint16_t retryCount = 0;
+        uint16_t lastRouter = 0;
+        uint16_t failedRouter = 0;
+        bool routeRepairNeeded = false;
     };
 
     static DTPK *getInstance();
@@ -74,8 +88,16 @@ public:
     uint16_t sendPacket(uint16_t target, unsigned char *packet, size_t size,
                         int32_t timeout, bool isAck = false,
                         PacketAckCallback callback = nullptr);
+    // Sends ordinary application data while attaching one or more bits from
+    // DTPK_APPLICATION_FLAGS_MASK. Transport-owned flag bits are ignored.
+    uint16_t sendPacketWithFlags(
+        uint16_t target, unsigned char *packet, size_t size,
+        int32_t timeout, uint8_t applicationFlags,
+        bool isAck = false,
+        PacketAckCallback callback = nullptr);
     void loop();
     std::vector<NeighborRecord> getNeighbours();
+    bool getRouteDetails(uint16_t destination, RoutingRecord &result) const;
     bool isMobileHintEnabled() const { return _mobileHint; }
     const CompressionDiagnostics &getCompressionDiagnostics() const
     {
@@ -120,9 +142,19 @@ private:
     static constexpr uint32_t CRYST_ASSEMBLY_EXPIRY_MS = 30000;
     static constexpr uint32_t SEQ_REQ_RETRY_MIN_MS = 5000;
     static constexpr uint32_t SEQ_REQ_RETRY_MAX_MS = 60000;
+    // One-shot repair waves need a bounded, reasonably early escape from a
+    // stale directed candidate. Every fourth logical attempt is broadcast.
+    static constexpr uint8_t SEQ_REQ_FLOOD_INTERVAL = 4;
     static constexpr uint16_t MAX_CRYST_CHUNKS = 16;
-    static constexpr size_t RECENT_DATA_CACHE_SIZE = 64;
+    // One replay window per active source for the validated <=255-node
+    // network envelope. Unlike the old global ring, traffic from one source
+    // cannot evict another source's still-retrying identity.
+    static constexpr size_t REPLAY_SOURCE_CACHE_SIZE =
+        DTPK_REPLAY_SOURCE_SLOTS;
+    static constexpr size_t REPLAY_WINDOW_BITS = 64;
     static constexpr size_t RECENT_SEQ_REQ_CACHE_SIZE = 64;
+    static constexpr size_t REVERSE_BREADCRUMB_CACHE_SIZE = 128;
+    static constexpr uint32_t REVERSE_BREADCRUMB_EXPIRY_MS = 120000;
     static constexpr uint8_t MAX_REPAIR_BURST = 4;
     static constexpr uint8_t MAX_FRAGMENT_COUNT = 255;
     static constexpr uint32_t FRAGMENT_QUERY_INTERVAL_MS = 5000;
@@ -132,6 +164,15 @@ private:
     // conservative wall-clock budgets include retry jitter and airtime.
     static constexpr uint32_t FRAGMENT_SOURCE_HOP_BUDGET_MS = 20000;
     static constexpr uint32_t FRAGMENT_RELAY_HOP_BUDGET_MS = 10000;
+    static constexpr uint32_t SINGLE_RETRY_BASE_MS = 30000;
+    static constexpr uint32_t SINGLE_RETRY_PER_HOP_MS = 5000;
+    static constexpr uint32_t SINGLE_RETRY_MAX_MS = 60000;
+    static constexpr uint32_t SINGLE_LINK_FAILURE_BACKOFF_MS = 5000;
+    static constexpr uint32_t SINGLE_RETRY_MIN_REMAINING_MS = 20000;
+    // Per-attempt silence after a reliable hop. The complete application
+    // timeout must never become one LCMM retry interval; five attempts plus
+    // actual DATA/ACK airtime remain bounded independently.
+    static constexpr uint32_t LCMM_LINK_ACK_WAIT_MS = 3000;
     static constexpr size_t FRAGMENT_BITMAP_BYTES =
         (MAX_FRAGMENT_COUNT + 7u) / 8u;
     static_assert(DTPK_MAX_FRAGMENT_ASSEMBLIES > 0,
@@ -157,12 +198,45 @@ private:
         uint16_t id = 0;
     };
 
+    struct ReplayWindow
+    {
+        uint64_t seenIds = 0;
+        uint32_t lastUpdate = 0;
+        uint16_t originalSender = 0; // zero marks an unused source slot
+        uint16_t sourceSequence = 0;
+        uint16_t newestId = 0;
+    };
+
+    static_assert(DTPK_REPLAY_SOURCE_SLOTS > 0,
+                  "at least one replay source slot is required");
+    static_assert(sizeof(ReplayWindow) <= 24,
+                  "replay window footprint unexpectedly increased");
+
     struct SeqRequestIdentity
     {
         uint16_t originalSender = 0; // zero marks an unused ring entry
         uint16_t id = 0;
         uint16_t destination = 0;
         uint16_t requestedSequence = 0;
+    };
+
+    struct RelayFailureContext
+    {
+        uint16_t originalSender = 0;
+        uint16_t sourceSequence = 0;
+        uint16_t id = 0;
+        uint16_t failedDestination = 0;
+        uint16_t previousHop = 0;
+    };
+
+    struct ReverseBreadcrumb
+    {
+        uint16_t originalSender = 0; // zero marks an unused ring entry
+        uint16_t sourceSequence = 0;
+        uint16_t id = 0;
+        uint16_t previousHop = 0;
+        uint8_t distance = 0;
+        uint32_t lastUpdate = 0;
     };
 
     struct NeighborState
@@ -241,15 +315,21 @@ private:
             : frame(value), dtpkSize(size) {}
     };
 
-    std::array<PacketIdentity, RECENT_DATA_CACHE_SIZE> _recentData{};
-    size_t _recentDataNext = 0;
+    std::array<ReplayWindow, REPLAY_SOURCE_CACHE_SIZE> _replayWindows{};
     std::array<SeqRequestIdentity, RECENT_SEQ_REQ_CACHE_SIZE> _recentSeqRequests{};
     size_t _recentSeqRequestNext = 0;
+    std::array<ReverseBreadcrumb, REVERSE_BREADCRUMB_CACHE_SIZE>
+        _reverseBreadcrumbs{};
+    size_t _reverseBreadcrumbNext = 0;
 
     uint32_t _currentTime;
     uint32_t _lastTick;
     uint16_t _packetCounter;
     uint16_t _originSequence;
+    // A destination-generation repair may arrive while DATA using the current
+    // generation is queued or in flight. Apply it only at an application-safe
+    // boundary, then rebase unsent local DATA atomically.
+    uint16_t _pendingOriginSequence;
     uint32_t _routeVersion;
     int32_t _helloRemaining;
     int32_t _maintenanceRemaining;
@@ -273,6 +353,12 @@ private:
     // the downstream end-to-end status wait; queue time is too early on a busy
     // multi-hop path.
     std::unordered_map<uint16_t, uint8_t> _multipartLcmmIds;
+    // LCMM id -> application identity for source single-frame transactions.
+    std::unordered_map<uint16_t, PacketIdentity> _singleLcmmIds;
+    // A no-E2E local packet has no DTPK waiting record while LCMM owns it.
+    // Track that one serial in-flight slot so admission remains an exact bound.
+    uint16_t _localNoE2ELcmmId = 0;
+    std::unordered_map<uint16_t, RelayFailureContext> _relayedLcmmIds;
     std::unordered_map<uint16_t, NeighborState> _neighborState;
     std::unordered_map<uint16_t, CrystAssembly> _crystAssemblies;
     std::unordered_map<uint16_t, PendingSeqRequest> _pendingSeqRequests;
@@ -293,9 +379,15 @@ private:
                             uint16_t destination, uint16_t requestedSequence);
 
     static bool sequenceNewer(uint16_t a, uint16_t b);
+    static bool packetIdNewer(uint16_t a, uint16_t b);
     static bool versionNewer(uint32_t a, uint32_t b);
-    static bool isControlType(DTPKPacketType type);
+    static bool maySendDuringEndToEndWait(DTPKPacketType type);
     bool hasOutstandingEndToEndAck() const;
+    size_t pendingLocalApplicationTransactions() const;
+    bool hasUrgentRouteRepair() const;
+    bool canAdvanceOriginSequence() const;
+    void requestOriginSequenceAdvance(uint16_t requestedSequence);
+    void applyPendingOriginSequence();
     uint16_t nextPacketId();
     uint32_t effectiveHelloPeriodMs() const;
     bool hasKnownDirectNeighbor() const;
@@ -307,6 +399,18 @@ private:
     void processSequenceRequests();
     void retrySequenceRequests();
     void maintainFragmentAssemblies();
+    DTPKPacketWaiting *findWaitingPacket(
+        uint16_t id, uint16_t sourceSequence, uint16_t target);
+    bool isActiveSingleRetry(const DTPKPacketRequest &request);
+    uint32_t singleRetryDelayMs(uint16_t target) const;
+    bool resolveRetryRoute(
+        DTPKPacketWaiting &waiting,
+        RoutingRecord &result,
+        bool &fromReversePath) const;
+    uint32_t singleLinkFailureBackoffMs(uint16_t retryCount) const;
+    void scheduleSingleRetries();
+    void removeQueuedSingleRetries(
+        uint16_t id, uint16_t sourceSequence, uint16_t target);
     void pumpMultipartSend();
     void clearMultipartSend();
     uint8_t fragmentCountForSize(size_t size) const;
@@ -318,6 +422,24 @@ private:
         uint8_t *&encoded, size_t &encodedSize);
     bool deliverApplicationPacket(
         DTPKPacketGeneric *packet, size_t packetSize);
+    bool validateRoutedPacketShape(
+        const ReceivedPacket &packet) const;
+    bool applicationOriginIsStale(
+        const DTPKPacketGeneric *packet) const;
+    void learnDirectApplicationOrigin(
+        const DTPKPacketGeneric *packet, uint16_t immediateSender);
+    void rememberReverseBreadcrumb(
+        const DTPKPacketGeneric *packet, uint16_t immediateSender);
+    bool findReverseBreadcrumb(
+        uint16_t originalSender, uint16_t sourceSequence, uint16_t id,
+        uint16_t &previousHop) const;
+    bool findRecentReverseRoute(
+        uint16_t destination, uint16_t maxDistanceExclusive,
+        RoutingRecord &result) const;
+    bool resolveRoute(
+        uint16_t destination, uint16_t maxDistanceExclusive,
+        RoutingRecord &result, bool &fromReversePath) const;
+    void expireReverseBreadcrumbs();
     bool queueMultipartFragment(uint8_t index);
     bool queueFragmentQuery();
     FragmentAssembly *findFragmentAssembly(
@@ -339,17 +461,22 @@ private:
                                  bool lcmmAck = false,
                                  bool dtpkAck = false,
                                  PacketAckCallback callback = nullptr,
-                                 bool priority = false);
+                                 bool priority = false,
+                                 uint16_t failurePreviousHop = 0);
 
     void sendCrystPacket();
-    void queueCrystSnapshot();
+    void queueCrystSnapshot(
+        uint16_t target = BROADCAST,
+        bool reliable = false);
     void sendHello();
     void sendCrystRequest(uint16_t neighbor);
     void sendSeqRequest(uint16_t destination, uint16_t requestedSequence,
                         bool flood);
     void sendNackPacket(uint16_t target, uint16_t from, uint16_t id,
                         uint16_t sourceSequence,
-                        uint16_t failedDestination);
+                        uint16_t failedDestination,
+                        bool finalReject = false,
+                        uint16_t failedRouter = 0);
     void sendAckPacket(uint16_t target, uint16_t from, uint16_t id,
                        uint16_t sourceSequence);
 

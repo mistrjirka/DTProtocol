@@ -20,6 +20,7 @@ pytestmark = pytest.mark.skipif(
 DTPK_DATA_SINGLE = 0x41
 DTPK_DATA_FRAGMENT = 0x47
 DTPK_FLAG_COMPRESSED = 0x02
+DTPK_FLAG_NACK_FINAL_REJECT = 0x08
 LCMM_HEADER_SIZE = 3
 DTPK_FLAGS_OFFSET = LCMM_HEADER_SIZE + 9
 FRAGMENT_INDEX_OFFSET = LCMM_HEADER_SIZE + 13
@@ -141,12 +142,18 @@ def test_real_cpp_multipart_selectively_repairs_one_missing_relay_fragment():
         assert _received_payloads(net, 3) == [payload]
         assert sum(result == 1 for result, _ping in net.app_acks(1)) == 1
 
-        expected = {index: 1 for index in range(8)}
-        expected[3] = 2
         # Distinct LCMM ids separate message-level selective retransmission from
-        # ordinary per-hop retries, which retain the same LCMM id.
-        assert _distinct_fragment_sends(net, (1, 2)) == expected
-        assert _distinct_fragment_sends(net, (2, 3)) == expected
+        # ordinary per-hop retries, which retain the same LCMM id. Fragment 3
+        # must be repaired. A final fragment can legitimately overtake at most a
+        # small number of earlier relay frames, so the first bitmap may also
+        # conservatively request one still-in-flight fragment; it must never
+        # restart the whole message.
+        for edge in ((1, 2), (2, 3)):
+            counts = _distinct_fragment_sends(net, edge)
+            assert counts[3] == 2
+            assert set(counts) == set(range(8))
+            assert all(value in (1, 2) for value in counts.values())
+            assert sum(value - 1 for value in counts.values()) <= 2
 
 
 def test_real_cpp_multipart_boundary_keeps_small_packet_wire_format():
@@ -338,10 +345,12 @@ def test_real_cpp_compressed_multipart_selectively_repairs_one_fragment():
         assert compressed
         assert all(frame[5] & DTPK_FLAG_COMPRESSED for frame in compressed)
 
-        expected = {index: 1 for index in range(10)}
-        expected[3] = 2
-        assert _distinct_fragment_sends(net, (1, 2)) == expected
-        assert _distinct_fragment_sends(net, (2, 3)) == expected
+        for edge in ((1, 2), (2, 3)):
+            counts = _distinct_fragment_sends(net, edge)
+            assert counts[3] == 2
+            assert set(counts) == set(range(10))
+            assert all(value in (1, 2) for value in counts.values())
+            assert sum(value - 1 for value in counts.values()) <= 2
 
 
 
@@ -357,7 +366,8 @@ def test_real_cpp_rejects_malformed_compression_without_app_delivery():
         malformed = (
             struct.pack("<BH", 1, 0x7110)
             + struct.pack(
-                "<BHHHHBB", 0x41, 0x3344, 0x1020, 1, 2,
+                "<BHHHHBB", 0x41, 0x3344,
+                net._node_origin_sequence[1], 1, 2,
                 0x01 | DTPK_FLAG_COMPRESSED, 255
             )
             + struct.pack("<HB", 100, 0x7F)
@@ -471,6 +481,8 @@ def test_real_cpp_corrupted_compressed_stream_is_visible_to_sender():
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self.corrupted = False
+            self.source_lcmm_ids = []
+            self.final_nack_flags = []
 
         def _start_tx(self, sender, tx, at):
             packet_type = tx.payload[LCMM_HEADER_SIZE] if len(tx.payload) > 3 else None
@@ -479,6 +491,12 @@ def test_real_cpp_corrupted_compressed_stream_is_visible_to_sender():
                 if len(tx.payload) > DTPK_FLAGS_OFFSET
                 else 0
             )
+            if sender == 1 and packet_type == DTPK_DATA_SINGLE:
+                self.source_lcmm_ids.append(
+                    int.from_bytes(tx.payload[1:3], "little")
+                )
+            if sender == 2 and tx.target == 1 and packet_type == 0x43:
+                self.final_nack_flags.append(flags)
             if (
                 not self.corrupted
                 and (sender, tx.target) == (1, 2)
@@ -505,5 +523,11 @@ def test_real_cpp_corrupted_compressed_stream_is_visible_to_sender():
         assert packet_id != 0
         assert net.corrupted
         assert _received_payloads(net, 2) == []
-        assert any(result == 0 for result, _ping in net.app_acks(1))
+        assert [result for result, _ping in net.app_acks(1)] == [0]
+        assert len(set(net.source_lcmm_ids)) == 1
+        assert net.final_nack_flags
+        assert all(
+            flags & DTPK_FLAG_NACK_FINAL_REJECT
+            for flags in net.final_nack_flags
+        )
         assert net.nodes[2].compression_stats()["decode_failures"] == 1

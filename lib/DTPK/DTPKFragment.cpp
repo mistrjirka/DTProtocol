@@ -45,9 +45,10 @@ uint32_t DTPK::multipartQueryDelayMs()
     uint32_t hops = 1;
     if (_multipartSend.active)
     {
-        RoutingRecord *route = _crystDatabase.getRouting(_multipartSend.target);
-        if (route)
-            hops = std::max<uint32_t>(1u, route->distance);
+        RoutingRecord route{};
+        bool reversePath = false;
+        if (resolveRoute(_multipartSend.target, 256u, route, reversePath))
+            hops = std::max<uint32_t>(1u, route.distance);
     }
     // A fragment may consume all five LCMM attempts on each relay before the
     // destination can truthfully report it missing. Poll only after that repair
@@ -161,6 +162,10 @@ void DTPK::sendFragmentStatus(
         static_cast<DTPKPacketFragmentStatus *>(malloc(wireSize));
     if (!status)
         return;
+    // Initialize both the fixed header and bitmap before field population. This
+    // makes masking the final partial bitmap byte safe even under future loop
+    // refactors and keeps allocation-failure/static-analysis behavior explicit.
+    memset(status, 0, wireSize);
 
     status->type = FRAGMENT_STATUS;
     status->id = id;
@@ -182,15 +187,18 @@ void DTPK::sendFragmentStatus(
     }
 
     uint16_t nextHop = lastHop;
-    if (nextHop == 0)
+    if (nextHop == 0 &&
+        !findReverseBreadcrumb(
+            originalSender, sourceSequence, id, nextHop))
     {
-        RoutingRecord *route = _crystDatabase.getRouting(originalSender);
-        if (!route)
+        RoutingRecord route{};
+        bool reversePath = false;
+        if (!resolveRoute(originalSender, 256u, route, reversePath))
         {
             free(status);
             return;
         }
-        nextHop = route->router;
+        nextHop = route.router;
     }
 
     addPacketToSendingQueue(
@@ -225,9 +233,23 @@ bool DTPK::queueMultipartFragment(uint8_t index)
 {
     if (!_multipartSend.active || index >= _multipartSend.fragmentCount)
         return false;
-    RoutingRecord *route = _crystDatabase.getRouting(_multipartSend.target);
-    if (!route)
+    RoutingRecord route{};
+    bool reversePath = false;
+    DTPKPacketWaiting *waiting = findWaitingPacket(
+        _multipartSend.id,
+        _multipartSend.sourceSequence,
+        _multipartSend.target);
+    const bool haveRoute = waiting
+        ? resolveRetryRoute(*waiting, route, reversePath)
+        : resolveRoute(_multipartSend.target, 256u, route, reversePath);
+    if (!haveRoute)
+    {
+        if (waiting)
+            waiting->routeRepairNeeded = true;
         return false;
+    }
+    if (waiting && route.router != waiting->failedRouter)
+        waiting->routeRepairNeeded = false;
 
     const size_t payloadBytes =
         expectedFragmentBytes(_multipartSend.totalSize, index);
@@ -255,7 +277,7 @@ bool DTPK::queueMultipartFragment(uint8_t index)
     addPacketToSendingQueue(
         reinterpret_cast<DTPKPacketUnknown *>(fragment),
         wireSize,
-        route->router,
+        route.router,
         10000,
         0,
         true,
@@ -269,9 +291,23 @@ bool DTPK::queueFragmentQuery()
 {
     if (!_multipartSend.active)
         return false;
-    RoutingRecord *route = _crystDatabase.getRouting(_multipartSend.target);
-    if (!route)
+    RoutingRecord route{};
+    bool reversePath = false;
+    DTPKPacketWaiting *waiting = findWaitingPacket(
+        _multipartSend.id,
+        _multipartSend.sourceSequence,
+        _multipartSend.target);
+    const bool haveRoute = waiting
+        ? resolveRetryRoute(*waiting, route, reversePath)
+        : resolveRoute(_multipartSend.target, 256u, route, reversePath);
+    if (!haveRoute)
+    {
+        if (waiting)
+            waiting->routeRepairNeeded = true;
         return false;
+    }
+    if (waiting && route.router != waiting->failedRouter)
+        waiting->routeRepairNeeded = false;
 
     DTPKPacketFragmentQuery *query =
         static_cast<DTPKPacketFragmentQuery *>(
@@ -295,7 +331,7 @@ bool DTPK::queueFragmentQuery()
     addPacketToSendingQueue(
         reinterpret_cast<DTPKPacketUnknown *>(query),
         sizeof(DTPKPacketFragmentQuery),
-        route->router,
+        route.router,
         5000,
         0,
         true,
@@ -417,12 +453,12 @@ void DTPK::parseFragmentPacket(const ReceivedPacket &packet)
             lastHop);
     }
     if (!assembly || assembly->totalSize != fragment->totalSize ||
-        assembly->fragmentCount != count)
+        assembly->fragmentCount != count ||
+        assembly->flags != fragment->flags)
         return;
 
     assembly->lastHop = lastHop;
     assembly->lastUpdate = _currentTime;
-    assembly->flags |= fragment->flags;
     if (!bitmapBit(assembly->received.data(), fragment->fragmentIndex))
     {
         DTPKPacketGeneric *application =
@@ -463,7 +499,8 @@ void DTPK::parseFragmentPacket(const ReceivedPacket &packet)
                     assembly->lastHop,
                     assembly->id,
                     assembly->sourceSequence,
-                    MAC::getInstance()->getId());
+                    MAC::getInstance()->getId(),
+                    true);
         }
         resetFragmentAssembly(*assembly);
         return;
@@ -560,6 +597,35 @@ void DTPK::parseFragmentStatusPacket(const ReceivedPacket &packet)
     {
         if (!bitmapBit(status->missing, static_cast<uint8_t>(index)))
             continue;
+
+        bool alreadyPending = false;
+        for (const DTPKPacketRequest &queued : _packetRequests)
+        {
+            if (!queued.packet || queued.packet->type != DATA_FRAGMENT ||
+                queued.packet->id != _multipartSend.id)
+                continue;
+            const DTPKPacketFragment *fragment =
+                reinterpret_cast<const DTPKPacketFragment *>(queued.packet);
+            if (fragment->sourceSequence == _multipartSend.sourceSequence &&
+                fragment->fragmentIndex == index)
+            {
+                alreadyPending = true;
+                break;
+            }
+        }
+        if (!alreadyPending)
+        {
+            const uint8_t marker = static_cast<uint8_t>(index + 1u);
+            alreadyPending = std::any_of(
+                _multipartLcmmIds.begin(),
+                _multipartLcmmIds.end(),
+                [marker](const std::pair<const uint16_t, uint8_t> &entry) {
+                    return entry.second == marker;
+                });
+        }
+        if (alreadyPending)
+            continue;
+
         _multipartSend.retransmit[index] = 1;
         missing = true;
     }

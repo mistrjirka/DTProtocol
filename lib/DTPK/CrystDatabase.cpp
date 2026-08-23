@@ -10,6 +10,12 @@ RoutingRecord *CrystDatabase::getRouting(uint16_t id)
     return it == routeCache.end() ? nullptr : &it->second;
 }
 
+const RoutingRecord *CrystDatabase::getRouting(uint16_t id) const
+{
+    auto it = routeCache.find(id);
+    return it == routeCache.end() ? nullptr : &it->second;
+}
+
 bool CrystDatabase::hasKnownDestination(uint16_t id) const
 {
     for (const auto &neighborEntry : routesByNeighbor)
@@ -17,6 +23,32 @@ bool CrystDatabase::hasKnownDestination(uint16_t id) const
         for (const Candidate &candidate : neighborEntry.second)
         {
             if (candidate.destination == id)
+                return true;
+        }
+    }
+    return false;
+}
+
+bool CrystDatabase::hasNewerKnownSequence(
+    uint16_t destination,
+    uint16_t sequence) const
+{
+    const auto selected = routeCache.find(destination);
+    if (selected != routeCache.end() &&
+        sequenceNewer(selected->second.sequence, sequence))
+        return true;
+
+    const auto feasible = feasibility.find(destination);
+    if (feasible != feasibility.end() &&
+        sequenceNewer(feasible->second.sequence, sequence))
+        return true;
+
+    for (const auto &neighborEntry : routesByNeighbor)
+    {
+        for (const Candidate &candidate : neighborEntry.second)
+        {
+            if (candidate.destination == destination &&
+                sequenceNewer(candidate.sequence, sequence))
                 return true;
         }
     }
@@ -87,6 +119,38 @@ bool CrystDatabase::getRepairNextHop(uint16_t destination,
 
     result = candidates.front().router;
     return true;
+}
+
+bool CrystDatabase::getFeasibleAlternateRoute(
+    uint16_t destination,
+    uint16_t avoidedRouter,
+    RoutingRecord &result) const
+{
+    bool found = false;
+    for (const auto &neighborEntry : routesByNeighbor)
+    {
+        if (neighborEntry.first == avoidedRouter)
+            continue;
+        for (const Candidate &candidate : neighborEntry.second)
+        {
+            if (candidate.destination != destination ||
+                candidate.distance >= DTPK_ROUTE_INFINITY ||
+                !candidateFeasible(candidate))
+                continue;
+            const RoutingRecord route{
+                candidate.router,
+                candidate.distance,
+                candidate.sequence};
+            if (!found || route.distance < result.distance ||
+                (route.distance == result.distance &&
+                 route.router < result.router))
+            {
+                result = route;
+                found = true;
+            }
+        }
+    }
+    return found;
 }
 
 bool CrystDatabase::sequenceNewer(uint16_t a, uint16_t b)

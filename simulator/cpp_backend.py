@@ -130,6 +130,15 @@ class CppNodeProcess:
             else:
                 self.events.append((parts[0], tuple(parts[1:])))
 
+    def set_debug_echo(self, suffix: bytes | None) -> None:
+        enabled = suffix is not None and len(suffix) > 0
+        encoded = suffix.hex() if enabled else "-"
+        self.command(f"ECHO {1 if enabled else 0} {encoded}")
+
+    def force_next_send_result(self, result: int, wait_ms: int = 0) -> None:
+        """Inject one host-MAC submission result for deterministic fault tests."""
+        self.command(f"MAC_RESULT {int(result) & 0xFF} {max(0, int(wait_ms))}")
+
     def tick(self, now_ms: float) -> List[Tx]:
         return self.command(f"TICK {int(now_ms)}")
 
@@ -153,6 +162,7 @@ class CppNodeProcess:
         payload: bytes = b"x",
         timeout_ms: int = 10000,
         e2e_ack: bool = True,
+        application_flags: int = 0,
     ) -> Tuple[int, List[Tx]]:
         """Start an application send and return RF work emitted in that turn.
 
@@ -163,9 +173,17 @@ class CppNodeProcess:
         """
         before = len(self.events)
         data = payload.hex() if payload else "-"
-        txs = self.command(
-            f"SEND {int(now_ms)} {target} {timeout_ms} {1 if e2e_ack else 0} {data}"
-        )
+        if application_flags:
+            command = (
+                f"SEND_FLAGS {int(now_ms)} {target} {timeout_ms} "
+                f"{1 if e2e_ack else 0} {int(application_flags) & 0xFF} {data}"
+            )
+        else:
+            command = (
+                f"SEND {int(now_ms)} {target} {timeout_ms} "
+                f"{1 if e2e_ack else 0} {data}"
+            )
+        txs = self.command(command)
         for kind, values in reversed(self.events[before:]):
             if kind == "SENDID":
                 return int(values[0]), txs
@@ -181,11 +199,31 @@ class CppNodeProcess:
         payload: bytes = b"x",
         timeout_ms: int = 10000,
         e2e_ack: bool = True,
+        application_flags: int = 0,
     ) -> int:
         packet_id, _txs = self.send_and_collect(
-            now_ms, target, payload, timeout_ms, e2e_ack
+            now_ms, target, payload, timeout_ms, e2e_ack, application_flags
         )
         return packet_id
+
+    def send_chain_and_collect(
+        self,
+        now_ms: float,
+        target: int,
+        first_payload: bytes,
+        second_payload: bytes,
+        timeout_ms: int = 10000,
+    ) -> Tuple[int, List[Tx]]:
+        before = len(self.events)
+        first = first_payload.hex() if first_payload else "-"
+        second = second_payload.hex() if second_payload else "-"
+        txs = self.command(
+            f"SEND_CHAIN {int(now_ms)} {target} {timeout_ms} {first} {second}"
+        )
+        for kind, values in reversed(self.events[before:]):
+            if kind == "SENDID":
+                return int(values[0]), txs
+        return 0, txs
 
     def compression_stats(self) -> Dict[str, int]:
         before = len(self.events)
@@ -208,6 +246,23 @@ class CppNodeProcess:
                 return dict(zip(names, (int(value) for value in values)))
         return {name: 0 for name in names}
 
+    def routes_with_sequence(
+        self, now_ms: float
+    ) -> Dict[int, Tuple[int, int, int]]:
+        before = len(self.events)
+        self.command(f"ROUTES_SEQ {int(now_ms)}")
+        for kind, values in reversed(self.events[before:]):
+            if kind != "ROUTES_SEQ":
+                continue
+            result: Dict[int, Tuple[int, int, int]] = {}
+            for value in values[1:]:
+                dest, via, distance, sequence = value.split(":")
+                result[int(dest)] = (
+                    int(via), int(distance), int(sequence)
+                )
+            return result
+        return {}
+
     def routes(self, now_ms: float) -> Dict[int, Tuple[int, int]]:
         before = len(self.events)
         self.command(f"ROUTES {int(now_ms)}")
@@ -222,16 +277,28 @@ class CppNodeProcess:
         return {}
 
     def close(self) -> None:
-        if self.proc.poll() is None:
-            try:
-                self.command("QUIT")
-            except Exception:
-                pass
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
+        if self.proc.poll() is not None:
+            return
+
+        graceful = False
+        try:
+            self.command("QUIT")
+            # QUIT makes the runner leave its input loop. Let normal process
+            # teardown flush sanitizers, coverage counters and stdio before
+            # using a signal as a fallback.
+            self.proc.wait(timeout=1)
+            graceful = True
+        except (Exception, subprocess.TimeoutExpired):
+            graceful = False
+
+        if graceful or self.proc.poll() is not None:
+            return
+        self.proc.terminate()
+        try:
+            self.proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+            self.proc.wait(timeout=1)
 
 
 class CppNetwork(EnvironmentKernel):
@@ -533,6 +600,7 @@ class CppNetwork(EnvironmentKernel):
         payload: bytes = b"hello",
         timeout_ms: int = 10000,
         e2e_ack: bool = True,
+        application_flags: int = 0,
     ) -> int:
         if not self.node_up.get(node_id, False):
             return 0
@@ -542,6 +610,27 @@ class CppNetwork(EnvironmentKernel):
             payload,
             timeout_ms,
             e2e_ack,
+            application_flags,
+        )
+        self._handle_txs(node_id, txs, self.now)
+        return packet_id
+
+    def send_chain(
+        self,
+        node_id: int,
+        target: int,
+        first_payload: bytes,
+        second_payload: bytes,
+        timeout_ms: int = 10000,
+    ) -> int:
+        if not self.node_up.get(node_id, False):
+            return 0
+        packet_id, txs = self.nodes[node_id].send_chain_and_collect(
+            self.now,
+            target,
+            first_payload,
+            second_payload,
+            timeout_ms,
         )
         self._handle_txs(node_id, txs, self.now)
         return packet_id

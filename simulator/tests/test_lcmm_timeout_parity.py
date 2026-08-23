@@ -23,7 +23,7 @@ def _net():
     return net, node
 
 
-def test_hop_timeout_base_matches_production_request_division():
+def test_hop_timeout_base_is_bounded_independently_from_application_deadline():
     net, _node = _net()
 
     cryst_req = Packet(
@@ -37,9 +37,12 @@ def test_hop_timeout_base_matches_production_request_division():
     )
     net._source_request_timeout_ms[(1, 3)] = 10_000
 
-    assert net._production_hop_timeout_base_ms(1, cryst_req) == 1000
-    assert net._production_hop_timeout_base_ms(1, relayed_data) == 1666
-    assert net._production_hop_timeout_base_ms(1, source_data) == 3333
+    assert net._production_hop_timeout_base_ms(1, cryst_req) == 3000
+    assert net._production_hop_timeout_base_ms(1, relayed_data) == 3000
+    assert net._production_hop_timeout_base_ms(1, source_data) == 3000
+
+    net._source_request_timeout_ms[(1, 3)] = 1200
+    assert net._production_hop_timeout_base_ms(1, source_data) == 1200
 
 
 def test_node_retry_query_uses_remaining_absolute_deadline():
@@ -56,7 +59,7 @@ def test_node_retry_query_uses_remaining_absolute_deadline():
     assert node.link_retry_timeout_ms(packet) == pytest.approx(1.0)
 
 
-def test_clear_attempt_deadline_includes_data_airtime_but_not_double_counts_cca_setup():
+def test_clear_attempt_deadline_includes_data_and_link_ack_airtime_without_double_counting_cca():
     net, node = _net()
     packet = Packet(
         "DATA",
@@ -90,6 +93,7 @@ def test_clear_attempt_deadline_includes_data_airtime_but_not_double_counts_cca_
         request_start
         + 3000
         + math.ceil(net.airtime_ms(frame_bytes))
+        + math.ceil(net.airtime_ms(8 + 3))
     )
     deadline = net._hop_deadline_ms[net._deadline_key(1, packet)]
     assert base_deadline + 25 <= deadline <= base_deadline + 250

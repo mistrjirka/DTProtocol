@@ -32,8 +32,20 @@ enum DTPKPacketFlags : uint8_t
 {
     DTPK_FLAG_NONE = 0,
     DTPK_FLAG_E2E_ACK_REQUESTED = 1 << 0,
-    DTPK_FLAG_COMPRESSED = 1 << 1
+    DTPK_FLAG_COMPRESSED = 1 << 1,
+    // Application-level loop marker used by diagnostic echo nodes. Relays and
+    // compression preserve it, while ordinary sendPacket() cannot set it.
+    DTPK_FLAG_DEBUG_ECHO = 1 << 2,
+    // NACK without this bit means a transient forwarding/route failure and may
+    // be retried with the same application identity. This bit means the final
+    // destination parsed the complete payload but could not accept it.
+    DTPK_FLAG_NACK_FINAL_REJECT = 1 << 3
 };
+
+// Applications may set only explicitly assigned application metadata bits.
+// Transport-owned ACK/compression bits are derived internally.
+static constexpr uint8_t DTPK_APPLICATION_FLAGS_MASK =
+    DTPK_FLAG_DEBUG_ECHO;
 
 enum DTPKCompressionCodec : uint8_t
 {
@@ -106,6 +118,20 @@ typedef struct __attribute__((packed))
     uint8_t flags;
     uint8_t hopLimit;
 } DTPKPacketHeader;
+
+// Extended transient-NACK body. `failedRouter` is rewritten by each upstream
+// relay to its own node ID, so the source learns which first-hop branch failed.
+typedef struct __attribute__((packed))
+{
+    DTPKPacketType type;
+    uint16_t id;
+    uint16_t sourceSequence;
+    uint16_t originalSender;
+    uint16_t finalTarget;
+    uint8_t flags;
+    uint8_t hopLimit;
+    uint16_t failedRouter;
+} DTPKPacketNack;
 
 typedef struct __attribute__((packed))
 {
@@ -188,6 +214,8 @@ typedef struct __attribute__((packed))
 static_assert(sizeof(DTPKPacketType) == 1, "packet type must be one wire byte");
 static_assert(sizeof(DTPKCompressedPayload) == 3,
               "v4 compression envelope must remain three bytes");
+static_assert(sizeof(DTPKPacketNack) == 13,
+              "v4 extended NACK must be 13 bytes");
 static_assert(sizeof(DTPKPacketCryst) == 11, "v4 CRYST header must be 11 bytes");
 static_assert(sizeof(DTPKPacketHello) == 7, "v4 HELLO must be 7 bytes");
 static_assert(sizeof(DTPKPacketCrystRequest) == 7,

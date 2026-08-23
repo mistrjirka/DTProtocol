@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -58,6 +59,8 @@ void service_protocol_once(bool initialized) {
 
 int main() {
     std::ios::sync_with_stdio(false);
+    bool debug_echo_enabled = false;
+    std::vector<uint8_t> debug_echo_suffix;
     std::cin.tie(nullptr);
     std::cout << "READY\n" << std::flush;
 
@@ -129,15 +132,64 @@ int main() {
                     static_cast<uint16_t>(origin_sequence == 0 ? 1 : origin_sequence),
                     mobile_hint != 0);
                 DTPK::getInstance()->setPacketReceivedCallback(
-                    [](DTPKPacketGeneric *packet, uint16_t size) {
+                    [&](DTPKPacketGeneric *packet, uint16_t size) {
                         const size_t header = sizeof(DTPKPacketGeneric);
                         const size_t payload_size = size > header ? size - header : 0;
                         std::cout << "APP_RX " << packet->originalSender << ' '
                                   << packet->finalTarget << ' ' << packet->id << ' '
                                   << (payload_size ? hex_encode(packet->data, payload_size) : "-")
+                                  << ' ' << static_cast<unsigned>(packet->flags)
                                   << '\n';
+                        if (!debug_echo_enabled ||
+                            (packet->flags & DTPK_FLAG_DEBUG_ECHO) != 0 ||
+                            debug_echo_suffix.empty() ||
+                            payload_size > DTPK::maximumMessageSize() ||
+                            debug_echo_suffix.size() >
+                                DTPK::maximumMessageSize() - payload_size)
+                            return;
+
+                        std::vector<uint8_t> reply;
+                        reply.reserve(payload_size + debug_echo_suffix.size());
+                        reply.insert(
+                            reply.end(), packet->data, packet->data + payload_size);
+                        reply.insert(
+                            reply.end(), debug_echo_suffix.begin(),
+                            debug_echo_suffix.end());
+                        const uint16_t echo_id =
+                            DTPK::getInstance()->sendPacketWithFlags(
+                                packet->originalSender,
+                                reply.data(),
+                                reply.size(),
+                                60000,
+                                DTPK_FLAG_DEBUG_ECHO,
+                                true,
+                                [](uint8_t result, uint16_t ping) {
+                                    std::cout << "ECHO_ACK "
+                                              << static_cast<unsigned>(result)
+                                              << ' ' << ping << '\n';
+                                });
+                        std::cout << "ECHOID " << echo_id << '\n';
                     });
                 initialized = true;
+                done();
+            } else if (command == "ECHO") {
+                unsigned enabled = 0;
+                std::string suffix_hex;
+                in >> enabled >> suffix_hex;
+                debug_echo_enabled = enabled != 0;
+                debug_echo_suffix =
+                    suffix_hex == "-" ? std::vector<uint8_t>{}
+                                      : hex_decode(suffix_hex);
+                std::cout << "ECHO " << (debug_echo_enabled ? 1 : 0)
+                          << ' ' << debug_echo_suffix.size() << '\n';
+                done();
+            } else if (command == "MAC_RESULT") {
+                unsigned result = 0;
+                uint32_t wait_ms = 0;
+                in >> result >> wait_ms;
+                hostsim::set_next_send_result(
+                    static_cast<uint8_t>(result), wait_ms);
+                std::cout << "MAC_RESULT " << result << ' ' << wait_ms << '\n';
                 done();
             } else if (command == "TICK") {
                 uint64_t now = 0;
@@ -169,25 +221,83 @@ int main() {
                 // release LCMM. Service that work in the same firmware turn.
                 service_protocol_once(initialized);
                 done();
-            } else if (command == "SEND") {
+            } else if (command == "SEND" || command == "SEND_FLAGS") {
                 uint64_t now = 0;
                 unsigned target = 0;
                 int timeout = 10000;
                 unsigned ack = 1;
+                unsigned applicationFlags = 0;
                 std::string hex;
-                in >> now >> target >> timeout >> ack >> hex;
+                in >> now >> target >> timeout >> ack;
+                if (command == "SEND_FLAGS")
+                    in >> applicationFlags;
+                in >> hex;
                 hostsim::set_time_ms(now);
                 auto payload = hex_decode(hex);
-                uint16_t id = DTPK::getInstance()->sendPacket(
-                    static_cast<uint16_t>(target), payload.data(), payload.size(),
-                    static_cast<int32_t>(timeout), ack != 0,
-                    [](uint8_t result, uint16_t ping) {
-                        std::cout << "APP_ACK " << static_cast<unsigned>(result)
-                                  << ' ' << ping << '\n';
-                    });
+                auto ackCallback = [](uint8_t result, uint16_t ping) {
+                    std::cout << "APP_ACK " << static_cast<unsigned>(result)
+                              << ' ' << ping << '\n';
+                };
+                uint16_t id = command == "SEND_FLAGS"
+                    ? DTPK::getInstance()->sendPacketWithFlags(
+                          static_cast<uint16_t>(target),
+                          payload.data(), payload.size(),
+                          static_cast<int32_t>(timeout),
+                          static_cast<uint8_t>(applicationFlags),
+                          ack != 0,
+                          ackCallback)
+                    : DTPK::getInstance()->sendPacket(
+                          static_cast<uint16_t>(target),
+                          payload.data(), payload.size(),
+                          static_cast<int32_t>(timeout),
+                          ack != 0,
+                          ackCallback);
                 std::cout << "SENDID " << id << '\n';
                 // Application code and protocol loop run back-to-back on the
                 // MCU; do not inject an artificial <=50 ms send-start delay.
+                service_protocol_once(initialized);
+                done();
+            } else if (command == "SEND_CHAIN") {
+                uint64_t now = 0;
+                unsigned target = 0;
+                int timeout = 10000;
+                std::string firstHex;
+                std::string secondHex;
+                in >> now >> target >> timeout >> firstHex >> secondHex;
+                hostsim::set_time_ms(now);
+                auto firstPayload = hex_decode(firstHex);
+                auto secondPayload = std::make_shared<std::vector<uint8_t>>(
+                    hex_decode(secondHex));
+                const uint16_t chainTarget = static_cast<uint16_t>(target);
+                const uint16_t id = DTPK::getInstance()->sendPacket(
+                    chainTarget,
+                    firstPayload.data(),
+                    firstPayload.size(),
+                    static_cast<int32_t>(timeout),
+                    true,
+                    [chainTarget, timeout, secondPayload](
+                        uint8_t result, uint16_t ping) {
+                        std::cout << "APP_ACK "
+                                  << static_cast<unsigned>(result)
+                                  << ' ' << ping << '\n';
+                        uint16_t chained = 0;
+                        if (result != 0)
+                        {
+                            chained = DTPK::getInstance()->sendPacket(
+                                chainTarget,
+                                secondPayload->data(),
+                                secondPayload->size(),
+                                static_cast<int32_t>(timeout),
+                                true,
+                                [](uint8_t chainedResult, uint16_t chainedPing) {
+                                    std::cout << "CHAIN_ACK "
+                                              << static_cast<unsigned>(chainedResult)
+                                              << ' ' << chainedPing << '\n';
+                                });
+                        }
+                        std::cout << "CHAINID " << chained << '\n';
+                    });
+                std::cout << "SENDID " << id << '\n';
                 service_protocol_once(initialized);
                 done();
             } else if (command == "COMPRESSION") {
@@ -205,6 +315,26 @@ int main() {
                           << stats.originalBytes << ' '
                           << stats.encodedBytes << ' '
                           << stats.estimatedAirtimeSavedMs << '\n';
+                done();
+            } else if (command == "ROUTES_SEQ") {
+                uint64_t now = 0;
+                in >> now;
+                hostsim::set_time_ms(now);
+                auto routes = DTPK::getInstance()->getNeighbours();
+                std::sort(routes.begin(), routes.end(),
+                          [](const NeighborRecord &a, const NeighborRecord &b) {
+                              return a.id < b.id;
+                          });
+                std::cout << "ROUTES_SEQ " << routes.size();
+                for (const auto &route : routes) {
+                    RoutingRecord details{};
+                    const bool found = DTPK::getInstance()->getRouteDetails(
+                        route.id, details);
+                    std::cout << ' ' << route.id << ':' << route.from << ':'
+                              << static_cast<unsigned>(route.distance) << ':'
+                              << (found ? details.sequence : 0);
+                }
+                std::cout << '\n';
                 done();
             } else if (command == "ROUTES") {
                 uint64_t now = 0;

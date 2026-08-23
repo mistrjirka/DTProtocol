@@ -1,7 +1,7 @@
 {
     "name": "DTProtocol",
-    "version": "4.0.0",
-    "description": "A library for communication protocols",
+    "version": "4.1.0",
+    "description": "Proactive multi-hop LoRa routing with reliable, multipart, compressed application messages",
     "keywords": [
         "communication",
         "protocols",

@@ -16,6 +16,20 @@
 #define DTPK_MAX_FRAGMENT_ASSEMBLIES 2u
 #endif
 
+// One replay window is retained per recently active application source. The
+// default covers the protocol's validated <=255-node network envelope while
+// preventing unrelated senders from evicting an in-flight retry identity.
+#ifndef DTPK_REPLAY_SOURCE_SLOTS
+#define DTPK_REPLAY_SOURCE_SLOTS 256u
+#endif
+
+// Bound only application transactions originated by this node. Relayed DATA,
+// ACK/NACK, crystallization and repair traffic use separate admission paths and
+// therefore cannot be starved by a faulty local application loop.
+#ifndef DTPK_MAX_LOCAL_PENDING_MESSAGES
+#define DTPK_MAX_LOCAL_PENDING_MESSAGES 8u
+#endif
+
 // Automatic compression is transparent and conservative. The source attempts
 // it only above the minimum size, verifies the encoded stream locally, and uses
 // it only when the configured LoRa PHY predicts strictly lower reliable-link

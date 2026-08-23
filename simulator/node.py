@@ -55,6 +55,9 @@ class Node:
         # One bounded source message and a bounded number of destination
         # assemblies mirror the production C++ memory policy.
         self.multipart_send: Optional[dict] = None
+        # Active source-side single-frame E2E transactions, keyed by
+        # (packet id, source incarnation, destination).
+        self.single_sends: Dict[Tuple[int, int, int], dict] = {}
         self.fragment_assemblies: Dict[Tuple[int, int, int], dict] = {}
         self.crashed_reason: Optional[str] = None
 
@@ -81,6 +84,7 @@ class Node:
         self.waiting_e2e = None
         self.delivered_ids.clear()
         self.multipart_send = None
+        self.single_sends.clear()
         self.fragment_assemblies.clear()
         self.crashed = False
         self.crashed_reason = None
@@ -287,6 +291,13 @@ class Node:
         if token != self.cryst_token or not self.up or self.crashed:
             return
         self.cryst_scheduled = False
+        self._queue_cryst_snapshot(None, reliable=False)
+
+    def _queue_cryst_snapshot(
+        self, target: Optional[int], *, reliable: bool
+    ) -> None:
+        if not self.up or self.crashed:
+            return
         self._update_feasibility_from_advertisement()
 
         ads: List[AdvertisedRoute] = []
@@ -321,9 +332,6 @@ class Node:
         )
 
         if self.profile.state_digest_requests:
-            # Mirror the production C++ 255-byte radio limit. The previous
-            # theoretical backend emitted one oversized full vector, silently
-            # capping stable line topologies at roughly one CRYST frame.
             max_dtpk_bytes = MAX_PACKET_SIZE - MAC_OVERHEAD - LCMM_OVERHEAD
             max_records = (max_dtpk_bytes - header_size) // record_size
             if max_records <= 0:
@@ -345,7 +353,15 @@ class Node:
                     chunk_index=chunk_index,
                     chunk_count=chunk_count,
                 )
-                self.enqueue(TxRequest(packet, None, lcmm_ack=False))
+                self.enqueue(
+                    TxRequest(
+                        packet,
+                        target,
+                        lcmm_ack=reliable,
+                        timeout_ms=5_000,
+                        priority=reliable,
+                    )
+                )
             return
 
         packet = Packet(
@@ -357,7 +373,15 @@ class Node:
             sender_sequence=self.origin_sequence,
             route_version=self.route_version,
         )
-        self.enqueue(TxRequest(packet, None, lcmm_ack=False))
+        self.enqueue(
+            TxRequest(
+                packet,
+                target,
+                lcmm_ack=reliable,
+                timeout_ms=5_000,
+                priority=reliable,
+            )
+        )
 
     def next_packet_id(self) -> int:
         self.packet_counter = (self.packet_counter + 1) & 0xFFFF
@@ -378,13 +402,14 @@ class Node:
             ):
                 return
         elif req.packet.kind == "CRYST" and req.packet.chunk_index == 0:
-            # The first chunk supersedes older snapshots; later chunks from the
-            # same snapshot must remain queued behind it. Preserve HELLO because
-            # liveness must not depend on completing a churn-heavy snapshot.
+            # Supersede only an older snapshot for the same destination class.
+            # A direct reliable response and the ordinary broadcast snapshot
+            # must be allowed to coexist, matching production C++ coalescing.
             self.txq = deque(
                 queued
                 for queued in self.txq
                 if queued.packet.kind != "CRYST"
+                or queued.next_hop != req.next_hop
             )
         elif req.packet.kind == "SEQ_REQ":
             for queued in self.txq:
@@ -418,6 +443,20 @@ class Node:
                 queued.priority = queued.priority or req.priority
                 return
 
+        if (
+            self.profile.single_e2e_retry
+            and req.packet.kind == "DATA"
+            and req.packet.e2e_ack_requested
+            and req.packet.original_sender != self.id
+        ):
+            identity = self._single_key(req.packet)
+            if any(
+                queued.packet.kind == "DATA"
+                and self._single_key(queued.packet) == identity
+                for queued in self.txq
+            ):
+                return
+
         # Preserve FIFO order inside each priority class. Selection, rather
         # than front insertion, gives responses precedence and a fairness quota
         # to repair traffic without reversing packets or starving snapshots.
@@ -442,14 +481,27 @@ class Node:
         response = repair = normal = None
         for index, req in enumerate(self.txq):
             if self.waiting_e2e is not None and self.profile.global_e2e_gate:
-                if not (
+                allowed = (
                     self.profile.ack_bypasses_e2e_gate
                     and req.packet.kind in (
                         "ACK", "NACK", "CRYST", "HELLO", "CRYST_REQ",
                         "SEQ_REQ", "DATA_FRAGMENT", "FRAGMENT_STATUS",
-                        "FRAGMENT_QUERY"
+                        "FRAGMENT_QUERY",
                     )
+                )
+                if (
+                    allowed
+                    and self.profile.defer_cryst_req_during_e2e
+                    and req.packet.kind == "CRYST_REQ"
+                    and not self._has_urgent_route_repair()
                 ):
+                    allowed = False
+                if (
+                    req.single_retry
+                    and self._single_key(req.packet) == self.waiting_e2e[:3]
+                ):
+                    allowed = True
+                if not allowed:
                     continue
             queue_class = self._tx_queue_class(req)
             if queue_class == 2 and response is None:
@@ -482,6 +534,47 @@ class Node:
         if index is None:
             return
         req = self._pop_tx_index(index)
+        if (
+            self.profile.refresh_route_before_send
+            and req.packet.kind in ("DATA", "DATA_FRAGMENT", "FRAGMENT_QUERY")
+            and req.packet.final_target is not None
+        ):
+            route = None
+            if req.packet.kind == "DATA":
+                state = self.single_sends.get(self._single_key(req.packet))
+                if state is not None:
+                    route = self._resolve_failure_aware_route(
+                        state["target"],
+                        state.get("failed_router"),
+                        state.get("retry_after", 0.0),
+                    )
+            elif self.multipart_send is not None:
+                state = self.multipart_send
+                route = self._resolve_failure_aware_route(
+                    state["target"],
+                    state.get("failed_router"),
+                    state.get("retry_after", 0.0),
+                )
+            if route is None:
+                route = self.routes.get(req.packet.final_target)
+            if route is not None:
+                req.next_hop = route.next_hop
+        if (
+            self.profile.single_e2e_retry
+            and req.dtpk_ack
+            and req.packet.kind == "DATA"
+        ):
+            self._begin_single_e2e(req)
+        if (
+            req.packet.kind == "DATA_FRAGMENT"
+            and self.multipart_send is not None
+            and req.packet.original_sender == self.id
+            and req.packet.packet_id == self.multipart_send["id"]
+            and req.packet.sender_sequence
+            == self.multipart_send["source_sequence"]
+        ):
+            self.multipart_send["in_flight"].add(req.packet.fragment_index)
+
         queue_class = self._tx_queue_class(req)
         if queue_class == 1:
             self.repair_burst = min(255, self.repair_burst + 1)
@@ -508,6 +601,18 @@ class Node:
                     kind=req.packet.kind,
                 )
             if (
+                req.packet.kind == "DATA_FRAGMENT"
+                and self.multipart_send is not None
+                and req.packet.original_sender == self.id
+                and req.packet.packet_id == self.multipart_send["id"]
+                and req.packet.sender_sequence
+                == self.multipart_send["source_sequence"]
+            ):
+                self.multipart_send["in_flight"].discard(
+                    req.packet.fragment_index
+                )
+
+            if (
                 req.packet.kind in ("DATA_FRAGMENT", "FRAGMENT_QUERY")
                 and self.multipart_send is not None
                 and self.multipart_send["id"] == req.packet.packet_id
@@ -517,7 +622,54 @@ class Node:
                 and req.packet.final_target == self.multipart_send["target"]
             ):
                 self._schedule_multipart_query(self._multipart_query_delay_ms())
-            if req.dtpk_ack and success:
+            if (
+                req.packet.kind in ("DATA_FRAGMENT", "FRAGMENT_QUERY")
+                and self.multipart_send is not None
+                and req.packet.original_sender == self.id
+                and req.packet.packet_id == self.multipart_send["id"]
+                and req.packet.sender_sequence
+                == self.multipart_send["source_sequence"]
+            ):
+                self.multipart_send["last_router"] = req.next_hop
+                if not success:
+                    self.multipart_send["failed_router"] = req.next_hop
+                    self.multipart_send["route_repair_needed"] = True
+                    self.multipart_send["retry_after"] = (
+                        self.sim.now + DTPK_SINGLE_LINK_FAILURE_BACKOFF_MS
+                    )
+            if (
+                not success
+                and req.failure_previous_hop is not None
+                and req.packet.kind in ("DATA", "DATA_FRAGMENT")
+                and req.packet.original_sender is not None
+                and req.packet.final_target is not None
+            ):
+                nack = Packet(
+                    "NACK",
+                    req.packet.packet_id,
+                    original_sender=req.packet.final_target,
+                    final_target=req.packet.original_sender,
+                    sender_sequence=req.packet.sender_sequence,
+                    wire_dtpk_size=DTPK_NACK_HEADER,
+                    hop_limit=DTPK_DEFAULT_HOP_LIMIT,
+                    nack_final_reject=False,
+                    failed_router=self.id,
+                )
+                self.sim.metrics.nacks += 1
+                self.enqueue(
+                    TxRequest(
+                        nack,
+                        req.failure_previous_hop,
+                        lcmm_ack=True,
+                        priority=True,
+                    )
+                )
+            self._single_link_completed(req, success)
+            if (
+                req.dtpk_ack
+                and success
+                and not self.profile.single_e2e_retry
+            ):
                 self.waiting_e2e = (
                     req.packet.packet_id,
                     req.packet.sender_sequence,
@@ -560,7 +712,10 @@ class Node:
             return
         if self.waiting_e2e[:2] != (packet_id, source_sequence):
             return
+        key = self.waiting_e2e[:3]
         self.waiting_e2e = None
+        if self.profile.single_e2e_retry:
+            self._finish_single_e2e(key)
         if (
             self.multipart_send is not None
             and self.multipart_send["id"] == packet_id
@@ -737,11 +892,9 @@ class Node:
             if self.rebuild_routes():
                 self.schedule_cryst("cryst_request_direct_route")
 
-        # The requester already learned our digest from HELLO, and accepting
-        # this request establishes its direct route here. Both route changes
-        # schedule snapshots; a reverse request would create a priority ping-pong
-        # that starves the requested snapshots.
-        self.schedule_cryst("state_request")
+        # State repair is an immediate reliable direct response. Ordinary
+        # topology propagation remains the independently jittered broadcast path.
+        self._queue_cryst_snapshot(previous_hop, reliable=True)
 
     # ------------------------------------------------------------------
     # Sequence repair: reliable directed request, broadcast only as fallback
@@ -809,10 +962,21 @@ class Node:
             return
 
         route = self.routes.get(dest)
-        if route is not None and not sequence_newer(
-            requested_sequence, route.sequence
-        ):
+        if route is not None:
+            # SEQ_REQ repairs route starvation, not generation uniformity. A
+            # feasible older route may legitimately win on metric while a newer
+            # candidate exists. Chasing the requested generation after routing
+            # has recovered causes an endless destination-sequence storm.
             self.pending_seq_requests.pop(dest, None)
+            self.txq = deque(
+                request
+                for request in self.txq
+                if not (
+                    request.packet.kind == "SEQ_REQ"
+                    and request.packet.original_sender == self.id
+                    and request.packet.final_target == dest
+                )
+            )
             return
 
         known = any(
@@ -823,7 +987,9 @@ class Node:
             self.pending_seq_requests.pop(dest, None)
             return
 
-        flood = (pending[1] + 1) % 8 == 0
+        # Production sends each hop once, so use an early periodic flood to
+        # escape a stale directed candidate without link-layer amplification.
+        flood = (pending[1] + 1) % 4 == 0
         next_hop = None if flood else self._sequence_request_next_hop(dest)
 
         request = Packet(
@@ -856,7 +1022,10 @@ class Node:
             TxRequest(
                 request,
                 next_hop,
-                lcmm_ack=next_hop is not None,
+                # SEQ_REQ already has persistent logical retry with
+                # exponential backoff and periodic flood escape. Per-hop LCMM
+                # retries multiply repair traffic and delay useful snapshots.
+                lcmm_ack=False,
                 timeout_ms=3_000,
                 priority=True,
             )
@@ -915,7 +1084,9 @@ class Node:
             TxRequest(
                 forwarded,
                 next_hop,
-                lcmm_ack=next_hop is not None,
+                # Forward each repair wave once. The originator retries the
+                # logical request if this hop is lost.
+                lcmm_ack=False,
                 timeout_ms=3_000,
                 priority=True,
             )
@@ -1244,6 +1415,7 @@ class Node:
             if self.route_version == 0:
                 self.route_version = 1
             self.sim.metrics.route_changes += 1
+            self._retry_single_on_route_change()
 
         # Feasibility provides safety by refusing a route that could point back
         # into the forwarding DAG. If that refusal is the only reason a known
@@ -1283,6 +1455,223 @@ class Node:
             return 0
         offset = index * DTPK_FRAGMENT_PAYLOAD_SIZE
         return min(DTPK_FRAGMENT_PAYLOAD_SIZE, total_size - offset)
+
+    @staticmethod
+    def _single_key(packet: Packet) -> Tuple[int, int, int]:
+        return (
+            packet.packet_id,
+            packet.sender_sequence,
+            packet.final_target or 0,
+        )
+
+    def _feasible_alternate_route(
+        self, target: int, avoided_router: Optional[int]
+    ) -> Optional[Route]:
+        candidates = self._route_candidates().get(target, [])
+        usable = [
+            route
+            for route in candidates
+            if route.next_hop != avoided_router
+            and (
+                not self.profile.feasibility_condition
+                or self._is_feasible(target, route)
+            )
+        ]
+        return min(
+            usable,
+            key=lambda route: (route.distance, route.next_hop),
+            default=None,
+        )
+
+    def _resolve_failure_aware_route(
+        self,
+        target: int,
+        failed_router: Optional[int],
+        retry_after: float = 0.0,
+    ) -> Optional[Route]:
+        selected = self.routes.get(target)
+        if selected is not None and (
+            failed_router is None or selected.next_hop != failed_router
+        ):
+            return selected
+        if failed_router is not None:
+            alternate = self._feasible_alternate_route(target, failed_router)
+            if alternate is not None:
+                return alternate
+            if selected is not None and self.sim.now + 1e-9 >= retry_after:
+                return selected
+        return selected if failed_router is None else None
+
+    def _has_urgent_route_repair(self) -> bool:
+        if any(
+            state.get("route_repair_needed", False)
+            for state in self.single_sends.values()
+        ):
+            return True
+        return bool(
+            self.multipart_send is not None
+            and self.multipart_send.get("route_repair_needed", False)
+        )
+
+    def _single_retry_delay_ms(self, target: int) -> float:
+        route = self.routes.get(target)
+        hops = max(1, route.distance if route is not None else 1)
+        return float(
+            min(
+                DTPK_SINGLE_RETRY_MAX_MS,
+                DTPK_SINGLE_RETRY_BASE_MS
+                + hops * DTPK_SINGLE_RETRY_PER_HOP_MS,
+            )
+        )
+
+    @staticmethod
+    def _single_failure_backoff_ms(retry_count: int) -> float:
+        return float(
+            DTPK_SINGLE_LINK_FAILURE_BACKOFF_MS
+            * min(max(1, retry_count + 1), 6)
+        )
+
+    def _schedule_single_retry(self, state: dict, delay_ms: float) -> None:
+        state["retry_token"] += 1
+        token = state["retry_token"]
+        delay = max(0.0, float(delay_ms))
+        state["next_retry_at"] = self.sim.now + delay
+        key = (state["id"], state["source_sequence"], state["target"])
+        self.sim.schedule(delay, self._single_retry_tick, key, token)
+
+    def _begin_single_e2e(self, req: TxRequest) -> None:
+        packet = req.packet
+        key = self._single_key(packet)
+        if key in self.single_sends:
+            return
+        timeout = max(1.0, float(req.timeout_ms))
+        state = {
+            "id": packet.packet_id,
+            "source_sequence": packet.sender_sequence,
+            "target": packet.final_target or 0,
+            "packet": packet.clone(),
+            "deadline": self.sim.now + timeout,
+            "next_retry_at": 0.0,
+            "retry_count": 0,
+            "last_router": req.next_hop,
+            "failed_router": None,
+            "route_repair_needed": False,
+            "retry_after": 0.0,
+            "retry_queued": True,
+            "retry_token": 0,
+        }
+        self.single_sends[key] = state
+        self.waiting_e2e = (
+            packet.packet_id,
+            packet.sender_sequence,
+            packet.final_target or 0,
+            state["deadline"],
+        )
+        self.wait_token += 1
+        wait_token = self.wait_token
+        self.sim.schedule(
+            timeout,
+            self._e2e_timeout,
+            wait_token,
+            packet.packet_id,
+            packet.sender_sequence,
+        )
+        self._schedule_single_retry(
+            state, self._single_retry_delay_ms(state["target"])
+        )
+
+    def _single_link_completed(self, req: TxRequest, success: bool) -> None:
+        if not self.profile.single_e2e_retry or req.packet.kind != "DATA":
+            return
+        key = self._single_key(req.packet)
+        state = self.single_sends.get(key)
+        if state is None:
+            return
+        state["retry_queued"] = False
+        state["last_router"] = req.next_hop
+        if not success:
+            state["failed_router"] = req.next_hop
+            state["route_repair_needed"] = True
+            delay = self._single_failure_backoff_ms(state["retry_count"])
+            state["retry_after"] = self.sim.now + delay
+            self._schedule_single_retry(state, delay)
+
+    def _single_retry_tick(
+        self, key: Tuple[int, int, int], token: int
+    ) -> None:
+        state = self.single_sends.get(key)
+        if state is None or state["retry_token"] != token:
+            return
+        if self.waiting_e2e is None or self.waiting_e2e[:3] != key:
+            return
+        if state["deadline"] - self.sim.now <= DTPK_SINGLE_RETRY_MIN_REMAINING_MS:
+            return
+        if state["retry_queued"]:
+            self._schedule_single_retry(state, 1_000.0)
+            return
+
+        route = self._resolve_failure_aware_route(
+            state["target"],
+            state.get("failed_router"),
+            state.get("retry_after", 0.0),
+        )
+        if route is None:
+            state["route_repair_needed"] = True
+            self._schedule_single_retry(
+                state,
+                self._single_failure_backoff_ms(state["retry_count"]),
+            )
+            return
+
+        packet = state["packet"].clone()
+        packet.hop_limit = DTPK_DEFAULT_HOP_LIMIT
+        self.enqueue(
+            TxRequest(
+                packet,
+                route.next_hop,
+                lcmm_ack=True,
+                timeout_ms=max(1, int(state["deadline"] - self.sim.now)),
+                single_retry=True,
+            )
+        )
+        state["retry_queued"] = True
+        state["last_router"] = route.next_hop
+        if route.next_hop != state.get("failed_router"):
+            state["route_repair_needed"] = False
+        state["retry_count"] += 1
+        self._schedule_single_retry(
+            state, self._single_retry_delay_ms(state["target"])
+        )
+
+    def _retry_single_on_route_change(self) -> None:
+        if not self.profile.single_e2e_retry:
+            return
+        for state in self.single_sends.values():
+            if state["retry_queued"]:
+                continue
+            key = (state["id"], state["source_sequence"], state["target"])
+            if self.waiting_e2e is None or self.waiting_e2e[:3] != key:
+                continue
+            route = self._resolve_failure_aware_route(
+                state["target"],
+                state.get("failed_router"),
+                state.get("retry_after", 0.0),
+            )
+            if route is not None and route.next_hop != state["last_router"]:
+                self._schedule_single_retry(state, 0.0)
+
+    def _finish_single_e2e(self, key: Tuple[int, int, int]) -> None:
+        state = self.single_sends.pop(key, None)
+        if state is not None:
+            state["retry_token"] += 1
+        self.txq = deque(
+            req
+            for req in self.txq
+            if not (
+                req.single_retry
+                and self._single_key(req.packet) == key
+            )
+        )
 
     def _multipart_query_delay_ms(self) -> float:
         if self.multipart_send is None:
@@ -1327,10 +1716,18 @@ class Node:
         state = self.multipart_send
         if state is None:
             return False
-        route = self.routes.get(state["target"])
+        route = self._resolve_failure_aware_route(
+            state["target"],
+            state.get("failed_router"),
+            state.get("retry_after", 0.0),
+        )
         payload_bytes = self._fragment_payload_bytes(state["total_size"], index)
         if route is None or payload_bytes <= 0:
+            state["route_repair_needed"] = True
             return False
+        state["last_router"] = route.next_hop
+        if route.next_hop != state.get("failed_router"):
+            state["route_repair_needed"] = False
         packet = Packet(
             "DATA_FRAGMENT",
             state["id"],
@@ -1369,9 +1766,17 @@ class Node:
         state = self.multipart_send
         if state is None:
             return False
-        route = self.routes.get(state["target"])
+        route = self._resolve_failure_aware_route(
+            state["target"],
+            state.get("failed_router"),
+            state.get("retry_after", 0.0),
+        )
         if route is None:
+            state["route_repair_needed"] = True
             return False
+        state["last_router"] = route.next_hop
+        if route.next_hop != state.get("failed_router"):
+            state["route_repair_needed"] = False
         query_id = state["next_query_id"]
         state["next_query_id"] = (query_id + 1) & 0xFFFF or 1
         packet = Packet(
@@ -1582,10 +1987,19 @@ class Node:
         ):
             return
         state["last_status_query_id"] = packet.query_id
+        queued_indices = {
+            request.packet.fragment_index
+            for request in self.txq
+            if request.packet.kind == "DATA_FRAGMENT"
+            and request.packet.packet_id == state["id"]
+            and request.packet.sender_sequence == state["source_sequence"]
+        }
         state["retransmit"].update(
             index
             for index in packet.missing_fragments
             if 0 <= index < state["fragment_count"]
+            and index not in queued_indices
+            and index not in state["in_flight"]
         )
         self._pump_multipart()
         self.sim.schedule(0, self.pump)
@@ -1656,6 +2070,11 @@ class Node:
             "next_query_id": 1,
             "last_status_query_id": -1,
             "query_token": 0,
+            "last_router": route.next_hop,
+            "failed_router": None,
+            "route_repair_needed": False,
+            "retry_after": 0.0,
+            "in_flight": set(),
         }
         self.waiting_e2e = (
             pid,
@@ -1724,7 +2143,53 @@ class Node:
             )
             return
 
+        key = self.waiting_e2e[:3]
+        if (
+            not positive
+            and self.profile.transient_route_nack
+            and not packet.nack_final_reject
+        ):
+            state = self.single_sends.get(key)
+            if state is not None:
+                state["retry_queued"] = False
+                state["failed_router"] = (
+                    packet.failed_router
+                    if packet.failed_router is not None
+                    else state.get("last_router")
+                )
+                state["route_repair_needed"] = True
+                delay = self._single_failure_backoff_ms(state["retry_count"])
+                state["retry_after"] = self.sim.now + delay
+                self._schedule_single_retry(state, delay)
+            elif (
+                self.multipart_send is not None
+                and self.multipart_send["id"] == packet.packet_id
+                and self.multipart_send["source_sequence"]
+                == packet.sender_sequence
+            ):
+                self.multipart_send["failed_router"] = (
+                    packet.failed_router
+                    if packet.failed_router is not None
+                    else self.multipart_send.get("last_router")
+                )
+                self.multipart_send["route_repair_needed"] = True
+                delay = float(DTPK_SINGLE_LINK_FAILURE_BACKOFF_MS)
+                self.multipart_send["retry_after"] = self.sim.now + delay
+                # Do not pull the existing query deadline forward. Production
+                # C++ keeps the deadline established by the final source-side
+                # fragment transaction, allowing already queued downstream
+                # fragments to drain before the missing bitmap is sampled.
+            self.sim.log(
+                "e2e_nack_transient",
+                node=self.id,
+                packet_id=packet.packet_id,
+            )
+            self.sim.schedule(0, self.pump)
+            return
+
         self.waiting_e2e = None
+        if self.profile.single_e2e_retry:
+            self._finish_single_e2e(key)
         if (
             self.multipart_send is not None
             and self.multipart_send["id"] == packet.packet_id
@@ -1747,6 +2212,7 @@ class Node:
                 "e2e_nack",
                 node=self.id,
                 packet_id=packet.packet_id,
+                final_reject=packet.nack_final_reject,
             )
         self.sim.schedule(0, self.pump)
 
@@ -1758,11 +2224,12 @@ class Node:
             if packet.kind in ("DATA", "DATA_FRAGMENT") and packet.original_sender is not None:
                 nack = Packet(
                     "NACK", packet.packet_id,
-                    original_sender=self.id,
+                    original_sender=packet.final_target,
                     final_target=packet.original_sender,
                     sender_sequence=packet.sender_sequence,
-                    wire_dtpk_size=DTPK_GENERIC_HEADER,
+                    wire_dtpk_size=DTPK_NACK_HEADER,
                     hop_limit=DTPK_DEFAULT_HOP_LIMIT,
+                    failed_router=self.id,
                 )
                 self.sim.metrics.nacks += 1
                 self.enqueue(TxRequest(
@@ -1776,11 +2243,12 @@ class Node:
                 nack = Packet(
                     "NACK",
                     packet.packet_id,
-                    original_sender=self.id,
+                    original_sender=packet.final_target,
                     final_target=packet.original_sender,
                     sender_sequence=packet.sender_sequence,
-                    wire_dtpk_size=DTPK_GENERIC_HEADER,
+                    wire_dtpk_size=DTPK_NACK_HEADER,
                     hop_limit=DTPK_DEFAULT_HOP_LIMIT,
+                    failed_router=self.id,
                 )
                 self.sim.metrics.nacks += 1
                 self.enqueue(
@@ -1795,6 +2263,8 @@ class Node:
 
         forwarded = packet.clone()
         forwarded.hop_limit -= 1
+        if forwarded.kind == "NACK" and not forwarded.nack_final_reject:
+            forwarded.failed_router = self.id
         if self.profile.forwarding_size_bug:
             forwarded.wire_dtpk_size = (
                 packet.wire_dtpk_size
@@ -1809,6 +2279,11 @@ class Node:
                 priority=packet.kind in (
                     "ACK", "NACK", "CRYST_REQ",
                     "FRAGMENT_STATUS", "FRAGMENT_QUERY"
+                ),
+                failure_previous_hop=(
+                    previous_hop
+                    if packet.kind in ("DATA", "DATA_FRAGMENT")
+                    else None
                 ),
             )
         )

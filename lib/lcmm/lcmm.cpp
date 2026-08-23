@@ -396,11 +396,17 @@ LCMM::ACKWaitingSingle LCMM::prepareAckWaitingSingle(
   // by up to a complete LoRa symbol group.
   const uint16_t fullFrameBytes = static_cast<uint16_t>(
       MAC_OVERHEAD + sizeof(LCMMPacketData) + static_cast<size_t>(size));
-  const uint32_t airtimeMs =
+  const uint16_t ackFrameBytes = static_cast<uint16_t>(
+      MAC_OVERHEAD + sizeof(LCMMPacketResponse) + sizeof(uint16_t));
+  const uint32_t dataAirtimeMs =
       MAC::getInstance()->estimateFrameAirtimeMs(fullFrameBytes);
+  const uint32_t ackAirtimeMs =
+      MAC::getInstance()->estimateFrameAirtimeMs(ackFrameBytes);
+  const uint64_t exchangeAirtimeMs =
+      static_cast<uint64_t>(dataAirtimeMs) + ackAirtimeMs;
 
   const uint64_t timeoutWithAirtime =
-      static_cast<uint64_t>(timeout) + airtimeMs;
+      static_cast<uint64_t>(timeout) + exchangeAirtimeMs;
   callbackStruct.timeout = clampTimeoutToInt(timeoutWithAirtime);
   callbackStruct.id = packet->id;
   callbackStruct.packet = packet;
@@ -409,7 +415,8 @@ LCMM::ACKWaitingSingle LCMM::prepareAckWaitingSingle(
   const int64_t elapsedInsideSend =
       static_cast<int64_t>(timeAfterSending) - static_cast<int64_t>(timeBeforeSending);
   const int64_t initialTime =
-      static_cast<int64_t>(timeout) + static_cast<int64_t>(airtimeMs) +
+      static_cast<int64_t>(timeout) +
+      static_cast<int64_t>(exchangeAirtimeMs) +
       static_cast<int64_t>(retryJitterMs()) - elapsedInsideSend;
   callbackStruct.timeLeft =
       initialTime <= 1

@@ -21,10 +21,17 @@ public:
     explicit CrystDatabase(uint16_t id);
 
     RoutingRecord *getRouting(uint16_t id);
+    const RoutingRecord *getRouting(uint16_t id) const;
     bool hasKnownDestination(uint16_t id) const;
+    bool hasNewerKnownSequence(uint16_t destination,
+                               uint16_t sequence) const;
     bool getRepairNextHop(uint16_t destination,
                           uint16_t avoidedRouter,
                           uint16_t &result) const;
+    bool getFeasibleAlternateRoute(
+        uint16_t destination,
+        uint16_t avoidedRouter,
+        RoutingRecord &result) const;
 
     // A HELLO proves the direct neighbour alive. If `invalidateIndirect` is
     // true (new incarnation / no full-state knowledge), all old indirect
