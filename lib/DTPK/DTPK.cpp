@@ -9,7 +9,7 @@ DTPK *DTPK::dtpk = nullptr;
 bool DTPK::initialize(uint8_t KLimit, uint16_t originSequence, bool mobileHint)
 {
     // KLimit belonged to the pre-v2 crystallization-session algorithm. Keep the
-    // parameter for source compatibility, but v3 has no session window.
+    // parameter for source compatibility, but v4 has no session window.
     (void)KLimit;
     MAC *mac = MAC::getInstance();
     if (!mac || !mac->isReady())

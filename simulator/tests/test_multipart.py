@@ -1,4 +1,6 @@
 import pathlib
+import random
+import struct
 import sys
 from collections import defaultdict
 
@@ -15,14 +17,20 @@ pytestmark = pytest.mark.skipif(
     reason="host C++ node not built",
 )
 
-DTPK_DATA_SINGLE = 0x31
-DTPK_DATA_FRAGMENT = 0x37
+DTPK_DATA_SINGLE = 0x41
+DTPK_DATA_FRAGMENT = 0x47
+DTPK_FLAG_COMPRESSED = 0x02
 LCMM_HEADER_SIZE = 3
+DTPK_FLAGS_OFFSET = LCMM_HEADER_SIZE + 9
 FRAGMENT_INDEX_OFFSET = LCMM_HEADER_SIZE + 13
 
 
 def _payload(size: int) -> bytes:
-    return bytes((index * 37 + 11) & 0xFF for index in range(size))
+    # A deterministic but non-periodic binary fixture. The previous affine byte
+    # sequence repeated every 256 bytes and was correctly compressed by v4,
+    # which made it unsuitable for raw multipart regression tests.
+    generator = random.Random(0xD7A40000 + size)
+    return bytes(generator.getrandbits(8) for _ in range(size))
 
 
 class FragmentTraceNetwork(CppNetwork):
@@ -47,8 +55,21 @@ class FragmentTraceNetwork(CppNetwork):
             else None
         )
         if packet_type in (DTPK_DATA_SINGLE, DTPK_DATA_FRAGMENT):
+            flags = (
+                tx.payload[DTPK_FLAGS_OFFSET]
+                if len(tx.payload) > DTPK_FLAGS_OFFSET
+                else 0
+            )
             self.fragment_frames.append(
-                (sender, tx.target, packet_type, fragment_index, lcmm_id, len(tx.payload))
+                (
+                    sender,
+                    tx.target,
+                    packet_type,
+                    fragment_index,
+                    lcmm_id,
+                    flags,
+                    len(tx.payload),
+                )
             )
         if (
             self.forced_edge == (sender, tx.target)
@@ -73,7 +94,7 @@ def _received_payloads(net, node_id):
 
 def _distinct_fragment_sends(net, edge):
     result = defaultdict(set)
-    for sender, target, packet_type, index, lcmm_id, _size in net.fragment_frames:
+    for sender, target, packet_type, index, lcmm_id, _flags, _size in net.fragment_frames:
         if (sender, target) == edge and packet_type == DTPK_DATA_FRAGMENT:
             result[index].add(lcmm_id)
     return {index: len(ids) for index, ids in sorted(result.items())}
@@ -183,3 +204,306 @@ def test_real_cpp_multipart_delivers_configured_16k_maximum():
             index: 1 for index in range(72)
         }
         assert max(size for *_prefix, size in net.fragment_frames) <= 247
+
+
+
+def test_real_cpp_auto_compresses_only_when_radio_airtime_drops():
+    compressible = (
+        b'{"node":7,"status":"online","message":"hello mesh","battery":91}\n'
+        * 80
+    )
+    incompressible = _payload(1000)
+
+    with FragmentTraceNetwork(seed=70_006, tick_ms=50) as net:
+        net.add_node(1)
+        net.add_node(2)
+        net.add_link(1, 2, latency_ms=0, jitter_ms=0)
+        net.run(60_000)
+
+        packet_id = net.send(
+            1, 2, compressible, timeout_ms=180_000, e2e_ack=True
+        )
+        net.run(180_000)
+        assert packet_id != 0
+        assert _received_payloads(net, 2) == [compressible]
+        compressed_frames = [
+            frame for frame in net.fragment_frames if frame[0:2] == (1, 2)
+        ]
+        assert compressed_frames
+        assert all(frame[5] & DTPK_FLAG_COMPRESSED for frame in compressed_frames)
+        raw_fragment_count = (len(compressible) + 229) // 230
+        assert len({frame[4] for frame in compressed_frames}) < raw_fragment_count
+        stats_after_compressed = net.nodes[1].compression_stats()
+        assert stats_after_compressed["attempts"] == 1
+        assert stats_after_compressed["selected"] == 1
+        assert stats_after_compressed["original_bytes"] == len(compressible)
+        assert 0 < stats_after_compressed["encoded_bytes"] < len(compressible)
+        assert stats_after_compressed["estimated_airtime_saved_ms"] > 0
+
+        net.fragment_frames.clear()
+        packet_id = net.send(
+            1, 2, incompressible, timeout_ms=180_000, e2e_ack=True
+        )
+        net.run(300_000)
+        assert packet_id != 0
+        assert _received_payloads(net, 2) == [compressible, incompressible]
+        raw_frames = [
+            frame for frame in net.fragment_frames if frame[0:2] == (1, 2)
+        ]
+        assert raw_frames
+        assert all((frame[5] & DTPK_FLAG_COMPRESSED) == 0 for frame in raw_frames)
+        assert _distinct_fragment_sends(net, (1, 2)) == {
+            index: 1 for index in range(5)
+        }
+        stats_after_random = net.nodes[1].compression_stats()
+        assert stats_after_random["attempts"] == 2
+        assert stats_after_random["selected"] == 1
+        assert stats_after_random["candidate_too_large"] == 1
+        assert stats_after_random["codec_failures"] == 0
+        assert stats_after_random["verification_failures"] == 0
+
+
+def test_real_cpp_compression_can_turn_multipart_into_one_frame():
+    payload = b'A' * 300
+    with FragmentTraceNetwork(seed=70_007, tick_ms=50) as net:
+        net.add_node(1)
+        net.add_node(2)
+        net.add_link(1, 2, latency_ms=0, jitter_ms=0)
+        net.run(60_000)
+
+        packet_id = net.send(1, 2, payload, timeout_ms=60_000, e2e_ack=True)
+        net.run(120_000)
+        assert packet_id != 0
+        assert _received_payloads(net, 2) == [payload]
+        data_frames = [
+            frame for frame in net.fragment_frames if frame[0:2] == (1, 2)
+        ]
+        assert len({frame[4] for frame in data_frames}) == 1
+        assert data_frames[0][2] == DTPK_DATA_SINGLE
+        assert data_frames[0][5] & DTPK_FLAG_COMPRESSED
+
+
+def test_real_cpp_tiny_payload_skips_compression_attempt():
+    payload = b'A' * 20
+    with FragmentTraceNetwork(seed=70_008, tick_ms=50) as net:
+        net.add_node(1)
+        net.add_node(2)
+        net.add_link(1, 2, latency_ms=0, jitter_ms=0)
+        net.run(60_000)
+
+        net.send(1, 2, payload, timeout_ms=60_000, e2e_ack=True)
+        net.run(100_000)
+        assert _received_payloads(net, 2) == [payload]
+        data_frames = [
+            frame for frame in net.fragment_frames if frame[0:2] == (1, 2)
+        ]
+        assert data_frames
+        assert all((frame[5] & DTPK_FLAG_COMPRESSED) == 0 for frame in data_frames)
+        assert net.nodes[1].compression_stats()["attempts"] == 0
+
+
+def test_real_cpp_compressed_multipart_selectively_repairs_one_fragment():
+    generator = random.Random(0xC04D)
+    payload = b"".join(
+        bytes(generator.getrandbits(8) for _ in range(160))
+        + b"common-pattern-" * 5
+        for _ in range(12)
+    )
+
+    with FragmentTraceNetwork(
+        seed=70_009,
+        tick_ms=50,
+        forced_edge=(2, 3),
+        forced_index=3,
+    ) as net:
+        for node in (1, 2, 3):
+            net.add_node(node)
+        net.add_link(1, 2, latency_ms=0, jitter_ms=0)
+        net.add_link(2, 3, latency_ms=0, jitter_ms=0)
+        net.run(120_000)
+
+        packet_id = net.send(
+            1, 3, payload, timeout_ms=300_000, e2e_ack=True
+        )
+        net.run(380_000)
+
+        assert packet_id != 0
+        assert net.forced_drops == 5
+        assert _received_payloads(net, 3) == [payload]
+        assert sum(result == 1 for result, _ping in net.app_acks(1)) == 1
+        compressed = [
+            frame for frame in net.fragment_frames
+            if frame[2] == DTPK_DATA_FRAGMENT
+        ]
+        assert compressed
+        assert all(frame[5] & DTPK_FLAG_COMPRESSED for frame in compressed)
+
+        expected = {index: 1 for index in range(10)}
+        expected[3] = 2
+        assert _distinct_fragment_sends(net, (1, 2)) == expected
+        assert _distinct_fragment_sends(net, (2, 3)) == expected
+
+
+
+def test_real_cpp_rejects_malformed_compression_without_app_delivery():
+    with FragmentTraceNetwork(seed=70_010, tick_ms=50) as net:
+        net.add_node(1)
+        net.add_node(2)
+        net.add_link(1, 2, latency_ms=0, jitter_ms=0)
+        net.run(60_000)
+
+        # LCMM reliable-data header followed by a v4 DATA_SINGLE packet whose
+        # compression codec is unknown. It is link-valid but application-invalid.
+        malformed = (
+            struct.pack("<BH", 1, 0x7110)
+            + struct.pack(
+                "<BHHHHBB", 0x41, 0x3344, 0x1020, 1, 2,
+                0x01 | DTPK_FLAG_COMPRESSED, 255
+            )
+            + struct.pack("<HB", 100, 0x7F)
+            + b"not-a-supported-codec"
+        )
+        txs = net.nodes[2].inject(net.now, 1, 2, malformed)
+        net._handle_txs(2, txs, net.now)
+        net.run(90_000)
+
+        assert _received_payloads(net, 2) == []
+        stats = net.nodes[2].compression_stats()
+        assert stats["decode_failures"] == 1
+        assert stats["selected"] == 0
+
+
+
+def test_real_cpp_rejects_byte_savings_without_airtime_savings():
+    # Heatshrink encodes this 34-byte payload into a 33-byte v4 envelope. At
+    # SF9/BW125 both packet sizes occupy the same LoRa symbol count, so sending
+    # compressed bytes would add decode work without reducing radio time.
+    payload = bytes.fromhex(
+        "8b52efbaa55d4b58e24fe1d640dc7ede118b584b5da5baef528b584b5da5baef528b"
+    )
+    with FragmentTraceNetwork(seed=70_011, tick_ms=50) as net:
+        net.add_node(1)
+        net.add_node(2)
+        net.add_link(1, 2, latency_ms=0, jitter_ms=0)
+        net.run(60_000)
+
+        net.send(1, 2, payload, timeout_ms=60_000, e2e_ack=True)
+        net.run(100_000)
+        assert _received_payloads(net, 2) == [payload]
+        data_frames = [
+            frame for frame in net.fragment_frames if frame[0:2] == (1, 2)
+        ]
+        assert data_frames
+        assert all((frame[5] & DTPK_FLAG_COMPRESSED) == 0 for frame in data_frames)
+        stats = net.nodes[1].compression_stats()
+        assert stats["attempts"] == 1
+        assert stats["selected"] == 0
+        assert stats["no_airtime_benefit"] == 1
+        assert stats["candidate_too_large"] == 0
+        assert stats["codec_failures"] == 0
+
+
+def test_real_cpp_sf8_also_rejects_zero_airtime_savings():
+    payload = bytes.fromhex(
+        "591ed345718eb800591c4115bcfb1c5900b88e7145d31e5900b88e7145d31e59"
+    )
+    with FragmentTraceNetwork(seed=70_012, tick_ms=50, sf=8) as net:
+        net.add_node(1)
+        net.add_node(2)
+        net.add_link(1, 2, latency_ms=0, jitter_ms=0)
+        net.run(60_000)
+
+        net.send(1, 2, payload, timeout_ms=60_000, e2e_ack=True)
+        net.run(100_000)
+        assert _received_payloads(net, 2) == [payload]
+        frames = [frame for frame in net.fragment_frames if frame[0:2] == (1, 2)]
+        assert frames
+        assert all((frame[5] & DTPK_FLAG_COMPRESSED) == 0 for frame in frames)
+        stats = net.nodes[1].compression_stats()
+        assert stats["attempts"] == 1
+        assert stats["selected"] == 0
+        assert stats["no_airtime_benefit"] == 1
+
+
+def test_real_cpp_compressed_16k_logical_maximum_round_trips():
+    payload = bytes(16 * 1024)
+    with FragmentTraceNetwork(seed=70_013, tick_ms=50) as net:
+        net.add_node(1)
+        net.add_node(2)
+        net.add_link(1, 2, latency_ms=0, jitter_ms=0)
+        net.run(60_000)
+
+        packet_id = net.send(1, 2, payload, timeout_ms=1_000, e2e_ack=True)
+        net.run(240_000)
+        assert packet_id != 0
+        assert _received_payloads(net, 2) == [payload]
+        assert sum(result == 1 for result, _ping in net.app_acks(1)) == 1
+        frames = [frame for frame in net.fragment_frames if frame[0:2] == (1, 2)]
+        assert frames
+        assert all(frame[5] & DTPK_FLAG_COMPRESSED for frame in frames)
+        assert len({frame[4] for frame in frames}) < 72
+        stats = net.nodes[1].compression_stats()
+        assert stats["selected"] == 1
+        assert stats["original_bytes"] == len(payload)
+        assert stats["encoded_bytes"] < len(payload)
+
+
+def test_real_cpp_compressed_no_e2e_ack_still_delivers_without_callback():
+    payload = b"mesh-status=" + b"online;" * 80
+    with FragmentTraceNetwork(seed=70_014, tick_ms=50) as net:
+        net.add_node(1)
+        net.add_node(2)
+        net.add_link(1, 2, latency_ms=0, jitter_ms=0)
+        net.run(60_000)
+
+        packet_id = net.send(1, 2, payload, timeout_ms=90_000, e2e_ack=False)
+        net.run(150_000)
+        assert packet_id != 0
+        assert _received_payloads(net, 2) == [payload]
+        assert net.app_acks(1) == []
+        frames = [frame for frame in net.fragment_frames if frame[0:2] == (1, 2)]
+        assert frames
+        assert all(frame[5] & DTPK_FLAG_COMPRESSED for frame in frames)
+
+
+def test_real_cpp_corrupted_compressed_stream_is_visible_to_sender():
+    class CorruptCompressedNetwork(FragmentTraceNetwork):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.corrupted = False
+
+        def _start_tx(self, sender, tx, at):
+            packet_type = tx.payload[LCMM_HEADER_SIZE] if len(tx.payload) > 3 else None
+            flags = (
+                tx.payload[DTPK_FLAGS_OFFSET]
+                if len(tx.payload) > DTPK_FLAGS_OFFSET
+                else 0
+            )
+            if (
+                not self.corrupted
+                and (sender, tx.target) == (1, 2)
+                and packet_type == DTPK_DATA_SINGLE
+                and flags & DTPK_FLAG_COMPRESSED
+            ):
+                encoded_start = LCMM_HEADER_SIZE + 11 + 3
+                assert len(tx.payload) > encoded_start + 2
+                damaged = bytearray(tx.payload)
+                damaged[encoded_start + 1] ^= 0x5A
+                tx.payload = bytes(damaged)
+                self.corrupted = True
+            return super()._start_tx(sender, tx, at)
+
+    payload = b"repeated-mesh-payload;" * 20
+    with CorruptCompressedNetwork(seed=70_015, tick_ms=50) as net:
+        net.add_node(1)
+        net.add_node(2)
+        net.add_link(1, 2, latency_ms=0, jitter_ms=0)
+        net.run(60_000)
+
+        packet_id = net.send(1, 2, payload, timeout_ms=60_000, e2e_ack=True)
+        net.run(120_000)
+        assert packet_id != 0
+        assert net.corrupted
+        assert _received_payloads(net, 2) == []
+        assert any(result == 0 for result, _ping in net.app_acks(1))
+        assert net.nodes[2].compression_stats()["decode_failures"] == 1

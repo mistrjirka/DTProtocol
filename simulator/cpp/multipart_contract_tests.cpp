@@ -6,6 +6,9 @@
 
 int main()
 {
+    static_assert(DTPK_WIRE_VERSION == 0x40u, "v4 wire prefix changed");
+    static_assert(sizeof(DTPKCompressedPayload) == 3,
+                  "compression envelope changed");
     static_assert(DATASIZE_LCMM == 244, "LCMM payload capacity changed");
     static_assert(sizeof(DTPKPacketGeneric) == 11, "single-data header changed");
     static_assert(sizeof(DTPKPacketFragment) == 14, "fragment header changed");

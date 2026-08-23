@@ -3,10 +3,10 @@
 
 #include <stdint.h>
 
-// High nibble is the on-wire protocol generation. v3 is intentionally
-// incompatible with the historical variable-size route records; old and new
-// nodes therefore ignore one another instead of interpreting shifted fields.
-static constexpr uint8_t DTPK_WIRE_VERSION = 0x30;
+// High nibble is the on-wire protocol generation. v4 adds transparent
+// application-payload compression. A version bump is intentional: a v3 node
+// must drop compressed frames rather than hand encoded bytes to its application.
+static constexpr uint8_t DTPK_WIRE_VERSION = 0x40;
 static constexpr uint8_t DTPK_WIRE_VERSION_MASK = 0xf0;
 
 constexpr bool dtpkWireVersionSupported(uint8_t rawType)
@@ -31,8 +31,21 @@ enum DTPKPacketType : uint8_t
 enum DTPKPacketFlags : uint8_t
 {
     DTPK_FLAG_NONE = 0,
-    DTPK_FLAG_E2E_ACK_REQUESTED = 1 << 0
+    DTPK_FLAG_E2E_ACK_REQUESTED = 1 << 0,
+    DTPK_FLAG_COMPRESSED = 1 << 1
 };
+
+enum DTPKCompressionCodec : uint8_t
+{
+    DTPK_COMPRESSION_HEATSHRINK_8_4 = 1
+};
+
+typedef struct __attribute__((packed))
+{
+    uint16_t originalSize;
+    uint8_t codec;
+    unsigned char data[];
+} DTPKCompressedPayload;
 
 static constexpr uint8_t DTPK_DEFAULT_HOP_LIMIT = 255;
 static constexpr uint8_t DTPK_ROUTE_INFINITY = 255;
@@ -45,7 +58,7 @@ typedef struct __attribute__((packed))
     uint8_t distance;
 } NeighborRecord;
 
-// v3 route advertisement. Split horizon is redundant with the
+// v4 route advertisement. Split horizon is redundant with the
 // destination-sequence feasibility invariant, so no next-hop field is sent.
 typedef struct __attribute__((packed))
 {
@@ -55,7 +68,7 @@ typedef struct __attribute__((packed))
 } NeighborRecordV2;
 
 static_assert(sizeof(NeighborRecordV2) == 5,
-              "v3 route records must remain five wire bytes");
+              "v4 route records must remain five wire bytes");
 
 struct RoutingRecord
 {
@@ -173,15 +186,17 @@ typedef struct __attribute__((packed))
 } DTPKPacketSeqRequest;
 
 static_assert(sizeof(DTPKPacketType) == 1, "packet type must be one wire byte");
-static_assert(sizeof(DTPKPacketCryst) == 11, "v3 CRYST header must be 11 bytes");
-static_assert(sizeof(DTPKPacketHello) == 7, "v3 HELLO must be 7 bytes");
+static_assert(sizeof(DTPKCompressedPayload) == 3,
+              "v4 compression envelope must remain three bytes");
+static_assert(sizeof(DTPKPacketCryst) == 11, "v4 CRYST header must be 11 bytes");
+static_assert(sizeof(DTPKPacketHello) == 7, "v4 HELLO must be 7 bytes");
 static_assert(sizeof(DTPKPacketCrystRequest) == 7,
-              "v3 CRYST_REQ must be 7 bytes");
+              "v4 CRYST_REQ must be 7 bytes");
 static_assert(sizeof(DTPKPacketFragment) == 14,
-              "v3 fragment header must be 14 bytes");
+              "v4 fragment header must be 14 bytes");
 static_assert(sizeof(DTPKPacketFragmentQuery) == 15,
-              "v3 fragment query must be 15 bytes");
+              "v4 fragment query must be 15 bytes");
 static_assert(sizeof(DTPKPacketFragmentStatus) == 14,
-              "v3 fragment status prefix must be 14 bytes");
+              "v4 fragment status prefix must be 14 bytes");
 
 #endif

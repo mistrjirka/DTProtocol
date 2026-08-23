@@ -70,6 +70,6 @@ Liveness assumptions and properties:
 - every reachable destination is eventually selected;
 - every unreachable destination is eventually removed.
 
-The synthesized result should be compared with the current v3 state machine, not
+The synthesized result should be compared with the current v4 state machine, not
 blindly deployed. The main value is finding counterexamples and proving which
 mechanisms are indispensable.

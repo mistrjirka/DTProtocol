@@ -7,8 +7,8 @@
 
 int main()
 {
-    static_assert(static_cast<uint8_t>(CRYST) == 0x30u);
-    static_assert(static_cast<uint8_t>(SEQ_REQ) == 0x36u);
+    static_assert(static_cast<uint8_t>(CRYST) == 0x40u);
+    static_assert(static_cast<uint8_t>(SEQ_REQ) == 0x46u);
     static_assert(bleNotificationBytesForMtu(23) == 20u);
     static_assert(bleNotificationBytesForMtu(247) == 244u);
     static_assert(maxBLEInboundPayloadForMtu(23) == 13u);
@@ -19,7 +19,7 @@ int main()
     static_assert(maxBLENeighborsPerNotification() == 58u);
     assert(dtpkWireVersionSupported(static_cast<uint8_t>(DATA_SINGLE)));
     assert(!dtpkWireVersionSupported(0x01u));
-    assert(!dtpkWireVersionSupported(0x41u));
+    assert(!dtpkWireVersionSupported(0x31u));
 
     std::array<uint8_t, sizeof(BLEOutboundMessage) + 3> bytes{};
     BLEOutboundMessage *message =

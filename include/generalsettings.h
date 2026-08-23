@@ -15,6 +15,20 @@
 #ifndef DTPK_MAX_FRAGMENT_ASSEMBLIES
 #define DTPK_MAX_FRAGMENT_ASSEMBLIES 2u
 #endif
+
+// Automatic compression is transparent and conservative. The source attempts
+// it only above the minimum size, verifies the encoded stream locally, and uses
+// it only when the configured LoRa PHY predicts strictly lower reliable-link
+// airtime after all compression and fragmentation headers are included.
+#ifndef DTPK_ENABLE_COMPRESSION
+#define DTPK_ENABLE_COMPRESSION 1
+#endif
+#ifndef DTPK_COMPRESSION_MIN_INPUT_SIZE
+#define DTPK_COMPRESSION_MIN_INPUT_SIZE 32u
+#endif
+#ifndef DTPK_COMPRESSION_MIN_AIRTIME_SAVINGS_MS
+#define DTPK_COMPRESSION_MIN_AIRTIME_SAVINGS_MS 1u
+#endif
 #define DATASIZE_MAC (MAX_PACKET_SIZE - MAC_OVERHEAD)
 #define DATASIZE_LCMM (MAX_PACKET_SIZE - LCMM_OVERHEAD - MAC_OVERHEAD)
 #define DATASIZE_DTP (MAX_PACKET_SIZE - DTP_OVERHEAD - LCMM_OVERHEAD - MAC_OVERHEAD)

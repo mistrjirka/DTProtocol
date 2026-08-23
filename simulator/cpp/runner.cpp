@@ -78,6 +78,9 @@ int main() {
                 double duty_cycle_percent = 0.0;
                 uint32_t initial_duty_wait_ms = 0;
                 unsigned mobile_hint = 0;
+                unsigned spreading_factor = 9;
+                double bandwidth_khz = 125.0;
+                unsigned coding_rate = 7;
                 in >> id >> k_limit >> seed;
                 if (!(in >> origin_sequence)) {
                     origin_sequence = static_cast<unsigned>(seed & 0xffffu);
@@ -93,9 +96,22 @@ int main() {
                     if (!(in >> initial_duty_wait_ms)) {
                         initial_duty_wait_ms = 0;
                         in.clear();
-                    } else if (!(in >> mobile_hint)) {
-                        mobile_hint = 0;
-                        in.clear();
+                    } else {
+                        if (!(in >> mobile_hint)) {
+                            mobile_hint = 0;
+                            in.clear();
+                        } else {
+                            if (!(in >> spreading_factor)) {
+                                spreading_factor = 9;
+                                in.clear();
+                            } else if (!(in >> bandwidth_khz)) {
+                                bandwidth_khz = 125.0;
+                                in.clear();
+                            } else if (!(in >> coding_rate)) {
+                                coding_rate = 7;
+                                in.clear();
+                            }
+                        }
                     }
                 }
                 node_id = static_cast<uint16_t>(id);
@@ -104,6 +120,10 @@ int main() {
                 hostsim::set_duty_cycle_percent(
                     static_cast<float>(duty_cycle_percent),
                     initial_duty_wait_ms);
+                hostsim::set_phy(
+                    static_cast<uint8_t>(spreading_factor),
+                    static_cast<float>(bandwidth_khz),
+                    static_cast<uint8_t>(coding_rate));
                 DTPK::initialize(
                     static_cast<uint8_t>(k_limit),
                     static_cast<uint16_t>(origin_sequence == 0 ? 1 : origin_sequence),
@@ -169,6 +189,22 @@ int main() {
                 // Application code and protocol loop run back-to-back on the
                 // MCU; do not inject an artificial <=50 ms send-start delay.
                 service_protocol_once(initialized);
+                done();
+            } else if (command == "COMPRESSION") {
+                const DTPK::CompressionDiagnostics &stats =
+                    DTPK::getInstance()->getCompressionDiagnostics();
+                std::cout << "COMPRESSION "
+                          << stats.attempts << ' '
+                          << stats.selected << ' '
+                          << stats.noAirtimeBenefit << ' '
+                          << stats.candidateTooLarge << ' '
+                          << stats.codecFailures << ' '
+                          << stats.verificationFailures << ' '
+                          << stats.decodeFailures << ' '
+                          << stats.allocationFailures << ' '
+                          << stats.originalBytes << ' '
+                          << stats.encodedBytes << ' '
+                          << stats.estimatedAirtimeSavedMs << '\n';
                 done();
             } else if (command == "ROUTES") {
                 uint64_t now = 0;

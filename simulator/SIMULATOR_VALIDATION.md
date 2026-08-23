@@ -194,7 +194,7 @@ a neighbor disappeared**. Deleting a direct neighbor then deletes all its indire
 contribution; a subsequent HELLO restores only the direct route until a full CRYST is
 reacquired, causing a withdrawal/relearn wave.
 
-Current v3 behavior treats probe failure as suspicion only. Valid traffic/probe success
+Current v4 behavior treats probe failure as suspicion only. Valid traffic/probe success
 refreshes liveness; authoritative topology removal uses a much longer hard inactivity
 bound (currently 120 s). In earlier controlled scale runs this stabilized 64 nodes and
 allowed a 96-node line to reach exact routing by 1200 s and remain correct through
@@ -246,3 +246,10 @@ treat it as a likely hardware configuration bug and audit/fix it separately. At
 
 Re-run this matrix whenever the declared RadioLib major version, PHY settings or radio
 hardware changes.
+
+## Automatic-compression boundary
+
+Compression is intentionally absent from the abstract Python state machine
+because that backend stores only payload sizes. The real-C++ backend carries
+exact bytes and validates v4 compression selection, framing, decompression,
+selective repair and malformed-stream rejection. Use it for compression claims.

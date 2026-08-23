@@ -1,13 +1,13 @@
-# DTProtocol v3
+# DTProtocol v4
 
 DTProtocol is a small proactive multi-hop protocol for SX126x LoRa networks. It
 keeps destination routes proactively, sends application traffic along the
 selected path, retries every radio hop through LCMM, and optionally confirms
 final delivery with a separate end-to-end ACK.
 
-Version 3 is a **wire-incompatible** update. Packet types carry a v3 prefix so an
-older node drops the frame instead of interpreting the compact route records
-incorrectly. Upgrade one routing domain together.
+Version 4 is a **wire-incompatible** update. Packet types carry a v4 prefix so
+v3 nodes drop compressed-capable frames instead of exposing encoded bytes to an
+application. Upgrade one routing domain together.
 
 ## How it works
 
@@ -29,7 +29,9 @@ Application DATA uses:
 - a finite 255-hop bound;
 - replay identity `{sender, boot incarnation, packet id}`;
 - optional end-to-end ACK/NACK;
-- selective-repair multipart transfer for payloads larger than one LoRa frame.
+- selective-repair multipart transfer for payloads larger than one LoRa frame;
+- transparent heatshrink compression only when the configured PHY predicts less
+  reliable-link airtime after all headers and fragment boundaries.
 
 ## ESP32 quick start
 
@@ -72,6 +74,15 @@ Bluetooth::getInstance()->loop();
 A mobile node advertises every second while isolated, then relaxes to four
 seconds after contact. Static nodes use ten seconds. The mobility hint affects
 only local discovery cadence, never route validity or metric.
+
+## Automatic compression
+
+Application code still sends and receives ordinary bytes. For payloads of at
+least 32 bytes, DTProtocol may encode them with heatshrink, locally verify the
+round trip, and compare complete reliable-link airtime against the original.
+Byte savings that do not remove any LoRa symbols are rejected. See
+[COMPRESSION.md](COMPRESSION.md) for the wire envelope, memory bounds,
+configuration and diagnostics.
 
 ## Bluetooth gateway
 

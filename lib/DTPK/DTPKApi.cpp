@@ -86,20 +86,38 @@ uint16_t DTPK::sendPacket(
     PacketAckCallback callback)
 {
     RoutingRecord *routing = _crystDatabase.getRouting(target);
-    if (!routing || (size > 0 && !payload))
+    if (!routing || (size > 0 && !payload) || size > maximumMessageSize())
     {
         if (callback)
             callback(0, 0);
         return 0;
     }
 
-    if (size <= maximumSinglePayloadSize())
+    uint8_t *compressed = nullptr;
+    size_t transmittedSize = size;
+    const uint8_t *transmittedPayload = payload;
+    uint8_t payloadFlags =
+        dtpkAck ? DTPK_FLAG_E2E_ACK_REQUESTED : DTPK_FLAG_NONE;
+    if (tryCompressPayload(payload, size, compressed, transmittedSize))
     {
-        const size_t wireSize = sizeof(DTPKPacketGeneric) + size;
+        transmittedPayload = compressed;
+        payloadFlags = static_cast<uint8_t>(
+            payloadFlags | DTPK_FLAG_COMPRESSED);
+    }
+    else
+    {
+        transmittedSize = size;
+    }
+
+    if (transmittedSize <= maximumSinglePayloadSize())
+    {
+        const size_t wireSize = sizeof(DTPKPacketGeneric) + transmittedSize;
         DTPKPacketGeneric *packet =
             static_cast<DTPKPacketGeneric *>(malloc(wireSize));
         if (!packet)
         {
+            if (compressed)
+                free(compressed);
             if (callback)
                 callback(0, 0);
             return 0;
@@ -111,11 +129,12 @@ uint16_t DTPK::sendPacket(
         packet->sourceSequence = _originSequence;
         packet->originalSender = MAC::getInstance()->getId();
         packet->finalTarget = target;
-        packet->flags =
-            dtpkAck ? DTPK_FLAG_E2E_ACK_REQUESTED : DTPK_FLAG_NONE;
+        packet->flags = payloadFlags;
         packet->hopLimit = DTPK_DEFAULT_HOP_LIMIT;
-        if (size > 0)
-            memcpy(packet->data, payload, size);
+        if (transmittedSize > 0)
+            memcpy(packet->data, transmittedPayload, transmittedSize);
+        if (compressed)
+            free(compressed);
 
         rememberData(packet->originalSender, packet->sourceSequence, id);
         addPacketToSendingQueue(
@@ -133,35 +152,45 @@ uint16_t DTPK::sendPacket(
     // Keep one source-side multipart message in flight. This bounds RAM and
     // makes selective retransmission deterministic while ordinary small packets
     // may remain queued behind the existing E2E gate.
-    if (size > maximumMessageSize() || _multipartSend.active)
+    if (_multipartSend.active)
     {
+        if (compressed)
+            free(compressed);
         if (callback)
             callback(0, 0);
         return 0;
     }
-    const uint8_t count = fragmentCountForSize(size);
-    if (count == 0 || size > UINT16_MAX)
+    const uint8_t count = fragmentCountForSize(transmittedSize);
+    if (count == 0 || transmittedSize > UINT16_MAX)
     {
+        if (compressed)
+            free(compressed);
         if (callback)
             callback(0, 0);
         return 0;
     }
 
-    uint8_t *copy = static_cast<uint8_t *>(malloc(size));
+    uint8_t *copy = compressed;
     if (!copy)
     {
-        if (callback)
-            callback(0, 0);
-        return 0;
+        copy = static_cast<uint8_t *>(malloc(transmittedSize));
+        if (!copy)
+        {
+            if (callback)
+                callback(0, 0);
+            return 0;
+        }
+        memcpy(copy, payload, transmittedSize);
     }
-    memcpy(copy, payload, size);
 
     const uint16_t id = nextPacketId();
     _multipartSend.active = true;
     _multipartSend.id = id;
     _multipartSend.sourceSequence = _originSequence;
     _multipartSend.target = target;
-    _multipartSend.totalSize = static_cast<uint16_t>(size);
+    _multipartSend.totalSize = static_cast<uint16_t>(transmittedSize);
+    _multipartSend.flags = static_cast<uint8_t>(
+        payloadFlags & static_cast<uint8_t>(DTPK_FLAG_COMPRESSED));
     _multipartSend.fragmentCount = count;
     _multipartSend.nextInitialFragment = 0;
     _multipartSend.nextQueryAt = _currentTime + FRAGMENT_QUERY_INTERVAL_MS;

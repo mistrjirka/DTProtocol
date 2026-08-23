@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal DTProtocol v3 BLE gateway client.
+"""Minimal DTProtocol v4 BLE gateway client.
 
 Install with: python -m pip install bleak
 Examples:

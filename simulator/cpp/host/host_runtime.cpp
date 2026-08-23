@@ -23,6 +23,9 @@ uint8_t g_next_send_result = MAC_SEND_OK;
 uint64_t g_forced_wait_until_ms = 0;
 float g_duty_cycle_percent = 0.0f;
 uint64_t g_duty_until_ms = 0;
+uint8_t g_spreading_factor = 9;
+float g_bandwidth_khz = 125.0f;
+uint8_t g_coding_rate_denominator = 7;
 
 uint32_t remaining_wait(uint64_t deadline) {
     if (deadline <= g_now_ms) return 0;
@@ -87,7 +90,8 @@ uint8_t MAC::sendData(uint16_t target, unsigned char *data,
     if (g_duty_cycle_percent > 0.0f) {
         const uint16_t frame_bytes = static_cast<uint16_t>(MAC_OVERHEAD + size);
         const float airtime_ms = MathExtension.timeOnAir(
-            frame_bytes, 8, 9, 125.0f, 7);
+            frame_bytes, 8, g_spreading_factor, g_bandwidth_khz,
+            g_coding_rate_denominator);
         if (airtime_ms > 0.0f && std::isfinite(airtime_ms)) {
             const double period = std::ceil(
                 static_cast<double>(airtime_ms) *
@@ -108,7 +112,8 @@ uint32_t MAC::getTransmitWaitMs() const {
 
 uint32_t MAC::estimateFrameAirtimeMs(uint16_t frameBytes) const {
     const float airtime = MathExtension.timeOnAir(
-        frameBytes, 8, 9, 125.0f, 7);
+        frameBytes, 8, g_spreading_factor, g_bandwidth_khz,
+        g_coding_rate_denominator);
     if (!(airtime > 0.0f) || !std::isfinite(airtime))
         return 0;
     const double rounded = std::ceil(static_cast<double>(airtime));
@@ -130,7 +135,8 @@ uint32_t MAC::recommendedNeighborExpiryMs(
         return baseMs;
 
     const float airtimeMs = MathExtension.timeOnAir(
-        MAX_PACKET_SIZE, 8, 9, 125.0f, 7);
+        MAX_PACKET_SIZE, 8, g_spreading_factor, g_bandwidth_khz,
+        g_coding_rate_denominator);
     if (!(airtimeMs > 0.0f) || !std::isfinite(airtimeMs))
         return baseMs;
 
@@ -201,6 +207,9 @@ void reset(uint16_t, uint64_t seed) {
     g_forced_wait_until_ms = 0;
     g_duty_cycle_percent = 0.0f;
     g_duty_until_ms = 0;
+    g_spreading_factor = 9;
+    g_bandwidth_khz = 125.0f;
+    g_coding_rate_denominator = 7;
 }
 
 void set_time_ms(uint64_t now_ms) { g_now_ms = now_ms; }
@@ -209,6 +218,19 @@ uint64_t time_ms() { return g_now_ms; }
 void set_duty_cycle_percent(float percent, uint32_t initial_wait_ms) {
     g_duty_cycle_percent = std::max(0.0f, std::min(100.0f, percent));
     g_duty_until_ms = g_now_ms + initial_wait_ms;
+}
+
+void set_phy(uint8_t spreading_factor, float bandwidth_khz,
+             uint8_t coding_rate_denominator) {
+    g_spreading_factor =
+        spreading_factor >= 5 && spreading_factor <= 12
+            ? spreading_factor
+            : 9;
+    g_bandwidth_khz = bandwidth_khz > 0.0f ? bandwidth_khz : 125.0f;
+    g_coding_rate_denominator =
+        coding_rate_denominator >= 5 && coding_rate_denominator <= 8
+            ? coding_rate_denominator
+            : 7;
 }
 
 void set_next_send_result(uint8_t result, uint32_t wait_ms) {

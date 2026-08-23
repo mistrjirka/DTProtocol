@@ -18,6 +18,8 @@ uint64_t time_ms();
 // Configure the same conservative per-packet duty policy used by production
 // MAC. initial_wait_ms preserves RF history across a simulated MCU reboot.
 void set_duty_cycle_percent(float percent, uint32_t initial_wait_ms = 0);
+void set_phy(uint8_t spreading_factor, float bandwidth_khz,
+             uint8_t coding_rate_denominator);
 
 // Force the next MAC::sendData() call to return a specific MACSendResult.
 // wait_ms models a non-blocking carrier/duty policy deadline for tests.

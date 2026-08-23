@@ -303,22 +303,30 @@ void DTPK::parseSingleDataPacket(
 
     const bool duplicate = hasSeenData(
         data->originalSender, data->sourceSequence, data->id);
+    bool delivered = duplicate;
     if (!duplicate)
     {
-        rememberData(data->originalSender, data->sourceSequence, data->id);
-        if (_recieveCallback)
-            _recieveCallback(
-                data,
-                static_cast<uint16_t>(
-                    std::min<size_t>(packet.dtpkSize, UINT16_MAX)));
+        delivered = deliverApplicationPacket(data, packet.dtpkSize);
+        if (delivered)
+            rememberData(data->originalSender, data->sourceSequence, data->id);
     }
 
     if ((data->flags & DTPK_FLAG_E2E_ACK_REQUESTED) != 0)
-        sendAckPacket(
-            data->originalSender,
-            packet.frame->mac.sender,
-            data->id,
-            data->sourceSequence);
+    {
+        if (delivered)
+            sendAckPacket(
+                data->originalSender,
+                packet.frame->mac.sender,
+                data->id,
+                data->sourceSequence);
+        else
+            sendNackPacket(
+                data->originalSender,
+                packet.frame->mac.sender,
+                data->id,
+                data->sourceSequence,
+                data->finalTarget);
+    }
 }
 
 bool DTPK::forwardRoutedPacket(const ReceivedPacket &packet)

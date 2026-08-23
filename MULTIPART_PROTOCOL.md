@@ -1,4 +1,4 @@
-# DTProtocol v3 multipart application messages
+# DTProtocol v4 multipart application messages
 
 DTProtocol automatically fragments an application payload when it no longer fits
 in one 255-byte LoRa frame. The public `sendPacket()` API is unchanged.

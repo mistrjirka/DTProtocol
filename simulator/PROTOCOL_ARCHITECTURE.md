@@ -345,7 +345,7 @@ belongs behind an explicit protocol version transition.
 
 #### Five-byte feasibility-only route record
 
-The v3 wire candidate removes `NeighborRecordV2.from`. That field existed only
+The v4 wire format removes `NeighborRecordV2.from`. That field existed only
 for split horizon; feasibility remains the route-loop safety invariant. Each
 advertised route therefore changes from **7 to 5 bytes**:
 

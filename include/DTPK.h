@@ -24,6 +24,21 @@ public:
     using PacketAckCallback =
         std::function<void(uint8_t result, uint16_t ping)>;
 
+    struct CompressionDiagnostics
+    {
+        uint32_t attempts = 0;
+        uint32_t selected = 0;
+        uint32_t noAirtimeBenefit = 0;
+        uint32_t candidateTooLarge = 0;
+        uint32_t codecFailures = 0;
+        uint32_t verificationFailures = 0;
+        uint32_t decodeFailures = 0;
+        uint32_t allocationFailures = 0;
+        uint64_t originalBytes = 0;
+        uint64_t encodedBytes = 0;
+        uint64_t estimatedAirtimeSavedMs = 0;
+    };
+
     struct DTPKPacketRequest
     {
         DTPKPacketUnknown *packet;
@@ -62,6 +77,10 @@ public:
     void loop();
     std::vector<NeighborRecord> getNeighbours();
     bool isMobileHintEnabled() const { return _mobileHint; }
+    const CompressionDiagnostics &getCompressionDiagnostics() const
+    {
+        return _compressionDiagnostics;
+    }
 
     static constexpr size_t maximumSinglePayloadSize()
     {
@@ -185,6 +204,7 @@ private:
         uint16_t sourceSequence = 0;
         uint16_t target = 0;
         uint16_t totalSize = 0;
+        uint8_t flags = DTPK_FLAG_NONE;
         uint8_t fragmentCount = 0;
         uint8_t nextInitialFragment = 0;
         uint32_t nextQueryAt = 0;
@@ -257,6 +277,7 @@ private:
     std::unordered_map<uint16_t, CrystAssembly> _crystAssemblies;
     std::unordered_map<uint16_t, PendingSeqRequest> _pendingSeqRequests;
     MultipartSend _multipartSend;
+    CompressionDiagnostics _compressionDiagnostics;
     std::array<FragmentAssembly, DTPK_MAX_FRAGMENT_ASSEMBLIES>
         _fragmentAssemblies{};
 
@@ -291,6 +312,12 @@ private:
     uint8_t fragmentCountForSize(size_t size) const;
     size_t expectedFragmentBytes(uint16_t totalSize, uint8_t index) const;
     uint32_t multipartQueryDelayMs();
+    uint64_t estimatedReliablePayloadAirtimeMs(size_t payloadSize) const;
+    bool tryCompressPayload(
+        const uint8_t *payload, size_t size,
+        uint8_t *&encoded, size_t &encodedSize);
+    bool deliverApplicationPacket(
+        DTPKPacketGeneric *packet, size_t packetSize);
     bool queueMultipartFragment(uint8_t index);
     bool queueFragmentQuery();
     FragmentAssembly *findFragmentAssembly(

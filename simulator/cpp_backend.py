@@ -45,6 +45,9 @@ class CppNodeProcess:
         duty_cycle_percent: float = 0.0,
         initial_duty_wait_ms: float = 0.0,
         mobile_hint: bool = False,
+        sf: int = 9,
+        bandwidth_hz: int = 125_000,
+        coding_rate_denominator: int = 7,
         binary: Optional[str] = None,
     ):
         self.node_id = node_id
@@ -71,7 +74,9 @@ class CppNodeProcess:
         initial_wait = max(0, int(math.ceil(initial_duty_wait_ms)))
         self.command(
             f"INIT {node_id} {k_limit} {seed} {self.origin_sequence} "
-            f"{duty:.9f} {initial_wait} {1 if self.mobile_hint else 0}"
+            f"{duty:.9f} {initial_wait} {1 if self.mobile_hint else 0} "
+            f"{int(sf)} {float(bandwidth_hz) / 1000.0:.6f} "
+            f"{int(coding_rate_denominator)}"
         )
 
     @staticmethod
@@ -182,6 +187,27 @@ class CppNodeProcess:
         )
         return packet_id
 
+    def compression_stats(self) -> Dict[str, int]:
+        before = len(self.events)
+        self.command("COMPRESSION")
+        names = (
+            "attempts",
+            "selected",
+            "no_airtime_benefit",
+            "candidate_too_large",
+            "codec_failures",
+            "verification_failures",
+            "decode_failures",
+            "allocation_failures",
+            "original_bytes",
+            "encoded_bytes",
+            "estimated_airtime_saved_ms",
+        )
+        for kind, values in reversed(self.events[before:]):
+            if kind == "COMPRESSION":
+                return dict(zip(names, (int(value) for value in values)))
+        return {name: 0 for name in names}
+
     def routes(self, now_ms: float) -> Dict[int, Tuple[int, int]]:
         before = len(self.events)
         self.command(f"ROUTES {int(now_ms)}")
@@ -268,6 +294,9 @@ class CppNetwork(EnvironmentKernel):
             duty_cycle_percent=self.duty_cycle_percent,
             initial_duty_wait_ms=self.transmit_wait_ms(node_id),
             mobile_hint=mobile_hint,
+            sf=self.sf,
+            bandwidth_hz=self.bandwidth_hz,
+            coding_rate_denominator=self.cr_den,
             binary=self.binary,
         )
 
@@ -329,6 +358,9 @@ class CppNetwork(EnvironmentKernel):
             # erased merely because the emulated MCU rebooted.
             initial_duty_wait_ms=self.transmit_wait_ms(node_id),
             mobile_hint=mobile_hint,
+            sf=self.sf,
+            bandwidth_hz=self.bandwidth_hz,
+            coding_rate_denominator=self.cr_den,
             binary=self.binary,
         )
 

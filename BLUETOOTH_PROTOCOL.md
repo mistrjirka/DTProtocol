@@ -1,4 +1,4 @@
-# DTProtocol v3 Bluetooth gateway
+# DTProtocol v4 Bluetooth gateway
 
 The ESP32 BLE gateway exposes DTProtocol application messages and route updates
 to a phone without exposing MAC or LCMM framing.

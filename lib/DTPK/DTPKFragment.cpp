@@ -244,7 +244,8 @@ bool DTPK::queueMultipartFragment(uint8_t index)
     fragment->sourceSequence = _multipartSend.sourceSequence;
     fragment->originalSender = MAC::getInstance()->getId();
     fragment->finalTarget = _multipartSend.target;
-    fragment->flags = DTPK_FLAG_E2E_ACK_REQUESTED;
+    fragment->flags = static_cast<uint8_t>(
+        _multipartSend.flags | DTPK_FLAG_E2E_ACK_REQUESTED);
     fragment->hopLimit = DTPK_DEFAULT_HOP_LIMIT;
     fragment->totalSize = _multipartSend.totalSize;
     fragment->fragmentIndex = index;
@@ -282,7 +283,8 @@ bool DTPK::queueFragmentQuery()
     query->sourceSequence = _multipartSend.sourceSequence;
     query->originalSender = MAC::getInstance()->getId();
     query->finalTarget = _multipartSend.target;
-    query->flags = DTPK_FLAG_E2E_ACK_REQUESTED;
+    query->flags = static_cast<uint8_t>(
+        _multipartSend.flags | DTPK_FLAG_E2E_ACK_REQUESTED);
     query->hopLimit = DTPK_DEFAULT_HOP_LIMIT;
     query->totalSize = _multipartSend.totalSize;
     query->queryId = _multipartSend.nextQueryId;
@@ -436,21 +438,33 @@ void DTPK::parseFragmentPacket(const ReceivedPacket &packet)
     {
         DTPKPacketGeneric *application =
             reinterpret_cast<DTPKPacketGeneric *>(assembly->packetBuffer);
-        rememberData(
-            assembly->originalSender,
-            assembly->sourceSequence,
-            assembly->id);
-        if (_recieveCallback)
-            _recieveCallback(
-                application,
-                static_cast<uint16_t>(
-                    sizeof(DTPKPacketGeneric) + assembly->totalSize));
-        if ((assembly->flags & DTPK_FLAG_E2E_ACK_REQUESTED) != 0)
-            sendAckPacket(
+        application->flags = assembly->flags;
+        const size_t applicationSize =
+            sizeof(DTPKPacketGeneric) + assembly->totalSize;
+        const bool delivered =
+            deliverApplicationPacket(application, applicationSize);
+        if (delivered)
+            rememberData(
                 assembly->originalSender,
-                assembly->lastHop,
-                assembly->id,
-                assembly->sourceSequence);
+                assembly->sourceSequence,
+                assembly->id);
+
+        if ((assembly->flags & DTPK_FLAG_E2E_ACK_REQUESTED) != 0)
+        {
+            if (delivered)
+                sendAckPacket(
+                    assembly->originalSender,
+                    assembly->lastHop,
+                    assembly->id,
+                    assembly->sourceSequence);
+            else
+                sendNackPacket(
+                    assembly->originalSender,
+                    assembly->lastHop,
+                    assembly->id,
+                    assembly->sourceSequence,
+                    MAC::getInstance()->getId());
+        }
         resetFragmentAssembly(*assembly);
         return;
     }

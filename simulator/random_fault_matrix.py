@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic random topology/fault validation for DTProtocol v3."""
+"""Deterministic random topology/fault validation for DTProtocol v4."""
 
 from __future__ import annotations
 

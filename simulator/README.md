@@ -77,7 +77,7 @@ Sanitizers are also exercised in CI. On the reference implementation that job is
 
 ## What is modeled
 
-- versioned v3 CRYST snapshots with five-byte route records and transactional chunk assembly;
+- versioned v4 CRYST snapshots with five-byte route records and transactional chunk assembly;
 - sequence/feasibility route selection without split-horizon wire state;
 - single-frame and selective-repair multipart DATA, end-to-end ACK/NACK, and per-hop LCMM retries;
 - independent or Gilbert-Elliott burst packet/ACK loss, latency/jitter, partitions/healing and reboot;
@@ -142,3 +142,10 @@ This distinction was found by the real-C++ scale simulator. With the old "two fa
 ## Mobile hint
 
 `mobile_hint` is not a correctness input and is not transmitted. It only shortens that node's HELLO period from 10 s to 4 s. A 500-seed two-node contact experiment found the hint useful for short encounters (5 s: 92.8% versus 55.4% mutual discovery), while the difference disappeared by roughly 10-12 s. In a stable two-node 60 s run it increased modeled bytes on air from 350 to 530. Keep it optional/local; do not use it in feasibility, route metrics, expiry or advertised state.
+
+## Compression model boundary
+
+The abstract Python state machine models payload lengths and multipart behavior,
+but not payload bytes or entropy. Automatic v4 compression is therefore tested
+in the byte-aware real-C++ backend; the Python model does not invent a
+compression ratio.

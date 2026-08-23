@@ -1088,7 +1088,7 @@ class Node:
                 continue
             if advertisement.dest == self.id:
                 continue
-            # Legacy profiles still model split horizon. v3 crystallized state
+            # Legacy profiles still model split horizon. v4 crystallized state
             # no longer carries a `via` field; feasibility is the loop-safety
             # invariant for that protocol.
             if (

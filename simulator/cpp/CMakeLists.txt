@@ -1,7 +1,17 @@
 cmake_minimum_required(VERSION 3.16)
-project(dtprotocol_host_sim LANGUAGES CXX)
+project(dtprotocol_host_sim LANGUAGES C CXX)
 
 option(DTP_HOST_SANITIZERS "Build host simulator with ASan/UBSan" OFF)
+
+# Keep the vendored upstream C source warning-clean without editing it. The
+# wrapper and all DTProtocol-owned code still build with the stricter warnings.
+set(HEATSHRINK_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/compression/heatshrink/heatshrink_encoder.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/compression/heatshrink/heatshrink_decoder.c
+)
+set_source_files_properties(${HEATSHRINK_SOURCES} PROPERTIES
+    COMPILE_OPTIONS "-Wno-conversion;-Wno-sign-conversion;-Wno-implicit-fallthrough"
+)
 
 get_filename_component(REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 
@@ -19,7 +29,11 @@ add_executable(dtprotocol_host_node
     ${REPO_ROOT}/lib/DTPK/DTPKControl.cpp
     ${REPO_ROOT}/lib/DTPK/DTPKReceive.cpp
     ${REPO_ROOT}/lib/DTPK/DTPKFragment.cpp
+    ${REPO_ROOT}/lib/DTPK/DTPKPayload.cpp
     ${REPO_ROOT}/lib/DTPK/CrystDatabase.cpp
+    ${REPO_ROOT}/lib/compression/DTPKCompression.cpp
+    ${REPO_ROOT}/lib/compression/heatshrink/heatshrink_encoder.c
+    ${REPO_ROOT}/lib/compression/heatshrink/heatshrink_decoder.c
     ${REPO_ROOT}/lib/lcmm/lcmm.cpp
     ${REPO_ROOT}/lib/mathextension/mathextension.cpp
 )
@@ -31,11 +45,13 @@ target_include_directories(dtprotocol_host_node BEFORE PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/host
     ${REPO_ROOT}
     ${REPO_ROOT}/include
+    ${REPO_ROOT}/lib/compression
+    ${REPO_ROOT}/lib/compression/heatshrink
 )
 
 target_compile_options(dtprotocol_host_node PRIVATE
-    -include${CMAKE_CURRENT_SOURCE_DIR}/host/mac.h
-    -include${REPO_ROOT}/include/mathextension.h
+    $<$<COMPILE_LANGUAGE:CXX>:-include${CMAKE_CURRENT_SOURCE_DIR}/host/mac.h>
+    $<$<COMPILE_LANGUAGE:CXX>:-include${REPO_ROOT}/include/mathextension.h>
     -Wall -Wextra -Wno-unused-parameter
 )
 target_compile_definitions(dtprotocol_host_node PRIVATE HOST_SIM=1)
@@ -151,6 +167,23 @@ target_compile_options(dtprotocol_multipart_contract PRIVATE
 )
 add_test(NAME multipart_wire_contract COMMAND dtprotocol_multipart_contract)
 
+add_executable(dtprotocol_compression_contract
+    compression_contract_tests.cpp
+    ${REPO_ROOT}/lib/compression/DTPKCompression.cpp
+    ${REPO_ROOT}/lib/compression/heatshrink/heatshrink_encoder.c
+    ${REPO_ROOT}/lib/compression/heatshrink/heatshrink_decoder.c
+)
+target_compile_features(dtprotocol_compression_contract PRIVATE cxx_std_17)
+target_include_directories(dtprotocol_compression_contract PRIVATE
+    ${REPO_ROOT}/include
+    ${REPO_ROOT}/lib/compression
+    ${REPO_ROOT}/lib/compression/heatshrink
+)
+target_compile_options(dtprotocol_compression_contract PRIVATE
+    -UNDEBUG -Wall -Wextra -Wconversion
+)
+add_test(NAME compression_codec_contract COMMAND dtprotocol_compression_contract)
+
 # -----------------------------------------------------------------------------
 # Small embedded-math contract. The radio path depends on quickSort() during
 # noise calibration and timeOnAir() for LCMM/duty timing, so both are sanitizer
@@ -183,7 +216,8 @@ if(DTP_HOST_SANITIZERS)
             dtprotocol_math_contract
             dtprotocol_cryst_database_contract
             dtprotocol_bluetooth_protocol_contract
-            dtprotocol_multipart_contract)
+            dtprotocol_multipart_contract
+            dtprotocol_compression_contract)
         target_compile_options(${target} PRIVATE
             -fsanitize=address,undefined -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE -fsanitize=address,undefined)
