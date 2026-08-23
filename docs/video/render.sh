@@ -12,6 +12,7 @@ OUT=${1:-"$ROOT/build/video"}
 OUT=$(realpath -m "$OUT")
 RAW="$OUT/raw"
 FINAL="$OUT/DTProtocol-v4-architecture.mp4"
+POSTER="$OUT/DTProtocol-v4-architecture-poster.jpg"
 PACE=${DTP_VIDEO_PACE:-1.45}
 REUSE_RAW=${DTP_VIDEO_REUSE_RAW:-0}
 REVISION=$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)
