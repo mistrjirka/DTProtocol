@@ -56,6 +56,7 @@ public:
     void setMode(State state, bool force = true);
     State getMode();
     uint16_t getId();
+    bool isReady() const { return true; }
     void setTransmitDone(TransmitDone callback);
     uint32_t getTransmitWaitMs() const;
     uint8_t getFallbackDutyCyclePercent() const;

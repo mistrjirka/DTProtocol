@@ -18,16 +18,6 @@ const uint8_t MAC::EU433_CHANNEL_COUNT = 13;
 const uint8_t MAC::EU868_CHANNEL_COUNT = 3;
 const uint8_t MAC::EU869_HIGH_DUTY_CHANNEL_COUNT = 1;
 
-namespace
-{
-bool radioOk(int status)
-{
-  if (status == RADIOLIB_ERR_NONE)
-    return true;
-  Serial.println("RadioLib configuration error: " + String(status));
-  return false;
-}
-} // namespace
 
 bool MAC::irqPending()
 {
@@ -79,7 +69,9 @@ MAC::MAC(
       RXCallback(nullptr),
       RXAlienCallback(nullptr),
       carrierBackoffUntil(0),
-      dutyCycleUntil(0)
+      dutyCycleUntil(0),
+      ready(false),
+      lastRadioError(RADIOLIB_ERR_NONE)
 {
   memset(noiseFloor, 0, sizeof(noiseFloor));
 
@@ -93,13 +85,19 @@ MAC::MAC(
 
   module.setDio1Action(setFlag);
   LORANoiseCalibrateAllChannels(true);
-  setFrequency(static_cast<uint16_t>(channel));
-  setMode(RECEIVING, true);
+  if (!setFrequency(static_cast<uint16_t>(channel)) ||
+      !setMode(RECEIVING, true))
+  {
+    channel = -1;
+    state = IDLE;
+    return;
+  }
+  ready = true;
 }
 
 MAC::~MAC() {}
 
-void MAC::initialize(
+bool MAC::initialize(
     SX1262 &loramodule,
     int id,
     int default_channel,
@@ -109,7 +107,7 @@ void MAC::initialize(
     int default_power,
     int default_coding_rate)
 {
-  initialize(
+  return initialize(
       loramodule,
       id,
       MACRegion::EU433,
@@ -121,7 +119,7 @@ void MAC::initialize(
       default_coding_rate);
 }
 
-void MAC::initialize(
+bool MAC::initialize(
     SX1262 &loramodule,
     int id,
     MACRegion region,
@@ -145,6 +143,7 @@ void MAC::initialize(
         default_power,
         default_coding_rate);
   }
+  return mac != nullptr && mac->isReady();
 }
 
 MAC *MAC::getInstance()
@@ -155,6 +154,19 @@ MAC *MAC::getInstance()
 bool MAC::validChannel(uint16_t candidate) const
 {
   return candidate < channelCount;
+}
+
+bool MAC::recordRadioStatus(int status, const char *operation)
+{
+  if (status == RADIOLIB_ERR_NONE)
+    return true;
+  lastRadioError = static_cast<int16_t>(status);
+  ++diagnostics.radioCommandErrors;
+  Serial.print("[MAC] RadioLib error ");
+  Serial.print(status);
+  Serial.print(" during ");
+  Serial.println(operation ? operation : "unknown");
+  return false;
 }
 
 bool MAC::configureRadio(
@@ -168,13 +180,13 @@ bool MAC::configureRadio(
 
   calibratedFrequency = channels[channel];
   bool ok = true;
-  ok = radioOk(module.setFrequency(static_cast<float>(calibratedFrequency))) && ok;
-  ok = radioOk(module.setOutputPower(defaultPower)) && ok;
-  ok = radioOk(module.setBandwidth(defaultBandwidth)) && ok;
-  ok = radioOk(module.setSpreadingFactor(defaultSpreadingFactor)) && ok;
-  ok = radioOk(module.setCodingRate(defaultCodingRate)) && ok;
-  ok = radioOk(module.setSyncWord(DEFAULT_SYNC_WORD)) && ok;
-  ok = radioOk(module.setPreambleLength(DEFAULT_PREAMBLE_LENGTH)) && ok;
+  ok = recordRadioStatus(module.setFrequency(static_cast<float>(calibratedFrequency)), "setFrequency") && ok;
+  ok = recordRadioStatus(module.setOutputPower(defaultPower), "setOutputPower") && ok;
+  ok = recordRadioStatus(module.setBandwidth(defaultBandwidth), "setBandwidth") && ok;
+  ok = recordRadioStatus(module.setSpreadingFactor(defaultSpreadingFactor), "setSpreadingFactor") && ok;
+  ok = recordRadioStatus(module.setCodingRate(defaultCodingRate), "setCodingRate") && ok;
+  ok = recordRadioStatus(module.setSyncWord(DEFAULT_SYNC_WORD), "setSyncWord") && ok;
+  ok = recordRadioStatus(module.setPreambleLength(DEFAULT_PREAMBLE_LENGTH), "setPreambleLength") && ok;
   return ok;
 }
 
@@ -259,27 +271,32 @@ void MAC::accountDutyCycle(uint8_t packetLength)
   dutyCycleUntil = millis() + std::max<uint32_t>(periodMs, 1u);
 }
 
-void MAC::setFrequencyAndListen(uint16_t newChannel)
+bool MAC::setFrequencyAndListen(uint16_t newChannel)
 {
   if (!validChannel(newChannel))
-    return;
-  if (getMode() == SLEEPING)
-    setMode(IDLE, true);
+    return false;
+  if (getMode() == SLEEPING && !setMode(IDLE, true))
+    return false;
   channel = newChannel;
   calibratedFrequency = channels[channel];
-  module.setFrequency(static_cast<float>(calibratedFrequency));
-  setMode(RECEIVING, true);
+  if (!recordRadioStatus(
+          module.setFrequency(static_cast<float>(calibratedFrequency)),
+          "setFrequency"))
+    return false;
+  return setMode(RECEIVING, true);
 }
 
-void MAC::setFrequency(uint16_t newChannel)
+bool MAC::setFrequency(uint16_t newChannel)
 {
   if (!validChannel(newChannel))
-    return;
-  if (getMode() == SLEEPING)
-    setMode(IDLE, true);
+    return false;
+  if (getMode() == SLEEPING && !setMode(IDLE, true))
+    return false;
   channel = newChannel;
   calibratedFrequency = channels[channel];
-  module.setFrequency(static_cast<float>(calibratedFrequency));
+  return recordRadioStatus(
+      module.setFrequency(static_cast<float>(calibratedFrequency)),
+      "setFrequency");
 }
 
 int MAC::LORANoiseFloorCalibrate(int channelToMeasure, bool save)
@@ -289,7 +306,8 @@ int MAC::LORANoiseFloorCalibrate(int channelToMeasure, bool save)
 
   const State previousState = getMode();
   const int previousChannel = channel;
-  setFrequencyAndListen(static_cast<uint16_t>(channelToMeasure));
+  if (!setFrequencyAndListen(static_cast<uint16_t>(channelToMeasure)))
+    return 255;
 
   int measurements[NUMBER_OF_MEASUREMENTS];
   for (int i = 0; i < NUMBER_OF_MEASUREMENTS; ++i)
@@ -349,15 +367,23 @@ void MAC::handlePacket()
 {
   const uint16_t length = static_cast<uint16_t>(module.getPacketLength(true));
   if (length < sizeof(MACHeader))
+  {
+    ++diagnostics.rxTooShort;
     return;
+  }
 
   uint8_t *data = static_cast<uint8_t *>(malloc(length));
   if (!data)
+  {
+    ++diagnostics.rxAllocationFailures;
     return;
+  }
 
   const int readStatus = module.readData(data, length);
   if (readStatus != RADIOLIB_ERR_NONE)
   {
+    ++diagnostics.rxReadErrors;
+    recordRadioStatus(static_cast<int16_t>(readStatus), "readData");
     free(data);
     return;
   }
@@ -466,6 +492,8 @@ uint8_t MAC::sendData(
     uint8_t size,
     uint32_t timeout)
 {
+  if (!ready)
+    return MAC_SEND_RADIO_ERROR;
   if (getMode() == SENDING)
     return MAC_SEND_BUSY;
   if (channel < 0 || !validChannel(static_cast<uint16_t>(channel)))
@@ -499,7 +527,11 @@ uint8_t MAC::sendData(
   }
 
   const uint8_t finalPacketLength = static_cast<uint8_t>(MAC_OVERHEAD + size);
-  setMode(SENDING, true);
+  if (!setMode(SENDING, true))
+  {
+    free(packet);
+    return MAC_SEND_RADIO_ERROR;
+  }
   const int result = module.startTransmit(
       reinterpret_cast<unsigned char *>(packet),
       finalPacketLength);
@@ -507,6 +539,7 @@ uint8_t MAC::sendData(
 
   if (result != RADIOLIB_ERR_NONE)
   {
+    recordRadioStatus(static_cast<int16_t>(result), "startTransmit");
     setMode(RECEIVING, true);
     return MAC_SEND_RADIO_ERROR;
   }
@@ -563,25 +596,32 @@ State MAC::getMode()
   return state;
 }
 
-void MAC::setMode(State newState, bool force)
+bool MAC::setMode(State newState, bool force)
 {
   if (!force && state == newState)
-    return;
+    return true;
 
-  state = newState;
+  int status = RADIOLIB_ERR_NONE;
   switch (newState)
   {
   case SENDING:
   case IDLE:
-    module.standby();
+    status = module.standby();
     break;
   case RECEIVING:
-    module.startReceive();
+    status = module.startReceive();
     break;
   case SLEEPING:
-    module.sleep(true);
+    status = module.sleep(true);
     break;
   default:
-    break;
+    return false;
   }
+
+  if (!recordRadioStatus(status,
+          newState == RECEIVING ? "startReceive" :
+          (newState == SLEEPING ? "sleep" : "standby")))
+    return false;
+  state = newState;
+  return true;
 }

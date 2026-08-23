@@ -84,7 +84,7 @@ public:
 
   static MAC *getInstance();
 
-  static void initialize(
+  static bool initialize(
       SX1262 &loramodule,
       int id,
       int default_channel = 0,
@@ -94,7 +94,7 @@ public:
       int default_power = DEFAULT_POWER,
       int default_coding_rate = DEFAULT_CODING_RATE);
 
-  static void initialize(
+  static bool initialize(
       SX1262 &loramodule,
       int id,
       MACRegion region,
@@ -136,6 +136,17 @@ public:
   bool isCadCarrierSenseEnabled() const { return cadCarrierSenseEnabled; }
 
   uint32_t getTransmitWaitMs() const;
+  bool isReady() const { return ready; }
+  int16_t getLastRadioError() const { return lastRadioError; }
+
+  struct Diagnostics
+  {
+    uint32_t radioCommandErrors = 0;
+    uint32_t rxTooShort = 0;
+    uint32_t rxAllocationFailures = 0;
+    uint32_t rxReadErrors = 0;
+  };
+  const Diagnostics &getDiagnostics() const { return diagnostics; }
 
   // Helper for applications that explicitly enable a duty limit and want to
   // derive a liveness timeout. DTPK does not call this automatically.
@@ -172,7 +183,7 @@ public:
                    uint8_t size, uint32_t timeout = 5000);
   void loop();
   uint32_t random();
-  void setMode(State state, bool force = true);
+  bool setMode(State state, bool force = true);
   State getMode();
   uint16_t getId();
   SX1262 &module;
@@ -212,6 +223,9 @@ private:
 
   uint32_t carrierBackoffUntil;
   uint32_t dutyCycleUntil;
+  bool ready;
+  int16_t lastRadioError;
+  Diagnostics diagnostics;
 
   MAC(
       SX1262 &loramodule,
@@ -231,14 +245,15 @@ private:
                           unsigned char *data, uint8_t size);
   static void setFlag(void);
   static bool irqPending();
-  void setFrequencyAndListen(uint16_t channel);
-  void setFrequency(uint16_t channel);
+  bool setFrequencyAndListen(uint16_t channel);
+  bool setFrequency(uint16_t channel);
   bool transmissionAuthorized();
   bool waitForTransmissionAuthorization(uint32_t timeout);
   void calibrateBasedOnLastPacket();
   bool validChannel(uint16_t channel) const;
   bool configureRadio(int default_spreading_factor, float default_bandwidth,
                       int default_power, int default_coding_rate);
+  bool recordRadioStatus(int status, const char *operation);
   static bool deadlinePending(uint32_t now, uint32_t deadline);
   void startCarrierBackoff();
   void accountDutyCycle(uint8_t packetLength);

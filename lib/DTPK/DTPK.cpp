@@ -6,13 +6,17 @@
 
 DTPK *DTPK::dtpk = nullptr;
 
-void DTPK::initialize(uint8_t KLimit, uint16_t originSequence, bool mobileHint)
+bool DTPK::initialize(uint8_t KLimit, uint16_t originSequence, bool mobileHint)
 {
     // KLimit belonged to the pre-v2 crystallization-session algorithm. Keep the
-    // parameter for source compatibility, but v2 has no session window.
+    // parameter for source compatibility, but v3 has no session window.
     (void)KLimit;
+    MAC *mac = MAC::getInstance();
+    if (!mac || !mac->isReady())
+        return false;
     if (!dtpk)
         dtpk = new DTPK(originSequence, mobileHint);
+    return dtpk != nullptr;
 }
 
 DTPK *DTPK::getInstance()
@@ -89,7 +93,16 @@ DTPK::DTPK(uint16_t originSequence, bool mobileHint)
         MAC::getInstance()->random());
     randomSeed(seed);
 
-    _originSequence = originSequence == 0 ? 1 : originSequence;
+    if (originSequence == 0)
+    {
+        originSequence = static_cast<uint16_t>(MAC::getInstance()->random());
+        if (originSequence == 0)
+            originSequence = 1;
+        Serial.println(
+            "[DTPK] WARNING: non-persistent random boot incarnation; "
+            "persist a monotonic sequence in production");
+    }
+    _originSequence = originSequence;
     _routeVersion = 1;
     const uint32_t helloPeriod = effectiveHelloPeriodMs();
     _helloRemaining = static_cast<int32_t>(

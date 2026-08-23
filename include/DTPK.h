@@ -50,9 +50,9 @@ public:
     };
 
     static DTPK *getInstance();
-    static void initialize(
-        uint8_t KLimit = 20,
-        uint16_t originSequence = 1,
+    static bool initialize(
+        uint8_t KLimit,
+        uint16_t originSequence,
         bool mobileHint = false);
 
     void setPacketReceivedCallback(PacketReceivedCallback callback);
