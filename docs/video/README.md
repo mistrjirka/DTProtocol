@@ -141,7 +141,7 @@ post-production concern.
 ## Visual QC
 
 A successful Manim render is not considered sufficient. Before publishing a new
-release, generate dense contact sheets from every scene and inspect transition
+release, generate dense 4-fps contact sheets from every scene and inspect transition
 frames as well as stable states:
 
 ```bash

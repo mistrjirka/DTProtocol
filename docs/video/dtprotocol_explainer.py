@@ -364,7 +364,7 @@ class Architecture(DTScene):
         layers = VGroup(app, data, sync, repair, sched, db, lcmm, mac)
         self.play(LaggedStart(*[FadeIn(layer, shift=RIGHT * 0.1) for layer in layers], lag_ratio=0.08), run_time=1.5)
 
-        arrows = VGroup(
+        arrows = set_layer(VGroup(
             Arrow(app.get_bottom(), data.get_top(), buff=0.08, color=GREEN),
             Arrow(data.get_right(), db.get_left(), buff=0.1, color=BLUE),
             Arrow(sync.get_right(), db.get_left() + DOWN * 0.25, buff=0.1, color=PURPLE),
@@ -374,7 +374,7 @@ class Architecture(DTScene):
             Arrow(repair.get_right(), sched.get_left() + DOWN * 0.3, buff=0.1, color=YELLOW),
             Arrow(sched.get_bottom(), lcmm.get_left(), buff=0.1, color=ORANGE),
             Arrow(lcmm.get_bottom(), mac.get_top(), buff=0.08, color=GREEN),
-        ).set_z_index(Z_CONNECTOR)
+        ), Z_CONNECTOR)
         self.play(LaggedStart(*[GrowArrow(a) for a in arrows], lag_ratio=0.08), run_time=1.4)
 
         caption = self.show_caption("Each layer has a different definition of success.", BLUE)
@@ -463,8 +463,7 @@ class Feasibility(DTScene):
         b = make_node("B", BLUE).move_to(LEFT * 0.6 + UP * 1.15)
         d = make_node("D", GREEN).move_to(RIGHT * 4.1 + UP * 1.15)
         ab = make_edge(a, b, GRID, 5)
-        claimed = make_edge(b, d, GRID, 4, dashed=True)
-        self.play(FadeIn(a), FadeIn(b), FadeIn(d), ShowCreation(ab), ShowCreation(claimed), run_time=0.85)
+        self.play(FadeIn(a), FadeIn(b), FadeIn(d), ShowCreation(ab), run_time=0.85)
 
         state = make_card("A remembers for D", ["generation 12", "feasible distance 2"], 3.55, YELLOW, 22)
         report = make_card("B reports", ["generation 12", "neighbour metric 2"], 3.35, BLUE, 22)
@@ -559,10 +558,11 @@ class Reliability(DTScene):
         self.travel(make_packet("E2E ACK 7", PURPLE, 18), d, r, 0.58)
         lost = make_packet("E2E ACK 7", PURPLE, 18).move_to((r.get_center() + s.get_center()) / 2)
         self.play(FadeIn(lost, scale=0.8), run_time=0.25)
-        cross = Cross(lost, stroke_color=RED, stroke_width=6).set_z_index(Z_MARK)
+        cross = set_layer(Cross(lost, stroke_color=RED, stroke_width=6), Z_MARK)
         self.play(ShowCreation(cross), FadeOut(lost), run_time=0.35)
 
         caption = self.show_caption("If the final ACK is lost, the source retries with the same identity.", ORANGE, caption)
+        self.play(FadeOut(cross), run_time=0.20)
         self.travel(make_packet("retry DATA 7", ORANGE, 18), s, r, 0.65)
         self.travel(make_packet("retry DATA 7", ORANGE, 18), r, d, 0.65)
         replay = make_badge("replay hit: ACK again, do not deliver again", YELLOW, 20).next_to(d, DOWN, buff=0.32)
@@ -619,7 +619,7 @@ class MultipartCompression(DTScene):
         p0, p1 = boundary_points(relay, d_node, 0.13)
         lost.move_to((p0 + p1) / 2)
         self.play(FadeIn(lost), run_time=0.18)
-        loss_mark = Cross(lost, stroke_color=RED, stroke_width=6).set_z_index(Z_MARK)
+        loss_mark = set_layer(Cross(lost, stroke_color=RED, stroke_width=6), Z_MARK)
         self.play(ShowCreation(loss_mark), FadeOut(lost), run_time=0.35)
 
         self.travel(make_packet("frag 2", BLUE, 17), s_node, relay, 0.48)
@@ -668,10 +668,10 @@ class Scheduler(DTScene):
             make_packet("SEQ_REQ", YELLOW, 18).move_to(lanes[1].get_left() + RIGHT * 3.3),
             make_packet("DATA", BLUE, 18).move_to(lanes[2].get_left() + RIGHT * 3.3),
         ]
-        self.play(*[FadeIn(t, scale=0.8) for t in tokens], run_time=0.4)
         for token in tokens:
+            self.play(FadeIn(token, scale=0.8), run_time=0.20)
             self.play(token.animate.shift(RIGHT * 5.4), run_time=0.65)
-            self.play(FadeOut(token), run_time=0.2)
+            self.play(FadeOut(token), run_time=0.18)
 
         wait = make_card("one local E2E waiter", ["blocks a second local app send", "does not stop relay/control work"], 5.2, PURPLE, 23)
         wait.move_to(DOWN * 2.05)
@@ -709,7 +709,7 @@ class Repair(DTScene):
         self.play(ShowCreation(old_path), run_time=0.65)
         caption = self.show_caption("A currently reaches D through A → B → C → E → D.", BLUE)
 
-        cut = Cross(links[2], stroke_color=RED, stroke_width=8).set_z_index(Z_MARK)
+        cut = set_layer(Cross(links[2], stroke_color=RED, stroke_width=8), Z_MARK)
         self.play(ShowCreation(cut), FadeOut(old_path), run_time=0.55)
         caption = self.show_caption("The C–E link disappears. The old path can no longer reach D.", RED, caption)
 

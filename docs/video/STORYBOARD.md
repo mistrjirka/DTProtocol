@@ -39,7 +39,7 @@ Reuse the same four-node mental model. A's route to C is green and committed whi
 
 ### 4. Feasibility
 
-Keep this local rather than pretending a repair packet crosses a failed link. Show A's remembered feasible distance, B's same-generation candidate, the failed strict comparison, and then a newer generation becoming feasible. Green means selected next hop only after feasibility.
+Keep this local rather than pretending a repair packet crosses a failed link. Show only the real A–B neighbour link; B's knowledge about D lives in the report card rather than a fake B–D radio edge. Show A's remembered feasible distance, the failed strict comparison, and then a newer generation becoming feasible. Green means selected next hop only after feasibility.
 
 ### 5. Reliability
 
