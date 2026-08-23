@@ -56,10 +56,14 @@ uint16_t Bluetooth::nextMessageId()
 
 BluetoothDiagnostics Bluetooth::getDiagnostics() const
 {
-    return BluetoothDiagnostics{
-        droppedWrites.load(std::memory_order_relaxed),
-        droppedInboundMessages.load(std::memory_order_relaxed),
-        droppedControlNotifications.load(std::memory_order_relaxed)};
+    BluetoothDiagnostics diagnostics;
+    diagnostics.droppedWrites =
+        droppedWrites.load(std::memory_order_relaxed);
+    diagnostics.droppedInboundMessages =
+        droppedInboundMessages.load(std::memory_order_relaxed);
+    diagnostics.droppedControlNotifications =
+        droppedControlNotifications.load(std::memory_order_relaxed);
+    return diagnostics;
 }
 
 uint16_t Bluetooth::negotiatedMtu() const
